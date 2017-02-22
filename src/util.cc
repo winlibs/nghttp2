@@ -205,9 +205,10 @@ Iterator cpydig(Iterator d, uint32_t n, size_t len) {
 } // namespace
 
 namespace {
-const char *MONTH[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-const char *DAY_OF_WEEK[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+constexpr const char *MONTH[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+constexpr const char *DAY_OF_WEEK[] = {"Sun", "Mon", "Tue", "Wed",
+                                       "Thu", "Fri", "Sat"};
 } // namespace
 
 std::string http_date(time_t t) {
@@ -369,7 +370,7 @@ char upcase(char c) {
 }
 
 namespace {
-const char LOWER_XDIGITS[] = "0123456789abcdef";
+constexpr char LOWER_XDIGITS[] = "0123456789abcdef";
 } // namespace
 
 std::string format_hex(const unsigned char *s, size_t len) {
@@ -472,7 +473,7 @@ int levenshtein(const char *a, int alen, const char *b, int blen, int swapcost,
 }
 } // namespace
 
-void show_candidates(const char *unkopt, option *options) {
+void show_candidates(const char *unkopt, const option *options) {
   for (; *unkopt == '-'; ++unkopt)
     ;
   if (*unkopt == '\0') {
@@ -554,20 +555,16 @@ bool fieldeq(const char *uri1, const http_parser_url &u1, const char *uri2,
 
 bool fieldeq(const char *uri, const http_parser_url &u,
              http_parser_url_fields field, const char *t) {
+  return fieldeq(uri, u, field, StringRef{t});
+}
+
+bool fieldeq(const char *uri, const http_parser_url &u,
+             http_parser_url_fields field, const StringRef &t) {
   if (!has_uri_field(u, field)) {
-    if (!t[0]) {
-      return true;
-    } else {
-      return false;
-    }
-  } else if (!t[0]) {
-    return false;
+    return t.empty();
   }
-  int i, len = u.field_data[field].len;
-  const char *p = uri + u.field_data[field].off;
-  for (i = 0; i < len && t[i] && p[i] == t[i]; ++i)
-    ;
-  return i == len && !t[i];
+  auto &f = u.field_data[field];
+  return StringRef{uri + f.off, f.len} == t;
 }
 
 StringRef get_uri_field(const char *uri, const http_parser_url &u,
@@ -675,60 +672,6 @@ void set_port(Address &addr, uint16_t port) {
     addr.su.in6.sin6_port = htons(port);
     break;
   }
-}
-
-static int STDERR_COPY = -1;
-static int STDOUT_COPY = -1;
-
-void store_original_fds() {
-  // consider dup'ing stdout too
-  STDERR_COPY = dup(STDERR_FILENO);
-  STDOUT_COPY = STDOUT_FILENO;
-  // no race here, since it is called early
-  make_socket_closeonexec(STDERR_COPY);
-}
-
-void restore_original_fds() { dup2(STDERR_COPY, STDERR_FILENO); }
-
-void close_log_file(int &fd) {
-  if (fd != STDERR_COPY && fd != STDOUT_COPY && fd != -1) {
-    close(fd);
-  }
-  fd = -1;
-}
-
-int open_log_file(const char *path) {
-
-  if (strcmp(path, "/dev/stdout") == 0 ||
-      strcmp(path, "/proc/self/fd/1") == 0) {
-    return STDOUT_COPY;
-  }
-
-  if (strcmp(path, "/dev/stderr") == 0 ||
-      strcmp(path, "/proc/self/fd/2") == 0) {
-    return STDERR_COPY;
-  }
-#if defined O_CLOEXEC
-
-  auto fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC,
-                 S_IRUSR | S_IWUSR | S_IRGRP);
-#else // !O_CLOEXEC
-
-  auto fd =
-      open(path, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP);
-
-  // We get race condition if execve is called at the same time.
-  if (fd != -1) {
-    make_socket_closeonexec(fd);
-  }
-
-#endif // !O_CLOEXEC
-
-  if (fd == -1) {
-    return -1;
-  }
-
-  return fd;
 }
 
 std::string ascii_dump(const uint8_t *data, size_t len) {
@@ -1463,6 +1406,30 @@ int sha256(uint8_t *res, const StringRef &s) {
   }
 
   return 0;
+}
+
+bool is_hex_string(const StringRef &s) {
+  if (s.size() % 2) {
+    return false;
+  }
+
+  for (auto c : s) {
+    if (!is_hex_digit(c)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+StringRef decode_hex(BlockAllocator &balloc, const StringRef &s) {
+  auto iov = make_byte_ref(balloc, s.size() + 1);
+  auto p = iov.base;
+  for (auto it = std::begin(s); it != std::end(s); it += 2) {
+    *p++ = (hex_to_uint(*it) << 4) | hex_to_uint(*(it + 1));
+  }
+  *p = '\0';
+  return StringRef{iov.base, p};
 }
 
 } // namespace util

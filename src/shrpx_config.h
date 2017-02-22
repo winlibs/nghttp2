@@ -319,6 +319,14 @@ constexpr auto SHRPX_OPT_DNS_LOOKUP_TIMEOUT =
 constexpr auto SHRPX_OPT_DNS_MAX_TRY = StringRef::from_lit("dns-max-try");
 constexpr auto SHRPX_OPT_FRONTEND_KEEP_ALIVE_TIMEOUT =
     StringRef::from_lit("frontend-keep-alive-timeout");
+constexpr auto SHRPX_OPT_PSK_SECRETS = StringRef::from_lit("psk-secrets");
+constexpr auto SHRPX_OPT_CLIENT_PSK_SECRETS =
+    StringRef::from_lit("client-psk-secrets");
+constexpr auto SHRPX_OPT_CLIENT_NO_HTTP2_CIPHER_BLACK_LIST =
+    StringRef::from_lit("client-no-http2-cipher-black-list");
+constexpr auto SHRPX_OPT_CLIENT_CIPHERS = StringRef::from_lit("client-ciphers");
+constexpr auto SHRPX_OPT_ACCESSLOG_WRITE_EARLY =
+    StringRef::from_lit("accesslog-write-early");
 
 constexpr size_t SHRPX_OBFUSCATED_NODE_LENGTH = 8;
 
@@ -382,6 +390,8 @@ struct UpstreamAddr {
   bool host_unix;
   // true if TLS is enabled.
   bool tls;
+  // true if client is supposed to send PROXY protocol v1 header.
+  bool accept_proxy_protocol;
   int fd;
 };
 
@@ -541,12 +551,23 @@ struct TLSConfig {
     bool enabled;
   } client_verify;
 
-  // Client private key and certificate used in backend connections.
+  // Client (backend connection) TLS configuration.
   struct {
+    // Client PSK configuration
+    struct {
+      // identity must be NULL terminated string.
+      StringRef identity;
+      StringRef secret;
+    } psk;
     StringRef private_key_file;
     StringRef cert_file;
+    StringRef ciphers;
+    bool no_http2_cipher_black_list;
   } client;
 
+  // PSK secrets.  The key is identity, and the associated value is
+  // its secret.
+  std::map<StringRef, StringRef> psk_secrets;
   // The list of additional TLS certificate pair
   std::vector<TLSCertificate> subcerts;
   std::vector<unsigned char> alpn_prefs;
@@ -667,6 +688,9 @@ struct LoggingConfig {
     StringRef file;
     // Send accesslog to syslog, ignoring accesslog_file.
     bool syslog;
+    // Write accesslog when response headers are received from
+    // backend, rather than response body is received and sent.
+    bool write_early;
   } access;
   struct {
     StringRef file;
@@ -775,6 +799,7 @@ struct ConnectionConfig {
       RateLimitConfig write;
     } ratelimit;
     size_t worker_connections;
+    // Deprecated.  See UpstreamAddr.accept_proxy_protocol.
     bool accept_proxy_protocol;
   } upstream;
 
@@ -868,6 +893,7 @@ enum {
   SHRPX_OPTID_ACCESSLOG_FILE,
   SHRPX_OPTID_ACCESSLOG_FORMAT,
   SHRPX_OPTID_ACCESSLOG_SYSLOG,
+  SHRPX_OPTID_ACCESSLOG_WRITE_EARLY,
   SHRPX_OPTID_ADD_FORWARDED,
   SHRPX_OPTID_ADD_REQUEST_HEADER,
   SHRPX_OPTID_ADD_RESPONSE_HEADER,
@@ -909,8 +935,11 @@ enum {
   SHRPX_OPTID_CIPHERS,
   SHRPX_OPTID_CLIENT,
   SHRPX_OPTID_CLIENT_CERT_FILE,
+  SHRPX_OPTID_CLIENT_CIPHERS,
+  SHRPX_OPTID_CLIENT_NO_HTTP2_CIPHER_BLACK_LIST,
   SHRPX_OPTID_CLIENT_PRIVATE_KEY_FILE,
   SHRPX_OPTID_CLIENT_PROXY,
+  SHRPX_OPTID_CLIENT_PSK_SECRETS,
   SHRPX_OPTID_CONF,
   SHRPX_OPTID_DAEMON,
   SHRPX_OPTID_DH_PARAM_FILE,
@@ -972,6 +1001,7 @@ enum {
   SHRPX_OPTID_PID_FILE,
   SHRPX_OPTID_PRIVATE_KEY_FILE,
   SHRPX_OPTID_PRIVATE_KEY_PASSWD_FILE,
+  SHRPX_OPTID_PSK_SECRETS,
   SHRPX_OPTID_READ_BURST,
   SHRPX_OPTID_READ_RATE,
   SHRPX_OPTID_REQUEST_HEADER_FIELD_BUFFER,

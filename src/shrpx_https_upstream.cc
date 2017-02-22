@@ -292,6 +292,10 @@ int htp_hdrs_completecb(http_parser *htp) {
   auto downstream = upstream->get_downstream();
   auto &req = downstream->request();
 
+  auto lgconf = log_config();
+  lgconf->update_tstamp(std::chrono::system_clock::now());
+  req.tstamp = lgconf->tstamp;
+
   req.http_major = htp->http_major;
   req.http_minor = htp->http_minor;
 
@@ -505,7 +509,7 @@ int htp_msg_completecb(http_parser *htp) {
 } // namespace
 
 namespace {
-http_parser_settings htp_hooks = {
+constexpr http_parser_settings htp_hooks = {
     htp_msg_begin,       // http_cb      on_message_begin;
     htp_uricb,           // http_data_cb on_url;
     nullptr,             // http_data_cb on_status;
@@ -532,7 +536,7 @@ int HttpsUpstream::on_read() {
   // callback chain called by http_parser_execute()
   if (downstream && downstream->get_upgraded()) {
 
-    auto rv = downstream->push_upload_data_chunk(rb->pos, rb->rleft());
+    auto rv = downstream->push_upload_data_chunk(rb->pos(), rb->rleft());
 
     if (rv != 0) {
       return -1;
@@ -565,8 +569,9 @@ int HttpsUpstream::on_read() {
   }
 
   // http_parser_execute() does nothing once it entered error state.
-  auto nread = http_parser_execute(
-      &htp_, &htp_hooks, reinterpret_cast<const char *>(rb->pos), rb->rleft());
+  auto nread = http_parser_execute(&htp_, &htp_hooks,
+                                   reinterpret_cast<const char *>(rb->pos()),
+                                   rb->rleft());
 
   rb->drain(nread);
   rlimit->startw();
@@ -949,7 +954,7 @@ void HttpsUpstream::error_reply(unsigned int status_code) {
   output->append("\r\nDate: ");
   auto lgconf = log_config();
   lgconf->update_tstamp(std::chrono::system_clock::now());
-  output->append(lgconf->time_http);
+  output->append(lgconf->tstamp->time_http);
   output->append("\r\nContent-Type: text/html; "
                  "charset=UTF-8\r\nConnection: close\r\n\r\n");
   output->append(html);
@@ -1024,7 +1029,7 @@ int HttpsUpstream::on_downstream_header_complete(Downstream *downstream) {
 
   buf->append("HTTP/");
   buf->append(util::utos(req.http_major));
-  buf->append(".");
+  buf->append('.');
   buf->append(util::utos(req.http_minor));
   buf->append(' ');
   buf->append(http2::stringify_status(balloc, resp.http_status));

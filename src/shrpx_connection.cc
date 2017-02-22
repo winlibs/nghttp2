@@ -95,7 +95,8 @@ Connection::~Connection() { disconnect(); }
 
 void Connection::disconnect() {
   if (tls.ssl) {
-    SSL_set_shutdown(tls.ssl, SSL_RECEIVED_SHUTDOWN);
+    SSL_set_shutdown(tls.ssl,
+                     SSL_get_shutdown(tls.ssl) | SSL_RECEIVED_SHUTDOWN);
     ERR_clear_error();
 
     if (tls.cached_session) {
@@ -140,7 +141,10 @@ void Connection::disconnect() {
 
 void Connection::prepare_client_handshake() { SSL_set_connect_state(tls.ssl); }
 
-void Connection::prepare_server_handshake() { SSL_set_accept_state(tls.ssl); }
+void Connection::prepare_server_handshake() {
+  SSL_set_accept_state(tls.ssl);
+  tls.server_handshake = true;
+}
 
 // BIO implementation is inspired by openldap implementation:
 // http://www.openldap.org/devel/cvsweb.cgi/~checkout~/libraries/libldap/tls_o.c
@@ -501,8 +505,14 @@ int Connection::write_tls_pending_handshake() {
 
   if (LOG_ENABLED(INFO)) {
     LOG(INFO) << "SSL/TLS handshake completed";
-    if (SSL_session_reused(tls.ssl)) {
-      LOG(INFO) << "SSL/TLS session reused";
+    nghttp2::ssl::TLSSessionInfo tls_info{};
+    if (nghttp2::ssl::get_tls_session_info(&tls_info, tls.ssl)) {
+      LOG(INFO) << "cipher=" << tls_info.cipher
+                << " protocol=" << tls_info.protocol
+                << " resumption=" << (tls_info.session_reused ? "yes" : "no")
+                << " session_id="
+                << util::format_hex(tls_info.session_id,
+                                    tls_info.session_id_length);
     }
   }
 
@@ -529,7 +539,15 @@ int Connection::check_http2_requirement() {
     }
     return -1;
   }
-  if (!get_config()->tls.no_http2_cipher_black_list &&
+
+  auto check_black_list = false;
+  if (tls.server_handshake) {
+    check_black_list = !get_config()->tls.no_http2_cipher_black_list;
+  } else {
+    check_black_list = !get_config()->tls.client.no_http2_cipher_black_list;
+  }
+
+  if (check_black_list &&
       nghttp2::ssl::check_http2_cipher_black_list(tls.ssl)) {
     if (LOG_ENABLED(INFO)) {
       LOG(INFO) << "The negotiated cipher suite is in HTTP/2 cipher suite "

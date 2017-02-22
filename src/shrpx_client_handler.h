@@ -118,13 +118,9 @@ public:
   // must not be nullptr.
   void write_accesslog(Downstream *downstream);
 
-  // Writes upstream accesslog.  This function is used if
-  // corresponding Downstream object is not available.
-  void write_accesslog(int major, int minor, unsigned int status,
-                       int64_t body_bytes_sent);
   Worker *get_worker() const;
 
-  using ReadBuf = Buffer<16_k>;
+  using ReadBuf = DefaultMemchunkBuffer;
 
   ReadBuf *get_rb();
 
@@ -171,6 +167,7 @@ private:
   // sure that the allocations must be bounded, and not proportional
   // to the number of requests.
   BlockAllocator balloc_;
+  DefaultMemchunkBuffer rb_;
   Connection conn_;
   ev_timer reneg_shutdown_timer_;
   std::unique_ptr<Upstream> upstream_;
@@ -197,7 +194,6 @@ private:
   bool should_close_after_write_;
   // true if affinity_hash_ is computed
   bool affinity_hash_computed_;
-  ReadBuf rb_;
 };
 
 } // namespace shrpx

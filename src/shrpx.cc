@@ -411,7 +411,7 @@ void exec_binary() {
     LOG(ERROR) << "Unblocking all signals failed: "
                << xsi_strerror(error, errbuf.data(), errbuf.size());
 
-    _Exit(EXIT_FAILURE);
+    nghttp2_Exit(EXIT_FAILURE);
   }
 
   auto exec_path =
@@ -419,7 +419,7 @@ void exec_binary() {
 
   if (!exec_path) {
     LOG(ERROR) << "Could not resolve the executable path";
-    _Exit(EXIT_FAILURE);
+    nghttp2_Exit(EXIT_FAILURE);
   }
 
   auto argv = make_unique<char *[]>(suconfig.argc + 1);
@@ -487,12 +487,12 @@ void exec_binary() {
   }
 
   // restores original stderr
-  util::restore_original_fds();
+  restore_original_fds();
 
   if (execve(argv[0], argv.get(), envp.get()) == -1) {
     auto error = errno;
     LOG(ERROR) << "execve failed: errno=" << error;
-    _Exit(EXIT_FAILURE);
+    nghttp2_Exit(EXIT_FAILURE);
   }
 }
 } // namespace
@@ -1170,7 +1170,7 @@ pid_t fork_worker_process(int &main_ipc_fd,
       LOG(FATAL) << "Unblocking all signals failed: "
                  << xsi_strerror(error, errbuf.data(), errbuf.size());
 
-      _Exit(EXIT_FAILURE);
+      nghttp2_Exit(EXIT_FAILURE);
     }
 
     close(ipc_fd[1]);
@@ -1179,13 +1179,13 @@ pid_t fork_worker_process(int &main_ipc_fd,
     if (rv != 0) {
       LOG(FATAL) << "Worker process returned error";
 
-      _Exit(EXIT_FAILURE);
+      nghttp2_Exit(EXIT_FAILURE);
     }
 
     LOG(NOTICE) << "Worker process shutting down momentarily";
 
-    // call exit(...) instead of _Exit to get leak sanitizer report
-    _Exit(EXIT_SUCCESS);
+    // call exit(...) instead of nghttp2_Exit to get leak sanitizer report
+    nghttp2_Exit(EXIT_SUCCESS);
   }
 
   // parent process
@@ -1354,6 +1354,9 @@ void fill_default_config(Config *config) {
   }
 
   tlsconf.session_timeout = std::chrono::hours(12);
+  tlsconf.ciphers = StringRef::from_lit(nghttp2::ssl::DEFAULT_CIPHER_LIST);
+  tlsconf.client.ciphers =
+      StringRef::from_lit(nghttp2::ssl::DEFAULT_CIPHER_LIST);
 #if OPENSSL_1_1_API
   tlsconf.ecdh_curves = StringRef::from_lit("X25519:P-256:P-384:P-521");
 #else  // !OPENSSL_1_1_API
@@ -1444,7 +1447,7 @@ void fill_default_config(Config *config) {
     auto &listenerconf = connconf.listener;
     {
       // Default accept() backlog
-      listenerconf.backlog = 512;
+      listenerconf.backlog = 65536;
       listenerconf.timeout.sleep = 30_s;
     }
   }
@@ -1694,6 +1697,10 @@ Connections:
               default.  Any  requests which come through  this address
               are replied with 200 HTTP status, without no body.
 
+              To  accept   PROXY  protocol   version  1   on  frontend
+              connection,  specify  "proxyproto" parameter.   This  is
+              disabled by default.
+
               Default: *,3000
   --backlog=<N>
               Set listen backlog size.
@@ -1718,8 +1725,6 @@ Connections:
               timeouts when connecting and  making CONNECT request can
               be     specified    by     --backend-read-timeout    and
               --backend-write-timeout options.
-  --accept-proxy-protocol
-              Accept PROXY protocol version 1 on frontend connection.
 
 Performance:
   -n, --workers=<N>
@@ -1894,8 +1899,15 @@ Timeout:
 
 SSL/TLS:
   --ciphers=<SUITE>
-              Set allowed  cipher list.  The  format of the  string is
-              described in OpenSSL ciphers(1).
+              Set allowed  cipher list  for frontend  connection.  The
+              format of the string is described in OpenSSL ciphers(1).
+              Default: )"
+      << config->tls.ciphers << R"(
+  --client-ciphers=<SUITE>
+              Set  allowed cipher  list for  backend connection.   The
+              format of the string is described in OpenSSL ciphers(1).
+              Default: )"
+      << config->tls.client.ciphers << R"(
   --ecdh-curves=<LIST>
               Set  supported  curve  list  for  frontend  connections.
               <LIST> is a  colon separated list of curve  NID or names
@@ -2089,9 +2101,15 @@ SSL/TLS:
               Default: )"
       << util::duration_str(config->tls.dyn_rec.idle_timeout) << R"(
   --no-http2-cipher-black-list
-              Allow black  listed cipher  suite on  HTTP/2 connection.
-              See  https://tools.ietf.org/html/rfc7540#appendix-A  for
-              the complete HTTP/2 cipher suites black list.
+              Allow  black  listed  cipher suite  on  frontend  HTTP/2
+              connection.                                          See
+              https://tools.ietf.org/html/rfc7540#appendix-A  for  the
+              complete HTTP/2 cipher suites black list.
+  --client-no-http2-cipher-black-list
+              Allow  black  listed  cipher  suite  on  backend  HTTP/2
+              connection.                                          See
+              https://tools.ietf.org/html/rfc7540#appendix-A  for  the
+              complete HTTP/2 cipher suites black list.
   --tls-sct-dir=<DIR>
               Specifies the  directory where  *.sct files  exist.  All
               *.sct   files   in  <DIR>   are   read,   and  sent   as
@@ -2101,6 +2119,33 @@ SSL/TLS:
               argument <CERT>, or  certificate option in configuration
               file.   For   additional  certificates,   use  --subcert
               option.  This option requires OpenSSL >= 1.0.2.
+  --psk-secrets=<PATH>
+              Read list of PSK identity and secrets from <PATH>.  This
+              is used for frontend connection.  The each line of input
+              file  is  formatted  as  <identity>:<hex-secret>,  where
+              <identity> is  PSK identity, and <hex-secret>  is secret
+              in hex.  An  empty line, and line which  starts with '#'
+              are skipped.  The default  enabled cipher list might not
+              contain any PSK cipher suite.  In that case, desired PSK
+              cipher suites  must be  enabled using  --ciphers option.
+              The  desired PSK  cipher suite  may be  black listed  by
+              HTTP/2.   To  use  those   cipher  suites  with  HTTP/2,
+              consider  to  use  --no-http2-cipher-black-list  option.
+              But be aware its implications.
+  --client-psk-secrets=<PATH>
+              Read PSK identity and secrets from <PATH>.  This is used
+              for backend connection.  The each  line of input file is
+              formatted  as <identity>:<hex-secret>,  where <identity>
+              is PSK identity, and <hex-secret>  is secret in hex.  An
+              empty line, and line which  starts with '#' are skipped.
+              The first identity and  secret pair encountered is used.
+              The default  enabled cipher  list might not  contain any
+              PSK  cipher suite.   In  that case,  desired PSK  cipher
+              suites  must be  enabled using  --client-ciphers option.
+              The  desired PSK  cipher suite  may be  black listed  by
+              HTTP/2.   To  use  those   cipher  suites  with  HTTP/2,
+              consider   to  use   --client-no-http2-cipher-black-list
+              option.  But be aware its implications.
 
 HTTP/2 and SPDY:
   -c, --frontend-http2-max-concurrent-streams=<N>
@@ -2262,6 +2307,10 @@ Logging:
 
               Default: )"
       << DEFAULT_ACCESSLOG_FORMAT << R"(
+  --accesslog-write-early
+              Write  access  log  when   response  header  fields  are
+              received   from  backend   rather   than  when   request
+              transaction finishes.
   --errorlog-file=<PATH>
               Set path to write error  log.  To reopen file, send USR1
               signal  to nghttpx.   stderr will  be redirected  to the
@@ -2833,7 +2882,7 @@ int main(int argc, char **argv) {
   fill_default_config(mod_config());
 
   // make copy of stderr
-  util::store_original_fds();
+  store_original_fds();
 
   // First open log files with default configuration, so that we can
   // log errors/warnings while reading configuration files.
@@ -2866,7 +2915,7 @@ int main(int argc, char **argv) {
 
   while (1) {
     static int flag = 0;
-    static option long_options[] = {
+    static constexpr option long_options[] = {
         {SHRPX_OPT_DAEMON.c_str(), no_argument, nullptr, 'D'},
         {SHRPX_OPT_LOG_LEVEL.c_str(), required_argument, nullptr, 'L'},
         {SHRPX_OPT_BACKEND.c_str(), required_argument, nullptr, 'b'},
@@ -3076,6 +3125,12 @@ int main(int argc, char **argv) {
         {SHRPX_OPT_DNS_MAX_TRY.c_str(), required_argument, &flag, 145},
         {SHRPX_OPT_FRONTEND_KEEP_ALIVE_TIMEOUT.c_str(), required_argument,
          &flag, 146},
+        {SHRPX_OPT_PSK_SECRETS.c_str(), required_argument, &flag, 147},
+        {SHRPX_OPT_CLIENT_PSK_SECRETS.c_str(), required_argument, &flag, 148},
+        {SHRPX_OPT_CLIENT_NO_HTTP2_CIPHER_BLACK_LIST.c_str(), no_argument,
+         &flag, 149},
+        {SHRPX_OPT_CLIENT_CIPHERS.c_str(), required_argument, &flag, 150},
+        {SHRPX_OPT_ACCESSLOG_WRITE_EARLY.c_str(), no_argument, &flag, 151},
         {nullptr, 0, nullptr, 0}};
 
     int option_index = 0;
@@ -3765,6 +3820,28 @@ int main(int argc, char **argv) {
         // --frontend-keep-alive-timeout
         cmdcfgs.emplace_back(SHRPX_OPT_FRONTEND_KEEP_ALIVE_TIMEOUT,
                              StringRef{optarg});
+        break;
+      case 147:
+        // --psk-secrets
+        cmdcfgs.emplace_back(SHRPX_OPT_PSK_SECRETS, StringRef{optarg});
+        break;
+      case 148:
+        // --client-psk-secrets
+        cmdcfgs.emplace_back(SHRPX_OPT_CLIENT_PSK_SECRETS, StringRef{optarg});
+        break;
+      case 149:
+        // --client-no-http2-cipher-black-list
+        cmdcfgs.emplace_back(SHRPX_OPT_CLIENT_NO_HTTP2_CIPHER_BLACK_LIST,
+                             StringRef::from_lit("yes"));
+        break;
+      case 150:
+        // --client-ciphers
+        cmdcfgs.emplace_back(SHRPX_OPT_CLIENT_CIPHERS, StringRef{optarg});
+        break;
+      case 151:
+        // --accesslog-write-early
+        cmdcfgs.emplace_back(SHRPX_OPT_ACCESSLOG_WRITE_EARLY,
+                             StringRef::from_lit("yes"));
         break;
       default:
         break;

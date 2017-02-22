@@ -79,7 +79,8 @@ bool recorded(const std::chrono::steady_clock::time_point &t) {
 } // namespace
 
 Config::Config()
-    : data_length(-1),
+    : ciphers(ssl::DEFAULT_CIPHER_LIST),
+      data_length(-1),
       addrs(nullptr),
       nreqs(1),
       nclients(1),
@@ -509,7 +510,7 @@ void Client::disconnect() {
   ev_io_stop(worker->loop, &wev);
   ev_io_stop(worker->loop, &rev);
   if (ssl) {
-    SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
+    SSL_set_shutdown(ssl, SSL_get_shutdown(ssl) | SSL_RECEIVED_SHUTDOWN);
     ERR_clear_error();
 
     if (SSL_shutdown(ssl) != 1) {
@@ -595,7 +596,8 @@ void print_server_tmp_key(SSL *ssl) {
 
   std::cout << "Server Temp Key: ";
 
-  switch (EVP_PKEY_id(key)) {
+  auto pkey_id = EVP_PKEY_id(key);
+  switch (pkey_id) {
   case EVP_PKEY_RSA:
     std::cout << "RSA " << EVP_PKEY_bits(key) << " bits" << std::endl;
     break;
@@ -615,6 +617,10 @@ void print_server_tmp_key(SSL *ssl) {
               << std::endl;
     break;
   }
+  default:
+    std::cout << OBJ_nid2sn(pkey_id) << " " << EVP_PKEY_bits(key) << " bits"
+              << std::endl;
+    break;
   }
 #endif // OPENSSL_VERSION_NUMBER >= 0x10002000L
 }
@@ -1697,6 +1703,8 @@ Options:
   --ciphers=<SUITE>
               Set allowed  cipher list.  The  format of the  string is
               described in OpenSSL ciphers(1).
+              Default: )"
+      << config.ciphers << R"(
   -p, --no-tls-proto=<PROTOID>
               Specify ALPN identifier of the  protocol to be used when
               accessing http URI without SSL/TLS.)";
@@ -1831,7 +1839,7 @@ int main(int argc, char **argv) {
   bool nreqs_set_manually = false;
   while (1) {
     static int flag = 0;
-    static option long_options[] = {
+    constexpr static option long_options[] = {
         {"requests", required_argument, nullptr, 'n'},
         {"clients", required_argument, nullptr, 'c'},
         {"data", required_argument, nullptr, 'd'},
@@ -2241,15 +2249,8 @@ int main(int argc, char **argv) {
   SSL_CTX_set_mode(ssl_ctx, SSL_MODE_AUTO_RETRY);
   SSL_CTX_set_mode(ssl_ctx, SSL_MODE_RELEASE_BUFFERS);
 
-  const char *ciphers;
-  if (config.ciphers.empty()) {
-    ciphers = ssl::DEFAULT_CIPHER_LIST;
-  } else {
-    ciphers = config.ciphers.c_str();
-  }
-
-  if (SSL_CTX_set_cipher_list(ssl_ctx, ciphers) == 0) {
-    std::cerr << "SSL_CTX_set_cipher_list with " << ciphers
+  if (SSL_CTX_set_cipher_list(ssl_ctx, config.ciphers.c_str()) == 0) {
+    std::cerr << "SSL_CTX_set_cipher_list with " << config.ciphers
               << " failed: " << ERR_error_string(ERR_get_error(), nullptr)
               << std::endl;
     exit(EXIT_FAILURE);
