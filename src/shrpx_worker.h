@@ -136,7 +136,8 @@ struct SharedDownstreamAddr {
         next{0},
         http1_pri{},
         http2_pri{},
-        affinity{AFFINITY_NONE} {}
+        affinity{AFFINITY_NONE},
+        redirect_if_not_tls{false} {}
 
   SharedDownstreamAddr(const SharedDownstreamAddr &) = delete;
   SharedDownstreamAddr(SharedDownstreamAddr &&) = delete;
@@ -149,7 +150,7 @@ struct SharedDownstreamAddr {
   // AFFINITY_IP.
   std::vector<AffinityHash> affinity_hash;
   // List of Http2Session which is not fully utilized (i.e., the
-  // server advertized maximum concurrency is not reached).  We will
+  // server advertised maximum concurrency is not reached).  We will
   // coalesce as much stream as possible in one Http2Session to fully
   // utilize TCP connection.
   //
@@ -171,6 +172,9 @@ struct SharedDownstreamAddr {
   WeightedPri http2_pri;
   // Session affinity
   shrpx_session_affinity affinity;
+  // true if this group requires that client connection must be TLS,
+  // and the request must be redirected to https URI.
+  bool redirect_if_not_tls;
 };
 
 struct DownstreamAddrGroup {

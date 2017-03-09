@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -100,10 +101,8 @@ func newServerTesterInternal(src_args []string, t *testing.T, handler http.Handl
 
 	args := []string{}
 
-	backendTLS := false
-	dns := false
-	externalDNS := false
-	acceptProxyProtocol := false
+	var backendTLS, dns, externalDNS, acceptProxyProtocol, redirectIfNotTLS bool
+
 	for _, k := range src_args {
 		switch k {
 		case "--http2-bridge":
@@ -115,6 +114,8 @@ func newServerTesterInternal(src_args []string, t *testing.T, handler http.Handl
 			externalDNS = true
 		case "--accept-proxy-protocol":
 			acceptProxyProtocol = true
+		case "--redirect-if-not-tls":
+			redirectIfNotTLS = true
 		default:
 			args = append(args, k)
 		}
@@ -163,6 +164,10 @@ func newServerTesterInternal(src_args []string, t *testing.T, handler http.Handl
 		b += ";dns"
 	}
 
+	if redirectIfNotTLS {
+		b += ";redirect-if-not-tls"
+	}
+
 	noTLS := ";no-tls"
 	if frontendTLS {
 		noTLS = ""
@@ -191,6 +196,9 @@ func newServerTesterInternal(src_args []string, t *testing.T, handler http.Handl
 		spdyFrCh:     make(chan spdy.Frame),
 		errCh:        make(chan error),
 	}
+
+	st.cmd.Stdout = os.Stdout
+	st.cmd.Stderr = os.Stderr
 
 	if err := st.cmd.Start(); err != nil {
 		st.t.Fatalf("Error starting %v: %v", serverBin, err)
@@ -793,6 +801,7 @@ func cloneHeader(h http.Header) http.Header {
 func noopHandler(w http.ResponseWriter, r *http.Request) {}
 
 type APIResponse struct {
-	Status string `json:"status,omitempty"`
-	Code   int    `json:"code,omitempty"`
+	Status string                 `json:"status,omitempty"`
+	Code   int                    `json:"code,omitempty"`
+	Data   map[string]interface{} `json:"data,omitempty"`
 }

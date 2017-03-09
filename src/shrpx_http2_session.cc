@@ -43,6 +43,7 @@
 #include "shrpx_http.h"
 #include "shrpx_worker.h"
 #include "shrpx_connect_blocker.h"
+#include "shrpx_log.h"
 #include "http2.h"
 #include "util.h"
 #include "base64.h"
@@ -1571,7 +1572,11 @@ int send_data_callback(nghttp2_session *session, nghttp2_frame *frame,
 
   wb->append(PADDING.data(), padlen);
 
-  downstream->reset_downstream_wtimer();
+  if (input->rleft() == 0) {
+    downstream->disable_downstream_wtimer();
+  } else {
+    downstream->reset_downstream_wtimer();
+  }
 
   if (length > 0) {
     // This is important because it will handle flow control

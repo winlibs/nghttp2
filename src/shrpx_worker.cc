@@ -76,7 +76,8 @@ bool match_shared_downstream_addr(
     return false;
   }
 
-  if (lhs->affinity != rhs->affinity) {
+  if (lhs->affinity != rhs->affinity ||
+      lhs->redirect_if_not_tls != rhs->redirect_if_not_tls) {
     return false;
   }
 
@@ -191,6 +192,7 @@ void Worker::replace_downstream_config(
     shared_addr->addrs.resize(src.addrs.size());
     shared_addr->affinity = src.affinity;
     shared_addr->affinity_hash = src.affinity_hash;
+    shared_addr->redirect_if_not_tls = src.redirect_if_not_tls;
 
     size_t num_http1 = 0;
     size_t num_http2 = 0;
@@ -309,9 +311,9 @@ void Worker::wait() {
 void Worker::run_async() {
 #ifndef NOTHREADS
   fut_ = std::async(std::launch::async, [this] {
-    (void)reopen_log_files();
+    (void)reopen_log_files(get_config()->logging);
     ev_run(loop_);
-    delete log_config();
+    delete_log_config();
   });
 #endif // !NOTHREADS
 }
@@ -347,7 +349,9 @@ void Worker::process_events() {
 
   ev_timer_start(loop_, &proc_wev_timer_);
 
-  auto worker_connections = get_config()->conn.upstream.worker_connections;
+  auto config = get_config();
+
+  auto worker_connections = config->conn.upstream.worker_connections;
 
   switch (wev.type) {
   case NEW_CONNECTION: {
@@ -388,7 +392,7 @@ void Worker::process_events() {
     WLOG(NOTICE, this) << "Reopening log files: worker process (thread " << this
                        << ")";
 
-    reopen_log_files();
+    reopen_log_files(config->logging);
 
     break;
   case GRACEFUL_SHUTDOWN:

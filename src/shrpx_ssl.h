@@ -40,6 +40,7 @@
 #endif // HAVE_NEVERBLEED
 
 #include "network.h"
+#include "shrpx_config.h"
 #include "shrpx_router.h"
 
 namespace shrpx {
@@ -136,13 +137,20 @@ public:
   // |index| is returned.  We support wildcard pattern.  The left most
   // '*' is considered as wildcard character, and it must match at
   // least one character.  If the same pattern has been already added,
-  // this function is noop.
+  // this function does not alter the tree, and returns the existing
+  // matching index.
   //
   // The caller should lower-case |hostname| since this function does
   // do that, and lookup function performs case-sensitive match.
   //
   // TODO Treat wildcard pattern described as RFC 6125.
-  void add_cert(const StringRef &hostname, size_t index);
+  //
+  // This function returns the index.  It returns -1 if it fails
+  // (e.g., hostname is too long).  If the returned index equals to
+  // |index|, then hostname is added to the tree with the value
+  // |index|.  If it is not -1, and does not equal to |index|, same
+  // hostname has already been added to the tree.
+  ssize_t add_cert(const StringRef &hostname, size_t index);
 
   // Looks up index using the given |hostname|.  The exact match takes
   // precedence over wildcard match.  For wildcard match, longest
@@ -166,12 +174,14 @@ private:
   std::vector<WildcardPattern> wildcard_patterns_;
 };
 
-// Adds hostnames in |cert| to lookup tree |lt|.  The subjectAltNames
-// and commonName are considered as eligible hostname.  If there is at
-// least one dNSName in subjectAltNames, commonName is not considered.
-// This function returns 0 if it succeeds, or -1.
-int cert_lookup_tree_add_cert_from_x509(CertLookupTree *lt, size_t idx,
-                                        X509 *cert);
+// Adds hostnames in certificate in |ssl_ctx| to lookup tree |lt|.
+// The subjectAltNames and commonName are considered as eligible
+// hostname.  If there is at least one dNSName in subjectAltNames,
+// commonName is not considered.  |ssl_ctx| is also added to
+// |indexed_ssl_ctx|.  This function returns 0 if it succeeds, or -1.
+int cert_lookup_tree_add_ssl_ctx(
+    CertLookupTree *lt, std::vector<std::vector<SSL_CTX *>> &indexed_ssl_ctx,
+    SSL_CTX *ssl_ctx);
 
 // Returns true if |proto| is included in the
 // protocol list |protos|.
@@ -194,14 +204,18 @@ int set_alpn_prefs(std::vector<unsigned char> &out,
 // construct default SSL_CTX.  If subcerts are available
 // (get_config()->subcerts), caller should provide CertLookupTree
 // object as |cert_tree| parameter, otherwise SNI does not work.  All
-// the created SSL_CTX is stored into |all_ssl_ctx|.
-SSL_CTX *setup_server_ssl_context(std::vector<SSL_CTX *> &all_ssl_ctx,
-                                  CertLookupTree *cert_tree
+// the created SSL_CTX is stored into |all_ssl_ctx|.  They are also
+// added to |indexed_ssl_ctx|.  |cert_tree| uses its index to
+// associate hostname to the SSL_CTX.
+SSL_CTX *
+setup_server_ssl_context(std::vector<SSL_CTX *> &all_ssl_ctx,
+                         std::vector<std::vector<SSL_CTX *>> &indexed_ssl_ctx,
+                         CertLookupTree *cert_tree
 #ifdef HAVE_NEVERBLEED
-                                  ,
-                                  neverbleed_t *nb
+                         ,
+                         neverbleed_t *nb
 #endif // HAVE_NEVERBLEED
-                                  );
+                         );
 
 // Setups client side SSL_CTX.
 SSL_CTX *setup_downstream_client_ssl_context(
@@ -222,7 +236,7 @@ std::unique_ptr<CertLookupTree> create_cert_lookup_tree();
 SSL *create_ssl(SSL_CTX *ssl_ctx);
 
 // Returns true if SSL/TLS is enabled on upstream
-bool upstream_tls_enabled();
+bool upstream_tls_enabled(const ConnectionConfig &connconf);
 
 // Performs TLS hostname match.  |pattern| can contain wildcard
 // character '*', which matches prefix of target hostname.  There are
@@ -244,6 +258,11 @@ SSL_SESSION *reuse_tls_session(const TLSSessionCache &addr);
 // Loads certificate form file |filename|.  The caller should delete
 // the returned object using X509_free().
 X509 *load_certificate(const char *filename);
+
+// Returns TLS version from |v|.  The returned value is defined in
+// OpenSSL header file.  This function returns -1 if |v| is not valid
+// TLS version string.
+int proto_version_from_string(const StringRef &v);
 
 } // namespace ssl
 

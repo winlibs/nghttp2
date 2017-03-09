@@ -36,6 +36,7 @@
 #include "shrpx_worker.h"
 #include "shrpx_http2_session.h"
 #include "shrpx_ssl.h"
+#include "shrpx_log.h"
 #include "http2.h"
 #include "util.h"
 
@@ -88,7 +89,8 @@ void connect_timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
 
   downstream->pop_downstream_connection();
 
-  auto ndconn = handler->get_downstream_connection(downstream);
+  int rv;
+  auto ndconn = handler->get_downstream_connection(rv, downstream);
   if (ndconn) {
     if (downstream->attach_downstream_connection(std::move(ndconn)) == 0) {
       return;
@@ -97,7 +99,13 @@ void connect_timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
 
   downstream->set_request_state(Downstream::CONNECT_FAIL);
 
-  if (upstream->on_downstream_abort_request(downstream, 504) != 0) {
+  if (rv == SHRPX_ERR_TLS_REQUIRED) {
+    rv = upstream->on_downstream_abort_request_with_https_redirect(downstream);
+  } else {
+    rv = upstream->on_downstream_abort_request(downstream, 504);
+  }
+
+  if (rv != 0) {
     delete handler;
   }
 }
@@ -131,7 +139,8 @@ void backend_retry(Downstream *downstream) {
 
   downstream->pop_downstream_connection();
 
-  auto ndconn = handler->get_downstream_connection(downstream);
+  int rv;
+  auto ndconn = handler->get_downstream_connection(rv, downstream);
   if (ndconn) {
     if (downstream->attach_downstream_connection(std::move(ndconn)) == 0) {
       return;
@@ -140,7 +149,13 @@ void backend_retry(Downstream *downstream) {
 
   downstream->set_request_state(Downstream::CONNECT_FAIL);
 
-  if (upstream->on_downstream_abort_request(downstream, 503) != 0) {
+  if (rv == SHRPX_ERR_TLS_REQUIRED) {
+    rv = upstream->on_downstream_abort_request_with_https_redirect(downstream);
+  } else {
+    rv = upstream->on_downstream_abort_request(downstream, 503);
+  }
+
+  if (rv != 0) {
     delete handler;
   }
 }
@@ -834,11 +849,10 @@ int htp_hdrs_completecb(http_parser *htp) {
   resp.http_major = htp->http_major;
   resp.http_minor = htp->http_minor;
 
-  if (resp.http_major > 1) {
-    // Normalize HTTP version, since we use http_major == 2 specially
-    // in Downstream::expect_response_trailer().
+  if (resp.http_major > 1 || req.http_minor > 1) {
     resp.http_major = 1;
     resp.http_minor = 1;
+    return -1;
   }
 
   auto dconn = downstream->get_downstream_connection();

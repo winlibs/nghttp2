@@ -105,12 +105,12 @@ Connections
     The  parameters are  delimited  by  ";".  The  available
     parameters       are:      "proto=<PROTO>",       "tls",
     "sni=<SNI_HOST>",         "fall=<N>",        "rise=<N>",
-    "affinity=<METHOD>", and "dns".   The parameter consists
-    of keyword,  and optionally  followed by "="  and value.
-    For example,  the parameter  "proto=h2" consists  of the
-    keyword  "proto" and  value "h2".   The parameter  "tls"
-    consists  of  the  keyword "tls"  without  value.   Each
-    parameter is described as follows.
+    "affinity=<METHOD>",  "dns", and  "redirect-if-not-tls".
+    The  parameter  consists   of  keyword,  and  optionally
+    followed by  "=" and value.  For  example, the parameter
+    "proto=h2"  consists of  the keyword  "proto" and  value
+    "h2".  The parameter "tls" consists of the keyword "tls"
+    without value.  Each parameter is described as follows.
 
     The backend application protocol  can be specified using
     optional  "proto"   parameter,  and   in  the   form  of
@@ -166,6 +166,19 @@ Connections
     frequently.   If  "dns"  is given,  name  resolution  of
     backend   host   name   at  start   up,   or   reloading
     configuration is skipped.
+
+    If "redirect-if-not-tls" parameter  is used, the matched
+    backend  requires   that  frontend  connection   is  TLS
+    encrypted.  If it isn't, nghttpx responds to the request
+    with 308  status code, and  https URI the  client should
+    use instead  is included in Location  header field.  The
+    port number in  redirect URI is 443 by  default, and can
+    be  changed using  :option:`--redirect-https-port` option.   If at
+    least one  backend has  "redirect-if-not-tls" parameter,
+    this feature is enabled  for all backend servers sharing
+    the   same   <PATTERN>.    It    is   advised   to   set
+    "redirect-if-no-tls"    parameter   to    all   backends
+    explicitly if this feature is desired.
 
     Since ";" and ":" are  used as delimiter, <PATTERN> must
     not  contain these  characters.  Since  ";" has  special
@@ -248,6 +261,14 @@ Performance
     Set the number of worker threads.
 
     Default: ``1``
+
+.. option:: --single-thread
+
+    Run everything in one  thread inside the worker process.
+    This   feature   is   provided  for   better   debugging
+    experience,  or  for  the platforms  which  lack  thread
+    support.   If  threading  is disabled,  this  option  is
+    always enabled.
 
 .. option:: --read-rate=<SIZE>
 
@@ -418,7 +439,7 @@ Timeout
     Specify write  timeout for  HTTP/2 and SPDY  streams.  0
     means no timeout.
 
-    Default: ``0``
+    Default: ``1m``
 
 .. option:: --backend-read-timeout=<DURATION>
 
@@ -532,9 +553,14 @@ SSL/TLS
 
     Specify  additional certificate  and  private key  file.
     nghttpx will  choose certificates based on  the hostname
-    indicated  by  client  using TLS  SNI  extension.   This
-    option  can  be  used  multiple  times.   To  make  OCSP
-    stapling work, <CERTPATH> must be absolute path.
+    indicated by client using TLS SNI extension.  If nghttpx
+    is  built with  OpenSSL >=  1.0.2, signature  algorithms
+    (e.g., ECDSA+SHA256, RSA+SHA256) presented by client are
+    also taken  into consideration.  This allows  nghttpx to
+    send ECDSA certificate to  modern clients, while sending
+    RSA based certificate to older clients.  This option can
+    be  used multiple  times.  To  make OCSP  stapling work,
+    <CERTPATH> must be absolute path.
 
     Additional parameter  can be specified in  <PARAM>.  The
     available <PARAM> is "sct-dir=<DIR>".
@@ -560,7 +586,7 @@ SSL/TLS
     only  and any  white spaces  are  treated as  a part  of
     protocol string.
 
-    Default: ``h2,h2-16,h2-14,spdy/3.1,http/1.1``
+    Default: ``h2,h2-16,h2-14,http/1.1``
 
 .. option:: --verify-client
 
@@ -582,19 +608,29 @@ SSL/TLS
     Path to  file that  contains client certificate  used in
     backend client authentication.
 
-.. option:: --tls-proto-list=<LIST>
+.. option:: --tls-min-proto-version=<VER>
 
-    Comma delimited list of  SSL/TLS protocol to be enabled.
-    The following protocols  are available: TLSv1.2, TLSv1.1
-    and   TLSv1.0.    The   name   matching   is   done   in
-    case-insensitive   manner.    The  parameter   must   be
-    delimited by  a single comma  only and any  white spaces
-    are  treated  as a  part  of  protocol string.   If  the
-    protocol list advertised by client does not overlap this
-    list,  you  will  receive  the  error  message  "unknown
-    protocol".
+    Specify minimum SSL/TLS protocol.   The name matching is
+    done in  case-insensitive manner.  The  versions between
+    :option:`--tls-min-proto-version` and  :option:`\--tls-max-proto-version` are
+    enabled.  If the protocol list advertised by client does
+    not  overlap  this range,  you  will  receive the  error
+    message "unknown protocol".  The available versions are:
+    TLSv1.2, TLSv1.1, and TLSv1.0
 
-    Default: ``TLSv1.2,TLSv1.1``
+    Default: ``TLSv1.1``
+
+.. option:: --tls-max-proto-version=<VER>
+
+    Specify maximum SSL/TLS protocol.   The name matching is
+    done in  case-insensitive manner.  The  versions between
+    :option:`--tls-min-proto-version` and  :option:`\--tls-max-proto-version` are
+    enabled.  If the protocol list advertised by client does
+    not  overlap  this range,  you  will  receive the  error
+    message "unknown protocol".  The available versions are:
+    TLSv1.2, TLSv1.1, and TLSv1.0
+
+    Default: ``TLSv1.2``
 
 .. option:: --tls-ticket-key-file=<PATH>
 
@@ -1188,13 +1224,21 @@ HTTP
 
     Change server response header field value to <NAME>.
 
-    Default: ``nghttpx nghttp2/1.19.0``
+    Default: ``nghttpx``
 
 .. option:: --no-server-rewrite
 
     Don't rewrite server header field in default mode.  When
     :option:`--http2-proxy` is used, these headers will not be altered
     regardless of this option.
+
+.. option:: --redirect-https-port=<PORT>
+
+    Specify the port number which appears in Location header
+    field  when  redirect  to  HTTPS  URI  is  made  due  to
+    "redirect-if-not-tls" parameter in :option:`--backend` option.
+
+    Default: ``443``
 
 
 API
@@ -1232,6 +1276,15 @@ DNS
     lookup.
 
     Default: ``2``
+
+.. option:: --frontend-max-requests=<N>
+
+    The number  of requests that single  frontend connection
+    can process.  For HTTP/2, this  is the number of streams
+    in  one  HTTP/2 connection.   For  HTTP/1,  this is  the
+    number of keep alive requests.  This is hint to nghttpx,
+    and it  may allow additional few  requests.  The default
+    value is unlimited.
 
 
 Debug
@@ -1405,14 +1458,18 @@ SIGUSR1
   Reopen log files.
 
 SIGUSR2
+
   Fork and execute nghttpx.  It will execute the binary in the same
-  path with same command-line arguments and environment variables.
-  After new process comes up, sending SIGQUIT to the original process
-  to perform hot swapping.  The difference between SIGUSR2 + SIGQUIT
-  and SIGHUP is that former is usually used to execute new binary, and
-  the master process is newly spawned.  On the other hand, the latter
-  just reloads configuration file, and the same master process
-  continues to exist.
+  path with same command-line arguments and environment variables.  As
+  of nghttpx version 1.20.0, the new master process sends SIGQUIT to
+  the original master process when it is ready to serve requests.  For
+  the earlier versions of nghttpx, user has to send SIGQUIT to the
+  original master process.
+
+  The difference between SIGUSR2 (+ SIGQUIT) and SIGHUP is that former
+  is usually used to execute new binary, and the master process is
+  newly spawned.  On the other hand, the latter just reloads
+  configuration file, and the same master process continues to exist.
 
 .. note::
 
@@ -1804,6 +1861,18 @@ respectively.
         existing header fields, and then add required header fields.
         It is an error to call this method twice for a given request.
 
+    .. rb:method:: send_info(status, headers)
+
+        Send non-final (informational) response to a client.  *status*
+        must be in the range [100, 199], inclusive.  *headers* is a
+        hash containing response header fields.  Its key must be a
+        string, and the associated value must be either string or
+        array of strings.  Since this is not a final response, even if
+        this method is invoked, request is still forwarded to a
+        backend unless :rb:meth:`Nghttpx::Response#return` is called.
+        This method can be called multiple times.  It cannot be called
+        after :rb:meth:`Nghttpx::Response#return` is called.
+
 MRUBY EXAMPLES
 ~~~~~~~~~~~~~~
 
@@ -1865,17 +1934,20 @@ status
 code
   HTTP status code
 
+Additionally, depending on the API endpoint, ``data`` key may be
+present, and its value contains the API endpoint specific data.
+
 We wrote "normally", since nghttpx may return ordinal HTML response in
 some cases where the error has occurred before reaching API endpoint
 (e.g., header field is too large).
 
 The following section describes available API endpoints.
 
-PUT /api/v1beta1/backendconfig
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+POST /api/v1beta1/backendconfig
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 This API replaces the current backend server settings with the
-requested ones.  The request method should be PUT, but POST is also
+requested ones.  The request method should be POST, but PUT is also
 acceptable.  The request body must be nghttpx configuration file
 format.  For configuration file format, see `FILES`_ section.  The
 line separator inside the request body must be single LF (0x0A).
@@ -1895,6 +1967,25 @@ The one limitation is that only numeric IP address is allowd in
 :option:`backend <--backend>` in request body unless "dns" parameter
 is used while non numeric hostname is allowed in command-line or
 configuration file is read using :option:`--conf`.
+
+GET /api/v1beta1/configrevision
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This API returns configuration revision of the current nghttpx.  The
+configuration revision is opaque string, and it changes after each
+reloading by SIGHUP.  With this API, an external application knows
+that whether nghttpx has finished reloading its configuration by
+comparing the configuration revisions between before and after
+reloading.  It is recommended to disable persistent (keep-alive)
+connection for this purpose in order to avoid to send a request using
+the reused connection which may bound to an old process.
+
+This API returns response including ``data`` key.  Its value is JSON
+object, and it contains at least the following key:
+
+configRevision
+  The configuration revision of the current nghttpx
+
 
 SEE ALSO
 --------

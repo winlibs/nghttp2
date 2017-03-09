@@ -44,6 +44,7 @@
 #include "shrpx_accept_handler.h"
 #include "shrpx_memcached_dispatcher.h"
 #include "shrpx_signal.h"
+#include "shrpx_log.h"
 #include "util.h"
 #include "template.h"
 
@@ -199,12 +200,13 @@ void ConnectionHandler::worker_replace_downstream(
 
 int ConnectionHandler::create_single_worker() {
   cert_tree_ = ssl::create_cert_lookup_tree();
-  auto sv_ssl_ctx = ssl::setup_server_ssl_context(all_ssl_ctx_, cert_tree_.get()
+  auto sv_ssl_ctx = ssl::setup_server_ssl_context(
+      all_ssl_ctx_, indexed_ssl_ctx_, cert_tree_.get()
 #ifdef HAVE_NEVERBLEED
-                                                                    ,
-                                                  nb_.get()
+                                          ,
+      nb_.get()
 #endif // HAVE_NEVERBLEED
-                                                      );
+          );
   auto cl_ssl_ctx = ssl::setup_downstream_client_ssl_context(
 #ifdef HAVE_NEVERBLEED
       nb_.get()
@@ -247,12 +249,13 @@ int ConnectionHandler::create_worker_thread(size_t num) {
   assert(workers_.size() == 0);
 
   cert_tree_ = ssl::create_cert_lookup_tree();
-  auto sv_ssl_ctx = ssl::setup_server_ssl_context(all_ssl_ctx_, cert_tree_.get()
+  auto sv_ssl_ctx = ssl::setup_server_ssl_context(
+      all_ssl_ctx_, indexed_ssl_ctx_, cert_tree_.get()
 #ifdef HAVE_NEVERBLEED
-                                                                    ,
-                                                  nb_.get()
+                                          ,
+      nb_.get()
 #endif // HAVE_NEVERBLEED
-                                                      );
+          );
   auto cl_ssl_ctx = ssl::setup_downstream_client_ssl_context(
 #ifdef HAVE_NEVERBLEED
       nb_.get()
@@ -330,7 +333,7 @@ void ConnectionHandler::join_worker() {
 }
 
 void ConnectionHandler::graceful_shutdown_worker() {
-  if (get_config()->num_worker == 1) {
+  if (single_worker_) {
     return;
   }
 
@@ -349,10 +352,10 @@ void ConnectionHandler::graceful_shutdown_worker() {
   ev_async_start(loop_, &thread_join_asyncev_);
 
   thread_join_fut_ = std::async(std::launch::async, [this]() {
-    (void)reopen_log_files();
+    (void)reopen_log_files(get_config()->logging);
     join_worker();
     ev_async_send(get_loop(), &thread_join_asyncev_);
-    delete log_config();
+    delete_log_config();
   });
 #endif // NOTHREADS
 }
@@ -366,7 +369,7 @@ int ConnectionHandler::handle_connection(int fd, sockaddr *addr, int addrlen,
 
   auto config = get_config();
 
-  if (config->num_worker == 1) {
+  if (single_worker_) {
     auto &upstreamconf = config->conn.upstream;
     if (single_worker_->get_worker_stat()->num_connections >=
         upstreamconf.worker_connections) {
@@ -839,6 +842,11 @@ void ConnectionHandler::send_serial_event(SerialEvent ev) {
 
 SSL_CTX *ConnectionHandler::get_ssl_ctx(size_t idx) const {
   return all_ssl_ctx_[idx];
+}
+
+const std::vector<SSL_CTX *> &
+ConnectionHandler::get_indexed_ssl_ctx(size_t idx) const {
+  return indexed_ssl_ctx_[idx];
 }
 
 } // namespace shrpx

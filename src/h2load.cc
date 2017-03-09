@@ -269,9 +269,7 @@ void conn_timeout_cb(EV_P_ ev_timer *w, int revents) {
 
 namespace {
 bool check_stop_client_request_timeout(Client *client, ev_timer *w) {
-  auto nreq = client->req_todo - client->req_started;
-
-  if (nreq == 0 ||
+  if (client->req_left == 0 ||
       client->streams.size() >= client->session->max_concurrent_streams()) {
     // no more requests to make, stop timer
     ev_timer_stop(client->worker->loop, w);
@@ -330,6 +328,8 @@ Client::Client(uint32_t id, Worker *worker, size_t req_todo)
       reqidx(0),
       state(CLIENT_IDLE),
       req_todo(req_todo),
+      req_left(req_todo),
+      req_inflight(0),
       req_started(0),
       req_done(0),
       id(id),
@@ -467,16 +467,13 @@ int Client::try_again_or_fail() {
 
   if (new_connection_requested) {
     new_connection_requested = false;
-    if (req_started < req_todo) {
+    if (req_left) {
       // At the moment, we don't have a facility to re-start request
       // already in in-flight.  Make them fail.
-      auto req_abandoned = req_started - req_done;
+      worker->stats.req_failed += req_inflight;
+      worker->stats.req_error += req_inflight;
 
-      worker->stats.req_failed += req_abandoned;
-      worker->stats.req_error += req_abandoned;
-      worker->stats.req_done += req_abandoned;
-
-      req_done = req_started;
+      req_inflight = 0;
 
       // Keep using current address
       if (connect() == 0) {
@@ -528,16 +525,18 @@ void Client::disconnect() {
 }
 
 int Client::submit_request() {
-  ++worker->stats.req_started;
   if (session->submit_request() != 0) {
     return -1;
   }
 
+  ++worker->stats.req_started;
+  --req_left;
   ++req_started;
+  ++req_inflight;
 
   // if an active timeout is set and this is the last request to be submitted
   // on this connection, start the active timeout.
-  if (worker->config->conn_active_timeout > 0. && req_started >= req_todo) {
+  if (worker->config->conn_active_timeout > 0. && req_left == 0) {
     ev_timer_start(worker->loop, &conn_active_watcher);
   }
 
@@ -545,40 +544,36 @@ int Client::submit_request() {
 }
 
 void Client::process_timedout_streams() {
-  for (auto &req_stat : worker->stats.req_stats) {
+  for (auto &p : streams) {
+    auto &req_stat = p.second.req_stat;
     if (!req_stat.completed) {
       req_stat.stream_close_time = std::chrono::steady_clock::now();
     }
   }
 
-  auto req_timed_out = req_todo - req_done;
-  worker->stats.req_timedout += req_timed_out;
+  worker->stats.req_timedout += req_inflight;
 
   process_abandoned_streams();
 }
 
 void Client::process_abandoned_streams() {
-  auto req_abandoned = req_todo - req_done;
+  auto req_abandoned = req_inflight + req_left;
 
   worker->stats.req_failed += req_abandoned;
   worker->stats.req_error += req_abandoned;
-  worker->stats.req_done += req_abandoned;
 
-  req_done = req_todo;
+  req_inflight = 0;
+  req_left = 0;
 }
 
 void Client::process_request_failure() {
-  auto req_abandoned = req_todo - req_started;
+  worker->stats.req_failed += req_left;
+  worker->stats.req_error += req_left;
 
-  worker->stats.req_failed += req_abandoned;
-  worker->stats.req_error += req_abandoned;
-  worker->stats.req_done += req_abandoned;
+  req_left = 0;
 
-  req_done += req_abandoned;
-
-  if (req_done == req_todo) {
+  if (req_inflight == 0) {
     terminate_session();
-    return;
   }
 }
 
@@ -711,6 +706,9 @@ void Client::on_status_code(int32_t stream_id, uint16_t status) {
 }
 
 void Client::on_stream_close(int32_t stream_id, bool success, bool final) {
+  ++req_done;
+  --req_inflight;
+
   auto req_stat = get_req_stat(stream_id);
   if (!req_stat) {
     return;
@@ -741,22 +739,18 @@ void Client::on_stream_close(int32_t stream_id, bool success, bool final) {
   }
 
   ++worker->stats.req_done;
-  ++req_done;
 
   worker->report_progress();
   streams.erase(stream_id);
-  if (req_done == req_todo) {
+  if (req_left == 0 && req_inflight == 0) {
     terminate_session();
     return;
   }
 
-  if (!config.timing_script && !final) {
-    if (req_started < req_todo) {
-      if (submit_request() != 0) {
-        process_request_failure();
-      }
-      return;
-    }
+  if (!config.timing_script && !final && req_left > 0 &&
+      submit_request() != 0) {
+    process_request_failure();
+    return;
   }
 }
 
@@ -871,8 +865,7 @@ int Client::connection_made() {
   record_connect_time();
 
   if (!config.timing_script) {
-    auto nreq =
-        std::min(req_todo - req_started, session->max_concurrent_streams());
+    auto nreq = std::min(req_left, session->max_concurrent_streams());
     for (; nreq > 0; --nreq) {
       if (submit_request() != 0) {
         process_request_failure();
@@ -2248,6 +2241,13 @@ int main(int argc, char **argv) {
   SSL_CTX_set_options(ssl_ctx, ssl_opts);
   SSL_CTX_set_mode(ssl_ctx, SSL_MODE_AUTO_RETRY);
   SSL_CTX_set_mode(ssl_ctx, SSL_MODE_RELEASE_BUFFERS);
+
+  if (nghttp2::ssl::ssl_ctx_set_proto_versions(
+          ssl_ctx, nghttp2::ssl::NGHTTP2_TLS_MIN_VERSION,
+          nghttp2::ssl::NGHTTP2_TLS_MAX_VERSION) != 0) {
+    std::cerr << "Could not set TLS versions" << std::endl;
+    exit(EXIT_FAILURE);
+  }
 
   if (SSL_CTX_set_cipher_list(ssl_ctx, config.ciphers.c_str()) == 0) {
     std::cerr << "SSL_CTX_set_cipher_list with " << config.ciphers

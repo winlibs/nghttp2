@@ -25,7 +25,7 @@ dnl Do not change user variables!
 dnl http://www.gnu.org/software/automake/manual/html_node/Flag-Variables-Ordering.html
 
 AC_PREREQ(2.61)
-AC_INIT([nghttp2], [1.19.0], [t-tujikawa@users.sourceforge.net])
+AC_INIT([nghttp2], [1.20.0], [t-tujikawa@users.sourceforge.net])
 AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([config.h])
@@ -44,9 +44,9 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
 dnl See versioning rule:
 dnl  http://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
-AC_SUBST(LT_CURRENT, 26)
-AC_SUBST(LT_REVISION, 4)
-AC_SUBST(LT_AGE, 12)
+AC_SUBST(LT_CURRENT, 27)
+AC_SUBST(LT_REVISION, 0)
+AC_SUBST(LT_AGE, 13)
 
 major=`echo $PACKAGE_VERSION |cut -d. -f1 | sed -e "s/[^0-9]//g"`
 minor=`echo $PACKAGE_VERSION |cut -d. -f2 | sed -e "s/[^0-9]//g"`
@@ -119,8 +119,13 @@ AC_ARG_WITH([jemalloc],
 
 AC_ARG_WITH([spdylay],
     [AS_HELP_STRING([--with-spdylay],
-                    [Use spdylay [default=check]])],
-    [request_spdylay=$withval], [request_spdylay=check])
+                    [Use spdylay [default=no]])],
+    [request_spdylay=$withval], [request_spdylay=no])
+
+AC_ARG_WITH([systemd],
+    [AS_HELP_STRING([--with-systemd],
+                    [Enable systemd support in nghttpx [default=check]])],
+    [request_systemd=$withval], [request_systemd=check])
 
 AC_ARG_WITH([mruby],
     [AS_HELP_STRING([--with-mruby],
@@ -393,6 +398,25 @@ if test "x${have_jansson}" = "xyes"; then
             [Define to 1 if you have `libjansson` library.])
 else
   AC_MSG_NOTICE($JANSSON_PKG_ERRORS)
+fi
+
+
+#  libsystemd (for src/nghttpx)
+have_libsystemd=no
+if test "x${request_systemd}" != "xno"; then
+  PKG_CHECK_MODULES([SYSTEMD], [libsystemd >= 209], [have_libsystemd=yes],
+                    [have_libsystemd=no])
+  if test "x${have_libsystemd}" = "xyes"; then
+    AC_DEFINE([HAVE_LIBSYSTEMD], [1],
+              [Define to 1 if you have `libsystemd` library.])
+  else
+    AC_MSG_NOTICE($SYSTEMD_PKG_ERRORS)
+  fi
+fi
+
+if test "x${request_systemd}" = "xyes" &&
+   test "x${have_libsystemd}" != "xyes"; then
+  AC_MSG_ERROR([systemd was requested (--with-systemd) but not found])
 fi
 
 # libxml2 (for src/nghttp)
@@ -914,6 +938,7 @@ AC_MSG_NOTICE([summary of build options:
       Jansson:        ${have_jansson} (CFLAGS='${JANSSON_CFLAGS}' LIBS='${JANSSON_LIBS}')
       Jemalloc:       ${have_jemalloc} (LIBS='${JEMALLOC_LIBS}')
       Zlib:           ${have_zlib} (CFLAGS='${ZLIB_CFLAGS}' LIBS='${ZLIB_LIBS}')
+      Systemd:        ${have_libsystemd} (CFLAGS='${SYSTEMD_CFLAGS}' LIBS='${SYSTEMD_LIBS}')
       Boost CPPFLAGS: ${BOOST_CPPFLAGS}
       Boost LDFLAGS:  ${BOOST_LDFLAGS}
       Boost::ASIO:    ${BOOST_ASIO_LIB}

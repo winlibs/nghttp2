@@ -41,6 +41,7 @@
 #endif // HAVE_MRUBY
 #include "shrpx_worker.h"
 #include "shrpx_http2_session.h"
+#include "shrpx_log.h"
 #include "http2.h"
 #include "util.h"
 #include "template.h"
@@ -369,7 +370,7 @@ void SpdyUpstream::start_downstream(Downstream *downstream) {
 void SpdyUpstream::initiate_downstream(Downstream *downstream) {
   int rv;
 
-  auto dconn = handler_->get_downstream_connection(downstream);
+  auto dconn = handler_->get_downstream_connection(rv, downstream);
 
   if (!dconn ||
       (rv = downstream->attach_downstream_connection(std::move(dconn))) != 0) {
@@ -980,6 +981,10 @@ int SpdyUpstream::send_reply(Downstream *downstream, const uint8_t *body,
 
   downstream->set_response_state(Downstream::MSG_COMPLETE);
 
+  if (data_prd_ptr) {
+    downstream->reset_upstream_wtimer();
+  }
+
   return 0;
 }
 
@@ -1020,6 +1025,8 @@ int SpdyUpstream::error_reply(Downstream *downstream,
                       << spdylay_strerror(rv);
     return -1;
   }
+
+  downstream->reset_upstream_wtimer();
 
   return 0;
 }
@@ -1189,6 +1196,8 @@ int SpdyUpstream::on_downstream_header_complete(Downstream *downstream) {
     return -1;
   }
 
+  downstream->reset_upstream_wtimer();
+
   return 0;
 }
 
@@ -1264,6 +1273,13 @@ int SpdyUpstream::on_downstream_abort_request(Downstream *downstream,
   return 0;
 }
 
+int SpdyUpstream::on_downstream_abort_request_with_https_redirect(
+    Downstream *downstream) {
+  // This should not be called since SPDY is only available with TLS.
+  assert(0);
+  return 0;
+}
+
 int SpdyUpstream::consume(int32_t stream_id, size_t len) {
   int rv;
 
@@ -1289,6 +1305,8 @@ int SpdyUpstream::on_timeout(Downstream *downstream) {
   }
 
   rst_stream(downstream, SPDYLAY_INTERNAL_ERROR);
+
+  handler_->signal_write();
 
   return 0;
 }
@@ -1344,7 +1362,7 @@ int SpdyUpstream::on_downstream_reset(Downstream *downstream, bool no_retry) {
   // downstream connection is clean; we can retry with new
   // downstream connection.
 
-  dconn = handler_->get_downstream_connection(downstream);
+  dconn = handler_->get_downstream_connection(rv, downstream);
   if (!dconn) {
     goto fail;
   }

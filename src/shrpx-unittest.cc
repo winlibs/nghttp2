@@ -45,6 +45,7 @@
 #include "shrpx_config.h"
 #include "ssl.h"
 #include "shrpx_router_test.h"
+#include "shrpx_log.h"
 
 static int init_suite1(void) { return 0; }
 
@@ -72,8 +73,8 @@ int main(int argc, char *argv[]) {
   // add the tests to the suite
   if (!CU_add_test(pSuite, "ssl_create_lookup_tree",
                    shrpx::test_shrpx_ssl_create_lookup_tree) ||
-      !CU_add_test(pSuite, "ssl_cert_lookup_tree_add_cert_from_x509",
-                   shrpx::test_shrpx_ssl_cert_lookup_tree_add_cert_from_x509) ||
+      !CU_add_test(pSuite, "ssl_cert_lookup_tree_add_ssl_ctx",
+                   shrpx::test_shrpx_ssl_cert_lookup_tree_add_ssl_ctx) ||
       !CU_add_test(pSuite, "ssl_tls_hostname_match",
                    shrpx::test_shrpx_ssl_tls_hostname_match) ||
       !CU_add_test(pSuite, "http2_add_header", shrpx::test_http2_add_header) ||
@@ -184,6 +185,8 @@ int main(int argc, char *argv[]) {
       !CU_add_test(pSuite, "util_is_hex_string",
                    shrpx::test_util_is_hex_string) ||
       !CU_add_test(pSuite, "util_decode_hex", shrpx::test_util_decode_hex) ||
+      !CU_add_test(pSuite, "util_extract_host",
+                   shrpx::test_util_extract_host) ||
       !CU_add_test(pSuite, "gzip_inflate", test_nghttp2_gzip_inflate) ||
       !CU_add_test(pSuite, "buffer_write", nghttp2::test_buffer_write) ||
       !CU_add_test(pSuite, "pool_recycle", nghttp2::test_pool_recycle) ||
