@@ -45,7 +45,6 @@ set_target_properties(nghttp2 PROPERTIES
   C_VISIBILITY_PRESET hidden
 )
 
-if(HAVE_CUNIT)
   # Static library (for unittests because of symbol visibility)
   add_library(nghttp2_static STATIC ${NGHTTP2_SOURCES})
   set_target_properties(nghttp2_static PROPERTIES
@@ -54,7 +53,6 @@ if(HAVE_CUNIT)
     ARCHIVE_OUTPUT_NAME nghttp2
   )
   target_compile_definitions(nghttp2_static PUBLIC "-DNGHTTP2_STATICLIB")
-endif()
 
 install(TARGETS nghttp2
   DESTINATION "${CMAKE_INSTALL_LIBDIR}")
