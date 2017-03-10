@@ -45,14 +45,17 @@ set_target_properties(nghttp2 PROPERTIES
   C_VISIBILITY_PRESET hidden
 )
 
-  # Static library (for unittests because of symbol visibility)
-  add_library(nghttp2_static STATIC ${NGHTTP2_SOURCES})
-  set_target_properties(nghttp2_static PROPERTIES
-    COMPILE_FLAGS "${WARNCFLAGS}"
-    VERSION ${LT_VERSION} SOVERSION ${LT_SOVERSION}
-    ARCHIVE_OUTPUT_NAME nghttp2
-  )
-  target_compile_definitions(nghttp2_static PUBLIC "-DNGHTTP2_STATICLIB")
+# Static library (for unittests because of symbol visibility)
+add_library(nghttp2_a STATIC ${NGHTTP2_SOURCES})
+set_target_properties(nghttp2_a PROPERTIES
+  COMPILE_FLAGS "${WARNCFLAGS}"
+  VERSION ${LT_VERSION} SOVERSION ${LT_SOVERSION}
+  ARCHIVE_OUTPUT_NAME nghttp2
+)
+target_compile_definitions(nghttp2_a PUBLIC "-DNGHTTP2_STATICLIB")
+
+install(TARGETS nghttp2
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 
 install(TARGETS nghttp2
   DESTINATION "${CMAKE_INSTALL_LIBDIR}")
