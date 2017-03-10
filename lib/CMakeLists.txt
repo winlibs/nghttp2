@@ -54,7 +54,7 @@ set_target_properties(nghttp2_a PROPERTIES
 )
 target_compile_definitions(nghttp2_a PUBLIC "-DNGHTTP2_STATICLIB")
 
-install(TARGETS nghttp2
+install(TARGETS nghttp2_a
   DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 
 install(TARGETS nghttp2
