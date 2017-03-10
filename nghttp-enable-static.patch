@@ -1,0 +1,32 @@
+diff --git a/lib/CMakeLists.txt b/lib/CMakeLists.txt
+index 7ef37ed..c21dc57 100644
+--- a/lib/CMakeLists.txt
++++ b/lib/CMakeLists.txt
+@@ -45,16 +45,17 @@ set_target_properties(nghttp2 PROPERTIES
+   C_VISIBILITY_PRESET hidden
+ )
+ 
+-if(HAVE_CUNIT)
+-  # Static library (for unittests because of symbol visibility)
+-  add_library(nghttp2_static STATIC ${NGHTTP2_SOURCES})
+-  set_target_properties(nghttp2_static PROPERTIES
+-    COMPILE_FLAGS "${WARNCFLAGS}"
+-    VERSION ${LT_VERSION} SOVERSION ${LT_SOVERSION}
+-    ARCHIVE_OUTPUT_NAME nghttp2
+-  )
+-  target_compile_definitions(nghttp2_static PUBLIC "-DNGHTTP2_STATICLIB")
+-endif()
++# Static library (for unittests because of symbol visibility)
++add_library(nghttp2_a STATIC ${NGHTTP2_SOURCES})
++set_target_properties(nghttp2_a PROPERTIES
++  COMPILE_FLAGS "${WARNCFLAGS}"
++  VERSION ${LT_VERSION} SOVERSION ${LT_SOVERSION}
++  ARCHIVE_OUTPUT_NAME nghttp2
++)
++target_compile_definitions(nghttp2_a PUBLIC "-DNGHTTP2_STATICLIB")
++
++install(TARGETS nghttp2_a
++  DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+ 
+ install(TARGETS nghttp2
+   DESTINATION "${CMAKE_INSTALL_LIBDIR}")
