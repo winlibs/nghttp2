@@ -39,7 +39,7 @@
 #include "shrpx_error.h"
 #include "shrpx_http2_downstream_connection.h"
 #include "shrpx_client_handler.h"
-#include "shrpx_ssl.h"
+#include "shrpx_tls.h"
 #include "shrpx_http.h"
 #include "shrpx_worker.h"
 #include "shrpx_connect_blocker.h"
@@ -47,15 +47,15 @@
 #include "http2.h"
 #include "util.h"
 #include "base64.h"
-#include "ssl.h"
+#include "tls.h"
 
 using namespace nghttp2;
 
 namespace shrpx {
 
 namespace {
-const ev_tstamp CONNCHK_TIMEOUT = 5.;
-const ev_tstamp CONNCHK_PING_TIMEOUT = 1.;
+constexpr ev_tstamp CONNCHK_TIMEOUT = 5.;
+constexpr ev_tstamp CONNCHK_PING_TIMEOUT = 1.;
 } // namespace
 
 namespace {
@@ -138,13 +138,6 @@ void readcb(struct ev_loop *loop, ev_io *w, int revents) {
     return;
   }
   http2session->connection_alive();
-
-  rv = http2session->do_write();
-  if (rv != 0) {
-    delete http2session;
-
-    return;
-  }
 }
 } // namespace
 
@@ -341,6 +334,7 @@ int Http2Session::resolve_name() {
     return 0;
   default:
     assert(0);
+    abort();
   }
 }
 
@@ -429,14 +423,15 @@ int Http2Session::initiate_connection() {
       assert(ssl_ctx_);
 
       if (state_ != RESOLVING_NAME) {
-        auto ssl = ssl::create_ssl(ssl_ctx_);
+        auto ssl = tls::create_ssl(ssl_ctx_);
         if (!ssl) {
           return -1;
         }
 
-        ssl::setup_downstream_http2_alpn(ssl);
+        tls::setup_downstream_http2_alpn(ssl);
 
         conn_.set_ssl(ssl);
+        conn_.tls.client_session_cache = &addr_->tls_session_cache;
 
         auto sni_name =
             addr_->sni.empty() ? StringRef{addr_->host} : StringRef{addr_->sni};
@@ -448,7 +443,7 @@ int Http2Session::initiate_connection() {
           SSL_set_tlsext_host_name(conn_.tls.ssl, sni_name.c_str());
         }
 
-        auto tls_session = ssl::reuse_tls_session(addr_->tls_session_cache);
+        auto tls_session = tls::reuse_tls_session(addr_->tls_session_cache);
         if (tls_session) {
           SSL_set_session(conn_.tls.ssl, tls_session);
           SSL_SESSION_free(tls_session);
@@ -602,7 +597,8 @@ int Http2Session::initiate_connection() {
   }
 
   // Unreachable
-  DIE();
+  assert(0);
+
   return 0;
 }
 
@@ -821,9 +817,9 @@ int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
                              uint32_t error_code, void *user_data) {
   auto http2session = static_cast<Http2Session *>(user_data);
   if (LOG_ENABLED(INFO)) {
-    SSLOG(INFO, http2session) << "Stream stream_id=" << stream_id
-                              << " is being closed with error code "
-                              << error_code;
+    SSLOG(INFO, http2session)
+        << "Stream stream_id=" << stream_id
+        << " is being closed with error code " << error_code;
   }
   auto sd = static_cast<StreamData *>(
       nghttp2_session_get_stream_user_data(session, stream_id));
@@ -1157,8 +1153,8 @@ int on_response_headers(Http2Session *http2session, Downstream *downstream,
     }
     downstream->set_request_state(Downstream::HEADER_COMPLETE);
     if (LOG_ENABLED(INFO)) {
-      SSLOG(INFO, http2session) << "HTTP upgrade success. stream_id="
-                                << frame->hd.stream_id;
+      SSLOG(INFO, http2session)
+          << "HTTP upgrade success. stream_id=" << frame->hd.stream_id;
     }
   } else {
     auto content_length = resp.fs.header(http2::HD_CONTENT_LENGTH);
@@ -1993,7 +1989,7 @@ int Http2Session::read_clear() {
     auto nread = conn_.read_clear(buf.data(), buf.size());
 
     if (nread == 0) {
-      return 0;
+      return write_clear();
     }
 
     if (nread < 0) {
@@ -2069,18 +2065,10 @@ int Http2Session::tls_handshake() {
   }
 
   if (!get_config()->tls.insecure &&
-      ssl::check_cert(conn_.tls.ssl, addr_, raddr_) != 0) {
+      tls::check_cert(conn_.tls.ssl, addr_, raddr_) != 0) {
     downstream_failure(addr_, raddr_);
 
     return -1;
-  }
-
-  if (!SSL_session_reused(conn_.tls.ssl)) {
-    auto tls_session = SSL_get0_session(conn_.tls.ssl);
-    if (tls_session) {
-      ssl::try_cache_tls_session(addr_->tls_session_cache, *raddr_, tls_session,
-                                 ev_now(conn_.loop));
-    }
   }
 
   read_ = &Http2Session::read_tls;
@@ -2105,7 +2093,7 @@ int Http2Session::read_tls() {
     auto nread = conn_.read_tls(buf.data(), buf.size());
 
     if (nread == 0) {
-      return 0;
+      return write_tls();
     }
 
     if (nread < 0) {
@@ -2128,7 +2116,10 @@ int Http2Session::write_tls() {
   for (;;) {
     if (wb_.rleft() > 0) {
       auto iovcnt = wb_.riovec(&iov, 1);
-      assert(iovcnt == 1);
+      if (iovcnt != 1) {
+        assert(0);
+        return -1;
+      }
       auto nwrite = conn_.write_tls(iov.iov_base, iov.iov_len);
 
       if (nwrite == 0) {

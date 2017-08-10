@@ -25,7 +25,7 @@ dnl Do not change user variables!
 dnl http://www.gnu.org/software/automake/manual/html_node/Flag-Variables-Ordering.html
 
 AC_PREREQ(2.61)
-AC_INIT([nghttp2], [1.20.0], [t-tujikawa@users.sourceforge.net])
+AC_INIT([nghttp2], [1.24.0], [t-tujikawa@users.sourceforge.net])
 AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([config.h])
@@ -45,7 +45,7 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 dnl See versioning rule:
 dnl  http://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
 AC_SUBST(LT_CURRENT, 27)
-AC_SUBST(LT_REVISION, 0)
+AC_SUBST(LT_REVISION, 3)
 AC_SUBST(LT_AGE, 13)
 
 major=`echo $PACKAGE_VERSION |cut -d. -f1 | sed -e "s/[^0-9]//g"`
@@ -176,19 +176,9 @@ else
   AC_SUBST([CYTHON])
 fi
 
-#
-# If we're running GCC or clang define _U_ to be "__attribute__((unused))"
-# so we can use _U_ to flag unused function parameters and not get warnings
-# about them. Otherwise, define _U_ to be an empty string so that _U_ used
-# to flag an unused function parameters will compile with other compilers.
-#
-# XXX - similar hints for other compilers?
-#
 if test "x$GCC" = "xyes" -o "x$CC" = "xclang" ; then
-  AC_DEFINE([_U_], [__attribute__((unused))], [Hint to the compiler that a function parameters is not used])
   AC_DEFINE([NGHTTP2_NORETURN], [__attribute__((noreturn))], [Hint to the compiler that a function never return])
 else
-  AC_DEFINE([_U_], , [Hint to the compiler that a function parameter is not used])
   AC_DEFINE([NGHTTP2_NORETURN], , [Hint to the compiler that a function never return])
 fi
 

@@ -449,7 +449,7 @@ void Http2Upstream::initiate_downstream(Downstream *downstream) {
     if (rv == SHRPX_ERR_TLS_REQUIRED) {
       rv = redirect_to_https(downstream);
     } else {
-      rv = error_reply(downstream, 503);
+      rv = error_reply(downstream, 502);
     }
     if (rv != 0) {
       rst_stream(downstream, NGHTTP2_INTERNAL_ERROR);
@@ -464,7 +464,7 @@ void Http2Upstream::initiate_downstream(Downstream *downstream) {
   rv = downstream->attach_downstream_connection(std::move(dconn));
   if (rv != 0) {
     // downstream connection fails, send error page
-    if (error_reply(downstream, 503) != 0) {
+    if (error_reply(downstream, 502) != 0) {
       rst_stream(downstream, NGHTTP2_INTERNAL_ERROR);
     }
 
@@ -477,7 +477,7 @@ void Http2Upstream::initiate_downstream(Downstream *downstream) {
   rv = downstream->push_request_headers();
   if (rv != 0) {
 
-    if (error_reply(downstream, 503) != 0) {
+    if (error_reply(downstream, 502) != 0) {
       rst_stream(downstream, NGHTTP2_INTERNAL_ERROR);
     }
 
@@ -1360,7 +1360,7 @@ int Http2Upstream::rst_stream(Downstream *downstream, uint32_t error_code) {
   if (rv < NGHTTP2_ERR_FATAL) {
     ULOG(FATAL, this) << "nghttp2_submit_rst_stream() failed: "
                       << nghttp2_strerror(rv);
-    DIE();
+    return -1;
   }
   return 0;
 }
@@ -1418,7 +1418,7 @@ ssize_t downstream_data_read_callback(nghttp2_session *session,
       if (!trailers.empty()) {
         std::vector<nghttp2_nv> nva;
         nva.reserve(trailers.size());
-        http2::copy_headers_to_nva_nocopy(nva, trailers);
+        http2::copy_headers_to_nva_nocopy(nva, trailers, http2::HDOP_STRIP_ALL);
         if (!nva.empty()) {
           rv = nghttp2_submit_trailer(session, stream_id, nva.data(),
                                       nva.size());
@@ -1667,7 +1667,8 @@ int Http2Upstream::on_downstream_header_complete(Downstream *downstream) {
   nva.push_back(http2::make_nv_ls_nocopy(":status", response_status));
 
   if (downstream->get_non_final_response()) {
-    http2::copy_headers_to_nva_nocopy(nva, resp.fs.headers());
+    http2::copy_headers_to_nva_nocopy(nva, resp.fs.headers(),
+                                      http2::HDOP_STRIP_ALL);
 
     if (LOG_ENABLED(INFO)) {
       log_response_headers(downstream, nva);
@@ -1687,7 +1688,8 @@ int Http2Upstream::on_downstream_header_complete(Downstream *downstream) {
     return 0;
   }
 
-  http2::copy_headers_to_nva_nocopy(nva, resp.fs.headers());
+  http2::copy_headers_to_nva_nocopy(
+      nva, resp.fs.headers(), http2::HDOP_STRIP_ALL & ~http2::HDOP_STRIP_VIA);
 
   if (!config->http2_proxy && !httpconf.no_server_rewrite) {
     nva.push_back(http2::make_nv_ls_nocopy("server", httpconf.server_name));
@@ -2005,7 +2007,7 @@ fail:
   if (rv == SHRPX_ERR_TLS_REQUIRED) {
     rv = on_downstream_abort_request_with_https_redirect(downstream);
   } else {
-    rv = on_downstream_abort_request(downstream, 503);
+    rv = on_downstream_abort_request(downstream, 502);
   }
   if (rv != 0) {
     rst_stream(downstream, NGHTTP2_INTERNAL_ERROR);

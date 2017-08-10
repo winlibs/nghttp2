@@ -163,6 +163,11 @@ OPTIONS = [
     "redirect-https-port",
     "frontend-max-requests",
     "single-thread",
+    "single-process",
+    "no-add-x-forwarded-proto",
+    "no-strip-incoming-x-forwarded-proto",
+    "ocsp-startup",
+    "no-verify-ocsp",
 ]
 
 LOGVARS = [
@@ -181,6 +186,11 @@ LOGVARS = [
     "ssl_protocol",
     "ssl_session_id",
     "ssl_session_reused",
+    "tls_cipher",
+    "tls_protocol",
+    "tls_session_id",
+    "tls_session_reused",
+    "tls_sni",
     "backend_host",
     "backend_port",
 ]

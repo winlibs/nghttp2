@@ -261,9 +261,11 @@ void on_ctrl_recv_callback(spdylay_session *session, spdylay_frame_type type,
       return;
     }
 
-    if (std::find_if(std::begin(host->value), std::end(host->value),
+    auto authority = is_connect ? path : host;
+
+    if (std::find_if(std::begin(authority->value), std::end(authority->value),
                      [](char c) { return c == '"' || c == '\\'; }) !=
-        std::end(host->value)) {
+        std::end(authority->value)) {
       if (upstream->error_reply(downstream, 400) != 0) {
         ULOG(FATAL, upstream) << "error_reply failed";
       }
@@ -854,7 +856,7 @@ int SpdyUpstream::rst_stream(Downstream *downstream, int status_code) {
   if (rv < SPDYLAY_ERR_FATAL) {
     ULOG(FATAL, this) << "spdylay_submit_rst_stream() failed: "
                       << spdylay_strerror(rv);
-    DIE();
+    return -1;
   }
   return 0;
 }
@@ -878,8 +880,8 @@ ssize_t spdy_data_read_callback(spdylay_session *session, int32_t stream_id,
     } else {
       // For tunneling, issue RST_STREAM to finish the stream.
       if (LOG_ENABLED(INFO)) {
-        ULOG(INFO, upstream) << "RST_STREAM to tunneled stream stream_id="
-                             << stream_id;
+        ULOG(INFO, upstream)
+            << "RST_STREAM to tunneled stream stream_id=" << stream_id;
       }
       upstream->rst_stream(
           downstream, infer_upstream_rst_stream_status_code(
@@ -1380,7 +1382,7 @@ int SpdyUpstream::on_downstream_reset(Downstream *downstream, bool no_retry) {
   return 0;
 
 fail:
-  if (on_downstream_abort_request(downstream, 503) != 0) {
+  if (on_downstream_abort_request(downstream, 502) != 0) {
     rst_stream(downstream, SPDYLAY_INTERNAL_ERROR);
   }
   downstream->pop_downstream_connection();

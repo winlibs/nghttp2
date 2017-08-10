@@ -24,12 +24,12 @@
 
 cmake_minimum_required(VERSION 3.0)
 # XXX using 1.8.90 instead of 1.9.0-DEV
-project(nghttp2 VERSION 1.20.0)
+project(nghttp2 VERSION 1.24.0)
 
 # See versioning rule:
 #  http://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
 set(LT_CURRENT  27)
-set(LT_REVISION 0)
+set(LT_REVISION 3)
 set(LT_AGE      13)
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -110,19 +110,9 @@ foreach(_build_type "Release" "MinSizeRel" "RelWithDebInfo")
   endforeach()
 endforeach()
 
-#
-# If we're running GCC or clang define _U_ to be "__attribute__((unused))"
-# so we can use _U_ to flag unused function parameters and not get warnings
-# about them. Otherwise, define _U_ to be an empty string so that _U_ used
-# to flag an unused function parameters will compile with other compilers.
-#
-# XXX - similar hints for other compilers?
-#
 if(CMAKE_C_COMPILER_ID MATCHES "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
-  set(HINT_UNUSED_PARAM   "__attribute__((unused))")
   set(HINT_NORETURN       "__attribute__((noreturn))")
 else()
-  set(HINT_UNUSED_PARAM)
   set(HINT_NORETURN)
 endif()
 

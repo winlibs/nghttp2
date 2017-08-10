@@ -36,7 +36,7 @@
 
 #include "shrpx_config.h"
 #include "shrpx_log_config.h"
-#include "ssl.h"
+#include "tls.h"
 #include "template.h"
 
 using namespace nghttp2;
@@ -62,14 +62,14 @@ using namespace nghttp2;
 
 // Upstream log
 #define ULOG(SEVERITY, UPSTREAM)                                               \
-  (shrpx::Log(SEVERITY, __FILE__, __LINE__) << "[UPSTREAM:" << UPSTREAM        \
-                                            << "]"                             \
-                                               " ")
+  (shrpx::Log(SEVERITY, __FILE__, __LINE__)                                    \
+   << "[UPSTREAM:" << UPSTREAM << "]"                                          \
+                                  " ")
 
 // Downstream log
 #define DLOG(SEVERITY, DOWNSTREAM)                                             \
-  (shrpx::Log(SEVERITY, __FILE__, __LINE__) << "[DOWNSTREAM:" << DOWNSTREAM    \
-                                            << "] ")
+  (shrpx::Log(SEVERITY, __FILE__, __LINE__)                                    \
+   << "[DOWNSTREAM:" << DOWNSTREAM << "] ")
 
 // Downstream connection log
 #define DCLOG(SEVERITY, DCONN)                                                 \
@@ -129,10 +129,15 @@ enum LogFragmentType {
   SHRPX_LOGF_REQUEST_TIME,
   SHRPX_LOGF_PID,
   SHRPX_LOGF_ALPN,
-  SHRPX_LOGF_SSL_CIPHER,
-  SHRPX_LOGF_SSL_PROTOCOL,
-  SHRPX_LOGF_SSL_SESSION_ID,
-  SHRPX_LOGF_SSL_SESSION_REUSED,
+  SHRPX_LOGF_TLS_CIPHER,
+  SHRPX_LOGF_SSL_CIPHER = SHRPX_LOGF_TLS_CIPHER,
+  SHRPX_LOGF_TLS_PROTOCOL,
+  SHRPX_LOGF_SSL_PROTOCOL = SHRPX_LOGF_TLS_PROTOCOL,
+  SHRPX_LOGF_TLS_SESSION_ID,
+  SHRPX_LOGF_SSL_SESSION_ID = SHRPX_LOGF_TLS_SESSION_ID,
+  SHRPX_LOGF_TLS_SESSION_REUSED,
+  SHRPX_LOGF_SSL_SESSION_REUSED = SHRPX_LOGF_TLS_SESSION_REUSED,
+  SHRPX_LOGF_TLS_SNI,
   SHRPX_LOGF_BACKEND_HOST,
   SHRPX_LOGF_BACKEND_PORT,
 };
@@ -148,7 +153,8 @@ struct LogSpec {
   Downstream *downstream;
   StringRef remote_addr;
   StringRef alpn;
-  const nghttp2::ssl::TLSSessionInfo *tls_info;
+  StringRef sni;
+  const nghttp2::tls::TLSSessionInfo *tls_info;
   std::chrono::high_resolution_clock::time_point request_end_time;
   StringRef remote_port;
   uint16_t server_port;

@@ -22,8 +22,8 @@
  * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
-#ifndef SHRPX_SSL_H
-#define SHRPX_SSL_H
+#ifndef SHRPX_TLS_H
+#define SHRPX_TLS_H
 
 #include "shrpx.h"
 
@@ -51,7 +51,7 @@ class DownstreamConnectionPool;
 struct DownstreamAddr;
 struct UpstreamAddr;
 
-namespace ssl {
+namespace tls {
 
 struct TLSSessionCache {
   // ASN1 representation of SSL_SESSION object.  See
@@ -244,12 +244,12 @@ bool upstream_tls_enabled(const ConnectionConfig &connconf);
 // is based on RFC 6125.
 bool tls_hostname_match(const StringRef &pattern, const StringRef &hostname);
 
-// Caches |session| which is associated to remote address |addr|.
-// |session| is serialized into ASN1 representation, and stored.  |t|
-// is used as a time stamp.  Depending on the existing cache's time
-// stamp, |session| might not be cached.
-void try_cache_tls_session(TLSSessionCache &cache, const Address &addr,
-                           SSL_SESSION *session, ev_tstamp t);
+// Caches |session|.  |session| is serialized into ASN1
+// representation, and stored.  |t| is used as a time stamp.
+// Depending on the existing cache's time stamp, |session| might not
+// be cached.
+void try_cache_tls_session(TLSSessionCache *cache, SSL_SESSION *session,
+                           ev_tstamp t);
 
 // Returns cached session associated |addr|.  If no cache entry is
 // found associated to |addr|, nullptr will be returned.
@@ -264,8 +264,13 @@ X509 *load_certificate(const char *filename);
 // TLS version string.
 int proto_version_from_string(const StringRef &v);
 
-} // namespace ssl
+// Verifies OCSP response |ocsp_resp| of length |ocsp_resplen|.  This
+// function returns 0 if it succeeds, or -1.
+int verify_ocsp_response(SSL_CTX *ssl_ctx, const uint8_t *ocsp_resp,
+                         size_t ocsp_resplen);
+
+} // namespace tls
 
 } // namespace shrpx
 
-#endif // SHRPX_SSL_H
+#endif // SHRPX_TLS_H

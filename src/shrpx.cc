@@ -76,7 +76,7 @@
 #include <nghttp2/nghttp2.h>
 
 #include "shrpx_config.h"
-#include "shrpx_ssl.h"
+#include "shrpx_tls.h"
 #include "shrpx_log_config.h"
 #include "shrpx_worker.h"
 #include "shrpx_http2_upstream.h"
@@ -88,7 +88,7 @@
 #include "shrpx_log.h"
 #include "util.h"
 #include "app_helper.h"
-#include "ssl.h"
+#include "tls.h"
 #include "template.h"
 #include "allocator.h"
 #include "ssl_compat.h"
@@ -171,10 +171,6 @@ struct InheritedAddr {
   int fd;
   bool used;
 };
-
-namespace {
-std::random_device rd;
-} // namespace
 
 namespace {
 void signal_cb(struct ev_loop *loop, ev_signal *w, int revents);
@@ -630,16 +626,16 @@ int create_unix_domain_server_socket(UpstreamAddr &faddr,
   auto fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
   if (fd == -1) {
     auto error = errno;
-    LOG(WARN) << "socket() syscall failed: "
-              << xsi_strerror(error, errbuf.data(), errbuf.size());
+    LOG(FATAL) << "socket() syscall failed: "
+               << xsi_strerror(error, errbuf.data(), errbuf.size());
     return -1;
   }
 #else  // !SOCK_NONBLOCK
   auto fd = socket(AF_UNIX, SOCK_STREAM, 0);
   if (fd == -1) {
     auto error = errno;
-    LOG(WARN) << "socket() syscall failed: "
-              << xsi_strerror(error, errbuf.data(), errbuf.size());
+    LOG(FATAL) << "socket() syscall failed: "
+               << xsi_strerror(error, errbuf.data(), errbuf.size());
     return -1;
   }
   util::make_socket_nonblocking(fd);
@@ -648,8 +644,8 @@ int create_unix_domain_server_socket(UpstreamAddr &faddr,
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val,
                  static_cast<socklen_t>(sizeof(val))) == -1) {
     auto error = errno;
-    LOG(WARN) << "Failed to set SO_REUSEADDR option to listener socket: "
-              << xsi_strerror(error, errbuf.data(), errbuf.size());
+    LOG(FATAL) << "Failed to set SO_REUSEADDR option to listener socket: "
+               << xsi_strerror(error, errbuf.data(), errbuf.size());
     close(fd);
     return -1;
   }
@@ -719,12 +715,17 @@ int create_tcp_server_socket(UpstreamAddr &faddr,
 
   addrinfo *res, *rp;
   rv = getaddrinfo(node, service.c_str(), &hints, &res);
+#ifdef AI_ADDRCONFIG
   if (rv != 0) {
-    if (LOG_ENABLED(INFO)) {
-      LOG(INFO) << "Unable to get IPv" << (faddr.family == AF_INET ? "4" : "6")
-                << " address for " << faddr.host << ", port " << faddr.port
-                << ": " << gai_strerror(rv);
-    }
+    // Retry without AI_ADDRCONFIG
+    hints.ai_flags &= ~AI_ADDRCONFIG;
+    rv = getaddrinfo(node, service.c_str(), &hints, &res);
+  }
+#endif // AI_ADDRCONFIG
+  if (rv != 0) {
+    LOG(FATAL) << "Unable to get IPv" << (faddr.family == AF_INET ? "4" : "6")
+               << " address for " << faddr.host << ", port " << faddr.port
+               << ": " << gai_strerror(rv);
     return -1;
   }
 
@@ -840,8 +841,8 @@ int create_tcp_server_socket(UpstreamAddr &faddr,
   }
 
   if (!rp) {
-    LOG(WARN) << "Listening " << (faddr.family == AF_INET ? "IPv4" : "IPv6")
-              << " socket failed";
+    LOG(FATAL) << "Listening " << (faddr.family == AF_INET ? "IPv4" : "IPv6")
+               << " socket failed";
 
     return -1;
   }
@@ -1204,10 +1205,20 @@ pid_t fork_worker_process(int &main_ipc_fd,
     return -1;
   }
 
-  auto pid = fork();
+  auto config = get_config();
+
+  pid_t pid = 0;
+
+  if (!config->single_process) {
+    pid = fork();
+  }
 
   if (pid == 0) {
     ev_loop_fork(EV_DEFAULT);
+
+    for (auto &addr : config->conn.listener.addrs) {
+      util::make_socket_closeonexec(addr.fd);
+    }
 
     // Remove all WorkerProcesses to stop any registered watcher on
     // default loop.
@@ -1223,22 +1234,37 @@ pid_t fork_worker_process(int &main_ipc_fd,
       LOG(FATAL) << "Unblocking all signals failed: "
                  << xsi_strerror(error, errbuf.data(), errbuf.size());
 
-      nghttp2_Exit(EXIT_FAILURE);
+      if (config->single_process) {
+        exit(EXIT_FAILURE);
+      } else {
+        nghttp2_Exit(EXIT_FAILURE);
+      }
     }
 
-    close(ipc_fd[1]);
+    if (!config->single_process) {
+      close(ipc_fd[1]);
+    }
+
     WorkerProcessConfig wpconf{ipc_fd[0]};
     rv = worker_process_event_loop(&wpconf);
     if (rv != 0) {
       LOG(FATAL) << "Worker process returned error";
 
-      nghttp2_Exit(EXIT_FAILURE);
+      if (config->single_process) {
+        exit(EXIT_FAILURE);
+      } else {
+        nghttp2_Exit(EXIT_FAILURE);
+      }
     }
 
     LOG(NOTICE) << "Worker process shutting down momentarily";
 
     // call exit(...) instead of nghttp2_Exit to get leak sanitizer report
-    nghttp2_Exit(EXIT_SUCCESS);
+    if (config->single_process) {
+      exit(EXIT_SUCCESS);
+    } else {
+      nghttp2_Exit(EXIT_SUCCESS);
+    }
   }
 
   // parent process
@@ -1315,7 +1341,7 @@ int event_loop() {
 
   auto loop = ev_default_loop(config->ev_loop_flags);
 
-  int ipc_fd;
+  int ipc_fd = 0;
 
   auto pid = fork_worker_process(ipc_fd, {});
 
@@ -1366,7 +1392,7 @@ constexpr auto DEFAULT_NPN_LIST = StringRef::from_lit("h2,h2-16,h2-14,"
 } // namespace
 
 namespace {
-constexpr auto DEFAULT_TLS_MIN_PROTO_VERSION = StringRef::from_lit("TLSv1.1");
+constexpr auto DEFAULT_TLS_MIN_PROTO_VERSION = StringRef::from_lit("TLSv1.2");
 #ifdef TLS1_3_VERSION
 constexpr auto DEFAULT_TLS_MAX_PROTO_VERSION = StringRef::from_lit("TLSv1.3");
 #else  // !TLS1_3_VERSION
@@ -1430,18 +1456,18 @@ void fill_default_config(Config *config) {
   }
 
   tlsconf.session_timeout = std::chrono::hours(12);
-  tlsconf.ciphers = StringRef::from_lit(nghttp2::ssl::DEFAULT_CIPHER_LIST);
+  tlsconf.ciphers = StringRef::from_lit(nghttp2::tls::DEFAULT_CIPHER_LIST);
   tlsconf.client.ciphers =
-      StringRef::from_lit(nghttp2::ssl::DEFAULT_CIPHER_LIST);
+      StringRef::from_lit(nghttp2::tls::DEFAULT_CIPHER_LIST);
   tlsconf.min_proto_version =
-      ssl::proto_version_from_string(DEFAULT_TLS_MIN_PROTO_VERSION);
+      tls::proto_version_from_string(DEFAULT_TLS_MIN_PROTO_VERSION);
   tlsconf.max_proto_version =
-      ssl::proto_version_from_string(DEFAULT_TLS_MAX_PROTO_VERSION);
-#if OPENSSL_1_1_API
+      tls::proto_version_from_string(DEFAULT_TLS_MAX_PROTO_VERSION);
+#if OPENSSL_1_1_API || defined(OPENSSL_IS_BORINGSSL)
   tlsconf.ecdh_curves = StringRef::from_lit("X25519:P-256:P-384:P-521");
-#else  // !OPENSSL_1_1_API
+#else  // !OPENSSL_1_1_API && !defined(OPENSSL_IS_BORINGSSL)
   tlsconf.ecdh_curves = StringRef::from_lit("P-256:P-384:P-521");
-#endif // !OPENSSL_1_1_API
+#endif // !OPENSSL_1_1_API && !defined(OPENSSL_IS_BORINGSSL)
 
   auto &httpconf = config->http;
   httpconf.server_name = StringRef::from_lit("nghttpx");
@@ -1452,6 +1478,8 @@ void fill_default_config(Config *config) {
   httpconf.max_response_header_fields = 500;
   httpconf.redirect_https_port = StringRef::from_lit("443");
   httpconf.max_requests = std::numeric_limits<size_t>::max();
+  httpconf.xfp.add = true;
+  httpconf.xfp.strip_incoming = true;
 
   auto &http2conf = config->http2;
   {
@@ -1589,7 +1617,7 @@ void fill_default_config(Config *config) {
 
 namespace {
 void print_version(std::ostream &out) {
-  out << get_config()->http.server_name.c_str() << std::endl;
+  out << "nghttpx nghttp2/" NGHTTP2_VERSION << std::endl;
 }
 } // namespace
 
@@ -1626,8 +1654,7 @@ Connections:
               with "unix:" (e.g., unix:/var/run/backend.sock).
 
               Optionally, if <PATTERN>s are given, the backend address
-              is  only  used  if  request  matches  the  pattern.   If
-              --http2-proxy  is  used,  <PATTERN>s are  ignored.   The
+              is  only  used  if  request matches  the  pattern.   The
               pattern  matching is  closely  designed  to ServeMux  in
               net/http package of  Go programming language.  <PATTERN>
               consists of  path, host +  path or just host.   The path
@@ -1638,11 +1665,16 @@ Connections:
               which  only  lacks  trailing  '/'  (e.g.,  path  "/foo/"
               matches request path  "/foo").  If it does  not end with
               "/", it  performs exact match against  the request path.
-              If host  is given, it  performs exact match  against the
-              request host.  If  host alone is given,  "/" is appended
-              to it,  so that it  matches all request paths  under the
-              host   (e.g.,   specifying   "nghttp2.org"   equals   to
-              "nghttp2.org/").
+              If  host  is given,  it  performs  a match  against  the
+              request host.   For a  request received on  the frontend
+              lister  with "sni-fwd"  parameter enabled,  SNI host  is
+              used instead of a request host.  If host alone is given,
+              "/" is  appended to it,  so that it matches  all request
+              paths  under the  host  (e.g., specifying  "nghttp2.org"
+              equals  to "nghttp2.org/").   CONNECT method  is treated
+              specially.  It  does not have  path, and we  don't allow
+              empty path.  To workaround  this, we assume that CONNECT
+              method has "/" as path.
 
               Patterns with  host take  precedence over  patterns with
               just path.   Then, longer patterns take  precedence over
@@ -1655,6 +1687,18 @@ Connections:
               "www.nghttp2.org"  and  "git.ngttp2.org", but  does  not
               match  against  "nghttp2.org".   The exact  hosts  match
               takes precedence over the wildcard hosts match.
+
+              If path  part ends with  "*", it is treated  as wildcard
+              path.  The  wildcard path  behaves differently  from the
+              normal path.  For normal path,  match is made around the
+              boundary of path component  separator,"/".  On the other
+              hand, the wildcard  path does not take  into account the
+              path component  separator.  All paths which  include the
+              wildcard  path  without  last  "*" as  prefix,  and  are
+              strictly longer than wildcard  path without last "*" are
+              matched.  "*"  must match  at least one  character.  For
+              example,  the   pattern  "/foo*"  matches   "/foo/"  and
+              "/foobar".  But it does not match "/foo", or "/fo".
 
               If <PATTERN> is omitted or  empty string, "/" is used as
               pattern,  which  matches  all request  paths  (catch-all
@@ -1780,6 +1824,11 @@ Connections:
 
               Optionally, TLS  can be disabled by  specifying "no-tls"
               parameter.  TLS is enabled by default.
+
+              If "sni-fwd" parameter is  used, when performing a match
+              to select a backend server,  SNI host name received from
+              the client  is used  instead of  the request  host.  See
+              --backend option about the pattern match.
 
               To  make this  frontend as  API endpoint,  specify "api"
               parameter.   This   is  disabled  by  default.    It  is
@@ -2022,11 +2071,14 @@ SSL/TLS:
               Don't  verify backend  server's  certificate  if TLS  is
               enabled for backend connections.
   --cacert=<PATH>
-              Set path to trusted CA  certificate file used in backend
-              TLS connections.   The file must  be in PEM  format.  It
-              can  contain  multiple   certificates.   If  the  linked
-              OpenSSL is configured to  load system wide certificates,
-              they are loaded at startup regardless of this option.
+              Set path to trusted CA  certificate file.  It is used in
+              backend  TLS connections  to verify  peer's certificate.
+              It is also used to  verify OCSP response from the script
+              set by --fetch-ocsp-response-file.  The  file must be in
+              PEM format.   It can contain multiple  certificates.  If
+              the  linked OpenSSL  is configured  to load  system wide
+              certificates, they  are loaded at startup  regardless of
+              this option.
   --private-key-passwd-file=<PATH>
               Path  to file  that contains  password for  the server's
               private key.   If none is  given and the private  key is
@@ -2035,12 +2087,12 @@ SSL/TLS:
               Specify  additional certificate  and  private key  file.
               nghttpx will  choose certificates based on  the hostname
               indicated by client using TLS SNI extension.  If nghttpx
-              is  built with  OpenSSL >=  1.0.2, signature  algorithms
-              (e.g., ECDSA+SHA256, RSA+SHA256) presented by client are
-              also taken  into consideration.  This allows  nghttpx to
-              send ECDSA certificate to  modern clients, while sending
-              RSA based certificate to older clients.  This option can
-              be  used multiple  times.  To  make OCSP  stapling work,
+              is  built with  OpenSSL  >= 1.0.2,  the shared  elliptic
+              curves (e.g., P-256) between  client and server are also
+              taken into  consideration.  This allows nghttpx  to send
+              ECDSA certificate  to modern clients, while  sending RSA
+              based certificate to older  clients.  This option can be
+              used  multiple  times.   To  make  OCSP  stapling  work,
               <CERTPATH> must be absolute path.
 
               Additional parameter  can be specified in  <PARAM>.  The
@@ -2082,7 +2134,11 @@ SSL/TLS:
               --tls-min-proto-version and  --tls-max-proto-version are
               enabled.  If the protocol list advertised by client does
               not  overlap  this range,  you  will  receive the  error
-              message "unknown protocol".  The available versions are:
+              message "unknown protocol".  If a protocol version lower
+              than TLSv1.2 is specified, make sure that the compatible
+              ciphers are  included in --ciphers option.   The default
+              cipher  list  only   includes  ciphers  compatible  with
+              TLSv1.2 or above.  The available versions are:
               )"
 #ifdef TLS1_3_VERSION
                              "TLSv1.3, "
@@ -2185,6 +2241,14 @@ SSL/TLS:
               Set interval to update OCSP response cache.
               Default: )"
       << util::duration_str(config->tls.ocsp.update_interval) << R"(
+  --ocsp-startup
+              Start  accepting connections  after initial  attempts to
+              get OCSP responses  finish.  It does not  matter some of
+              the  attempts  fail.  This  feature  is  useful if  OCSP
+              responses   must    be   available    before   accepting
+              connections.
+  --no-verify-ocsp
+              nghttpx does not verify OCSP response.
   --no-ocsp   Disable OCSP stapling.
   --tls-session-cache-memcached=<HOST>,<PORT>[;tls]
               Specify  address of  memcached server  to store  session
@@ -2417,11 +2481,12 @@ Logging:
               * $alpn: ALPN identifier of the protocol which generates
                 the response.   For HTTP/1,  ALPN is  always http/1.1,
                 regardless of minor version.
-              * $ssl_cipher: cipher used for SSL/TLS connection.
-              * $ssl_protocol: protocol for SSL/TLS connection.
-              * $ssl_session_id: session ID for SSL/TLS connection.
-              * $ssl_session_reused:  "r"   if  SSL/TLS   session  was
+              * $tls_cipher: cipher used for SSL/TLS connection.
+              * $tls_protocol: protocol for SSL/TLS connection.
+              * $tls_session_id: session ID for SSL/TLS connection.
+              * $tls_session_reused:  "r"   if  SSL/TLS   session  was
                 reused.  Otherwise, "."
+              * $tls_sni: SNI server name for SSL/TLS connection.
               * $backend_host:  backend  host   used  to  fulfill  the
                 request.  "-" if backend host is not available.
               * $backend_port:  backend  port   used  to  fulfill  the
@@ -2457,6 +2522,15 @@ HTTP:
   --strip-incoming-x-forwarded-for
               Strip X-Forwarded-For  header field from  inbound client
               requests.
+  --no-add-x-forwarded-proto
+              Don't append  additional X-Forwarded-Proto  header field
+              to  the   backend  request.   If  inbound   client  sets
+              X-Forwarded-Proto,                                   and
+              --no-strip-incoming-x-forwarded-proto  option  is  used,
+              they are passed to the backend.
+  --no-strip-incoming-x-forwarded-proto
+              Don't strip X-Forwarded-Proto  header field from inbound
+              client requests.
   --add-forwarded=<LIST>
               Append RFC  7239 Forwarded header field  with parameters
               specified in comma delimited list <LIST>.  The supported
@@ -2626,6 +2700,14 @@ Process:
   --user=<USER>
               Run this program as <USER>.   This option is intended to
               be used to drop root privileges.
+  --single-process
+              Run this program in a  single process mode for debugging
+              purpose.  Without this option,  nghttpx creates at least
+              2  processes:  master  and worker  processes.   If  this
+              option is  used, master  and worker  are unified  into a
+              single process.  nghttpx still spawns additional process
+              if neverbleed is used.  In  the single process mode, the
+              signal handling feature is disabled.
 
 Scripting:
   --mruby-file=<PATH>
@@ -2633,7 +2715,9 @@ Scripting:
 
 Misc:
   --conf=<PATH>
-              Load configuration from <PATH>.
+              Load  configuration  from   <PATH>.   Please  note  that
+              nghttpx always  tries to read the  default configuration
+              file if --conf is not given.
               Default: )"
       << config->conf_path << R"(
   --include=<PATH>
@@ -2663,6 +2747,7 @@ int process_options(Config *config,
                     std::vector<std::pair<StringRef, StringRef>> &cmdcfgs) {
   std::array<char, STRERROR_BUFSIZE> errbuf;
   if (conf_exists(config->conf_path.c_str())) {
+    LOG(NOTICE) << "Loading configuration from " << config->conf_path;
     std::set<StringRef> include_set;
     if (load_config(config, config->conf_path.c_str(), include_set) == -1) {
       LOG(FATAL) << "Failed to load configuration from " << config->conf_path;
@@ -2777,7 +2862,7 @@ int process_options(Config *config,
   }
 
   if (!tlsconf.tls_proto_list.empty()) {
-    tlsconf.tls_proto_mask = ssl::create_tls_proto_mask(tlsconf.tls_proto_list);
+    tlsconf.tls_proto_mask = tls::create_tls_proto_mask(tlsconf.tls_proto_list);
   }
 
   // TODO We depends on the ordering of protocol version macro in
@@ -2788,7 +2873,7 @@ int process_options(Config *config,
     return -1;
   }
 
-  if (ssl::set_alpn_prefs(tlsconf.alpn_prefs, tlsconf.npn_list) != 0) {
+  if (tls::set_alpn_prefs(tlsconf.alpn_prefs, tlsconf.npn_list) != 0) {
     return -1;
   }
 
@@ -2812,7 +2897,7 @@ int process_options(Config *config,
     upstreamconf.worker_connections = std::numeric_limits<size_t>::max();
   }
 
-  if (ssl::upstream_tls_enabled(config->conn) &&
+  if (tls::upstream_tls_enabled(config->conn) &&
       (tlsconf.private_key_file.empty() || tlsconf.cert_file.empty())) {
     LOG(FATAL) << "TLS private key and certificate files are required.  "
                   "Specify them in command-line, or in configuration file "
@@ -2820,7 +2905,7 @@ int process_options(Config *config,
     return -1;
   }
 
-  if (ssl::upstream_tls_enabled(config->conn) && !tlsconf.ocsp.disabled) {
+  if (tls::upstream_tls_enabled(config->conn) && !tlsconf.ocsp.disabled) {
     struct stat buf;
     if (stat(tlsconf.ocsp.fetch_ocsp_response_file.c_str(), &buf) != 0) {
       tlsconf.ocsp.disabled = true;
@@ -2906,7 +2991,7 @@ int process_options(Config *config,
     auto iov = make_byte_ref(config->balloc, SHRPX_OBFUSCATED_NODE_LENGTH + 2);
     auto p = iov.base;
     *p++ = '_';
-    std::mt19937 gen(rd());
+    auto gen = util::make_mt19937();
     p = util::random_alpha_digit(p, p + SHRPX_OBFUSCATED_NODE_LENGTH, gen);
     *p = '\0';
     fwdconf.by_obfuscated = StringRef{iov.base, p};
@@ -2985,7 +3070,7 @@ void reload_config(WorkerProcess *wp) {
   // already created first default loop.
   auto loop = ev_default_loop(new_config->ev_loop_flags);
 
-  int ipc_fd;
+  int ipc_fd = 0;
 
   // fork_worker_process and forked child process assumes new
   // configuration can be obtained from get_config().
@@ -3023,10 +3108,10 @@ int main(int argc, char **argv) {
   int rv;
   std::array<char, STRERROR_BUFSIZE> errbuf;
 
-  nghttp2::ssl::libssl_init();
+  nghttp2::tls::libssl_init();
 
 #ifndef NOTHREADS
-  nghttp2::ssl::LibsslGlobalLock lock;
+  nghttp2::tls::LibsslGlobalLock lock;
 #endif // NOTHREADS
 
   Log::set_severity_level(NOTICE);
@@ -3113,7 +3198,9 @@ int main(int argc, char **argv) {
         {SHRPX_OPT_BACKEND_HTTP_PROXY_URI.c_str(), required_argument, &flag,
          26},
         {SHRPX_OPT_BACKEND_NO_TLS.c_str(), no_argument, &flag, 27},
+        {SHRPX_OPT_OCSP_STARTUP.c_str(), no_argument, &flag, 28},
         {SHRPX_OPT_FRONTEND_NO_TLS.c_str(), no_argument, &flag, 29},
+        {SHRPX_OPT_NO_VERIFY_OCSP.c_str(), no_argument, &flag, 30},
         {SHRPX_OPT_BACKEND_TLS_SNI_FIELD.c_str(), required_argument, &flag, 31},
         {SHRPX_OPT_DH_PARAM_FILE.c_str(), required_argument, &flag, 33},
         {SHRPX_OPT_READ_RATE.c_str(), required_argument, &flag, 34},
@@ -3291,6 +3378,10 @@ int main(int argc, char **argv) {
         {SHRPX_OPT_FRONTEND_MAX_REQUESTS.c_str(), required_argument, &flag,
          155},
         {SHRPX_OPT_SINGLE_THREAD.c_str(), no_argument, &flag, 156},
+        {SHRPX_OPT_NO_ADD_X_FORWARDED_PROTO.c_str(), no_argument, &flag, 157},
+        {SHRPX_OPT_NO_STRIP_INCOMING_X_FORWARDED_PROTO.c_str(), no_argument,
+         &flag, 158},
+        {SHRPX_OPT_SINGLE_PROCESS.c_str(), no_argument, &flag, 159},
         {nullptr, 0, nullptr, 0}};
 
     int option_index = 0;
@@ -3459,9 +3550,19 @@ int main(int argc, char **argv) {
         cmdcfgs.emplace_back(SHRPX_OPT_BACKEND_NO_TLS,
                              StringRef::from_lit("yes"));
         break;
+      case 28:
+        // --ocsp-startup
+        cmdcfgs.emplace_back(SHRPX_OPT_OCSP_STARTUP,
+                             StringRef::from_lit("yes"));
+        break;
       case 29:
         // --frontend-no-tls
         cmdcfgs.emplace_back(SHRPX_OPT_FRONTEND_NO_TLS,
+                             StringRef::from_lit("yes"));
+        break;
+      case 30:
+        // --no-verify-ocsp
+        cmdcfgs.emplace_back(SHRPX_OPT_NO_VERIFY_OCSP,
                              StringRef::from_lit("yes"));
         break;
       case 31:
@@ -4025,6 +4126,21 @@ int main(int argc, char **argv) {
       case 156:
         // --single-thread
         cmdcfgs.emplace_back(SHRPX_OPT_SINGLE_THREAD,
+                             StringRef::from_lit("yes"));
+        break;
+      case 157:
+        // --no-add-x-forwarded-proto
+        cmdcfgs.emplace_back(SHRPX_OPT_NO_ADD_X_FORWARDED_PROTO,
+                             StringRef::from_lit("yes"));
+        break;
+      case 158:
+        // --no-strip-incoming-x-forwarded-proto
+        cmdcfgs.emplace_back(SHRPX_OPT_NO_STRIP_INCOMING_X_FORWARDED_PROTO,
+                             StringRef::from_lit("yes"));
+        break;
+      case 159:
+        // --single-process
+        cmdcfgs.emplace_back(SHRPX_OPT_SINGLE_PROCESS,
                              StringRef::from_lit("yes"));
         break;
       default:

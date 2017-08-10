@@ -30,7 +30,7 @@
 #include <string.h>
 #include <CUnit/Basic.h>
 // include test cases' include files here
-#include "shrpx_ssl_test.h"
+#include "shrpx_tls_test.h"
 #include "shrpx_downstream_test.h"
 #include "shrpx_config_test.h"
 #include "shrpx_worker_test.h"
@@ -43,7 +43,7 @@
 #include "shrpx_http_test.h"
 #include "base64_test.h"
 #include "shrpx_config.h"
-#include "ssl.h"
+#include "tls.h"
 #include "shrpx_router_test.h"
 #include "shrpx_log.h"
 
@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
   CU_pSuite pSuite = NULL;
   unsigned int num_tests_failed;
 
-  nghttp2::ssl::libssl_init();
+  nghttp2::tls::libssl_init();
 
   shrpx::create_config();
 
@@ -71,12 +71,12 @@ int main(int argc, char *argv[]) {
   }
 
   // add the tests to the suite
-  if (!CU_add_test(pSuite, "ssl_create_lookup_tree",
-                   shrpx::test_shrpx_ssl_create_lookup_tree) ||
-      !CU_add_test(pSuite, "ssl_cert_lookup_tree_add_ssl_ctx",
-                   shrpx::test_shrpx_ssl_cert_lookup_tree_add_ssl_ctx) ||
-      !CU_add_test(pSuite, "ssl_tls_hostname_match",
-                   shrpx::test_shrpx_ssl_tls_hostname_match) ||
+  if (!CU_add_test(pSuite, "tls_create_lookup_tree",
+                   shrpx::test_shrpx_tls_create_lookup_tree) ||
+      !CU_add_test(pSuite, "tls_cert_lookup_tree_add_ssl_ctx",
+                   shrpx::test_shrpx_tls_cert_lookup_tree_add_ssl_ctx) ||
+      !CU_add_test(pSuite, "tls_tls_hostname_match",
+                   shrpx::test_shrpx_tls_tls_hostname_match) ||
       !CU_add_test(pSuite, "http2_add_header", shrpx::test_http2_add_header) ||
       !CU_add_test(pSuite, "http2_get_header", shrpx::test_http2_get_header) ||
       !CU_add_test(pSuite, "http2_copy_headers_to_nva",
@@ -130,6 +130,8 @@ int main(int argc, char *argv[]) {
       !CU_add_test(pSuite, "http_create_via_header_value",
                    shrpx::test_shrpx_http_create_via_header_value) ||
       !CU_add_test(pSuite, "router_match", shrpx::test_shrpx_router_match) ||
+      !CU_add_test(pSuite, "router_match_wildcard",
+                   shrpx::test_shrpx_router_match_wildcard) ||
       !CU_add_test(pSuite, "router_match_prefix",
                    shrpx::test_shrpx_router_match_prefix) ||
       !CU_add_test(pSuite, "util_streq", shrpx::test_util_streq) ||

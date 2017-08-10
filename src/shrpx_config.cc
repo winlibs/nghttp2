@@ -53,7 +53,7 @@
 #include "http-parser/http_parser.h"
 
 #include "shrpx_log.h"
-#include "shrpx_ssl.h"
+#include "shrpx_tls.h"
 #include "shrpx_http.h"
 #include "util.h"
 #include "base64.h"
@@ -63,21 +63,22 @@
 namespace shrpx {
 
 namespace {
-std::unique_ptr<Config> config;
+Config *config;
 } // namespace
 
 constexpr auto SHRPX_UNIX_PATH_PREFIX = StringRef::from_lit("unix:");
 
-const Config *get_config() { return config.get(); }
+const Config *get_config() { return config; }
 
-Config *mod_config() { return config.get(); }
+Config *mod_config() { return config; }
 
 std::unique_ptr<Config> replace_config(std::unique_ptr<Config> another) {
-  config.swap(another);
-  return another;
+  auto p = config;
+  config = another.release();
+  return std::unique_ptr<Config>(p);
 }
 
-void create_config() { config = make_unique<Config>(); }
+void create_config() { config = new Config(); }
 
 Config::~Config() {
   auto &upstreamconf = http2.upstream;
@@ -400,6 +401,11 @@ LogFragmentType log_var_lookup_token(const char *name, size_t namelen) {
     break;
   case 7:
     switch (name[6]) {
+    case 'i':
+      if (util::strieq_l("tls_sn", name, 6)) {
+        return SHRPX_LOGF_TLS_SNI;
+      }
+      break;
     case 't':
       if (util::strieq_l("reques", name, 6)) {
         return SHRPX_LOGF_REQUEST;
@@ -417,6 +423,9 @@ LogFragmentType log_var_lookup_token(const char *name, size_t namelen) {
     case 'r':
       if (util::strieq_l("ssl_ciphe", name, 9)) {
         return SHRPX_LOGF_SSL_CIPHER;
+      }
+      if (util::strieq_l("tls_ciphe", name, 9)) {
+        return SHRPX_LOGF_TLS_CIPHER;
       }
       break;
     }
@@ -454,6 +463,9 @@ LogFragmentType log_var_lookup_token(const char *name, size_t namelen) {
       if (util::strieq_l("ssl_protoco", name, 11)) {
         return SHRPX_LOGF_SSL_PROTOCOL;
       }
+      if (util::strieq_l("tls_protoco", name, 11)) {
+        return SHRPX_LOGF_TLS_PROTOCOL;
+      }
       break;
     case 't':
       if (util::strieq_l("backend_hos", name, 11)) {
@@ -470,6 +482,9 @@ LogFragmentType log_var_lookup_token(const char *name, size_t namelen) {
     case 'd':
       if (util::strieq_l("ssl_session_i", name, 13)) {
         return SHRPX_LOGF_SSL_SESSION_ID;
+      }
+      if (util::strieq_l("tls_session_i", name, 13)) {
+        return SHRPX_LOGF_TLS_SESSION_ID;
       }
       break;
     }
@@ -488,6 +503,9 @@ LogFragmentType log_var_lookup_token(const char *name, size_t namelen) {
     case 'd':
       if (util::strieq_l("ssl_session_reuse", name, 17)) {
         return SHRPX_LOGF_SSL_SESSION_REUSED;
+      }
+      if (util::strieq_l("tls_session_reuse", name, 17)) {
+        return SHRPX_LOGF_TLS_SESSION_REUSED;
       }
       break;
     }
@@ -641,7 +659,7 @@ int parse_duration(ev_tstamp *dest, const StringRef &opt,
 namespace {
 int parse_tls_proto_version(int &dest, const StringRef &opt,
                             const StringRef &optarg) {
-  auto v = ssl::proto_version_from_string(optarg);
+  auto v = tls::proto_version_from_string(optarg);
   if (v == -1) {
     LOG(ERROR) << opt << ": invalid TLS protocol version: " << optarg;
     return -1;
@@ -692,6 +710,7 @@ int parse_memcached_connection_params(MemcachedConnectionParams &out,
 struct UpstreamParams {
   int alt_mode;
   bool tls;
+  bool sni_fwd;
   bool proxyproto;
 };
 
@@ -707,6 +726,8 @@ int parse_upstream_params(UpstreamParams &out, const StringRef &src_params) {
 
     if (util::strieq_l("tls", param)) {
       out.tls = true;
+    } else if (util::strieq_l("sni-fwd", param)) {
+      out.sni_fwd = true;
     } else if (util::strieq_l("no-tls", param)) {
       out.tls = false;
     } else if (util::strieq_l("api", param)) {
@@ -946,6 +967,12 @@ int parse_mapping(Config *config, DownstreamAddrConfig &addr,
       auto host = StringRef{std::begin(g.pattern) + 1, path_first};
       auto path = StringRef{path_first, std::end(g.pattern)};
 
+      auto path_is_wildcard = false;
+      if (path[path.size() - 1] == '*') {
+        path = StringRef{std::begin(path), std::begin(path) + path.size() - 1};
+        path_is_wildcard = true;
+      }
+
       auto it = std::find_if(
           std::begin(wildcard_patterns), std::end(wildcard_patterns),
           [&host](const WildcardPattern &wp) { return wp.host == host; });
@@ -954,7 +981,7 @@ int parse_mapping(Config *config, DownstreamAddrConfig &addr,
         wildcard_patterns.emplace_back(host);
 
         auto &router = wildcard_patterns.back().router;
-        router.add_route(path, idx);
+        router.add_route(path, idx, path_is_wildcard);
 
         auto iov = make_byte_ref(downstreamconf.balloc, host.size() + 1);
         auto p = iov.base;
@@ -964,13 +991,20 @@ int parse_mapping(Config *config, DownstreamAddrConfig &addr,
 
         rw_router.add_route(rev_host, wildcard_patterns.size() - 1);
       } else {
-        (*it).router.add_route(path, idx);
+        (*it).router.add_route(path, idx, path_is_wildcard);
       }
 
       continue;
     }
 
-    router.add_route(g.pattern, idx);
+    auto path_is_wildcard = false;
+    if (pattern[pattern.size() - 1] == '*') {
+      pattern = StringRef{std::begin(pattern),
+                          std::begin(pattern) + pattern.size() - 1};
+      path_is_wildcard = true;
+    }
+
+    router.add_route(pattern, idx, path_is_wildcard);
   }
   return 0;
 }
@@ -1557,6 +1591,11 @@ int option_lookup_token(const char *name, size_t namelen) {
         return SHRPX_OPTID_HTTP2_BRIDGE;
       }
       break;
+    case 'p':
+      if (util::strieq_l("ocsp-startu", name, 11)) {
+        return SHRPX_OPTID_OCSP_STARTUP;
+      }
+      break;
     case 'y':
       if (util::strieq_l("client-prox", name, 11)) {
         return SHRPX_OPTID_CLIENT_PROXY;
@@ -1612,12 +1651,20 @@ int option_lookup_token(const char *name, size_t namelen) {
         return SHRPX_OPTID_NO_SERVER_PUSH;
       }
       break;
+    case 'p':
+      if (util::strieq_l("no-verify-ocs", name, 13)) {
+        return SHRPX_OPTID_NO_VERIFY_OCSP;
+      }
+      break;
     case 's':
       if (util::strieq_l("backend-no-tl", name, 13)) {
         return SHRPX_OPTID_BACKEND_NO_TLS;
       }
       if (util::strieq_l("client-cipher", name, 13)) {
         return SHRPX_OPTID_CLIENT_CIPHERS;
+      }
+      if (util::strieq_l("single-proces", name, 13)) {
+        return SHRPX_OPTID_SINGLE_PROCESS;
       }
       break;
     case 't':
@@ -1901,6 +1948,11 @@ int option_lookup_token(const char *name, size_t namelen) {
         return SHRPX_OPTID_FETCH_OCSP_RESPONSE_FILE;
       }
       break;
+    case 'o':
+      if (util::strieq_l("no-add-x-forwarded-prot", name, 23)) {
+        return SHRPX_OPTID_NO_ADD_X_FORWARDED_PROTO;
+      }
+      break;
     case 't':
       if (util::strieq_l("listener-disable-timeou", name, 23)) {
         return SHRPX_OPTID_LISTENER_DISABLE_TIMEOUT;
@@ -2097,6 +2149,11 @@ int option_lookup_token(const char *name, size_t namelen) {
         return SHRPX_OPTID_FRONTEND_HTTP2_OPTIMIZE_WINDOW_SIZE;
       }
       break;
+    case 'o':
+      if (util::strieq_l("no-strip-incoming-x-forwarded-prot", name, 34)) {
+        return SHRPX_OPTID_NO_STRIP_INCOMING_X_FORWARDED_PROTO;
+      }
+      break;
     case 'r':
       if (util::strieq_l("frontend-http2-dump-response-heade", name, 34)) {
         return SHRPX_OPTID_FRONTEND_HTTP2_DUMP_RESPONSE_HEADER;
@@ -2282,9 +2339,15 @@ int parse_config(Config *config, int optid, const StringRef &opt,
       return -1;
     }
 
+    if (params.sni_fwd && !params.tls) {
+      LOG(ERROR) << "frontend: sni_fwd requires tls";
+      return -1;
+    }
+
     UpstreamAddr addr{};
     addr.fd = -1;
     addr.tls = params.tls;
+    addr.sni_fwd = params.sni_fwd;
     addr.alt_mode = params.alt_mode;
     addr.accept_proxy_protocol = params.proxyproto;
 
@@ -3356,6 +3419,26 @@ int parse_config(Config *config, int optid, const StringRef &opt,
     config->single_thread = util::strieq_l("yes", optarg);
 
     return 0;
+  case SHRPX_OPTID_SINGLE_PROCESS:
+    config->single_process = util::strieq_l("yes", optarg);
+
+    return 0;
+  case SHRPX_OPTID_NO_ADD_X_FORWARDED_PROTO:
+    config->http.xfp.add = !util::strieq_l("yes", optarg);
+
+    return 0;
+  case SHRPX_OPTID_NO_STRIP_INCOMING_X_FORWARDED_PROTO:
+    config->http.xfp.strip_incoming = !util::strieq_l("yes", optarg);
+
+    return 0;
+  case SHRPX_OPTID_OCSP_STARTUP:
+    config->tls.ocsp.startup = util::strieq_l("yes", optarg);
+
+    return 0;
+  case SHRPX_OPTID_NO_VERIFY_OCSP:
+    config->tls.ocsp.no_verify = util::strieq_l("yes", optarg);
+
+    return 0;
   case SHRPX_OPTID_CONF:
     LOG(WARN) << "conf: ignored";
 
@@ -3548,6 +3631,7 @@ StringRef strproto(shrpx_proto proto) {
 
   // gcc needs this.
   assert(0);
+  abort();
 }
 
 namespace {
@@ -3610,19 +3694,6 @@ int configure_downstream_group(Config *config, bool http2_proxy,
     g.addrs.push_back(std::move(addr));
     router.add_route(g.pattern, addr_groups.size());
     addr_groups.push_back(std::move(g));
-  } else if (http2_proxy) {
-    // We don't support host mapping in these cases.  Move all
-    // non-catch-all patterns to catch-all pattern.
-    DownstreamAddrGroupConfig catch_all(StringRef::from_lit("/"));
-    for (auto &g : addr_groups) {
-      std::move(std::begin(g.addrs), std::end(g.addrs),
-                std::back_inserter(catch_all.addrs));
-    }
-    std::vector<DownstreamAddrGroupConfig>().swap(addr_groups);
-    // maybe not necessary?
-    routerconf = RouterConfig{};
-    router.add_route(catch_all.pattern, addr_groups.size());
-    addr_groups.push_back(std::move(catch_all));
   }
 
   // backward compatibility: override all SNI fields with the option
@@ -3773,6 +3844,13 @@ int resolve_hostname(Address *addr, const char *hostname, uint16_t port,
   addrinfo *res;
 
   rv = getaddrinfo(hostname, service.c_str(), &hints, &res);
+#ifdef AI_ADDRCONFIG
+  if (rv != 0) {
+    // Retry without AI_ADDRCONFIG
+    hints.ai_flags &= ~AI_ADDRCONFIG;
+    rv = getaddrinfo(hostname, service.c_str(), &hints, &res);
+  }
+#endif // AI_ADDRCONFIG
   if (rv != 0) {
     LOG(FATAL) << "Unable to resolve address for " << hostname << ": "
                << gai_strerror(rv);

@@ -30,7 +30,7 @@
 
 #include <memory>
 
-#include "shrpx_ssl.h"
+#include "shrpx_tls.h"
 #include "shrpx_log.h"
 #include "shrpx_client_handler.h"
 #include "shrpx_http2_session.h"
@@ -109,17 +109,13 @@ bool match_shared_downstream_addr(
 }
 } // namespace
 
-namespace {
-std::random_device rd;
-} // namespace
-
 Worker::Worker(struct ev_loop *loop, SSL_CTX *sv_ssl_ctx, SSL_CTX *cl_ssl_ctx,
                SSL_CTX *tls_session_cache_memcached_ssl_ctx,
-               ssl::CertLookupTree *cert_tree,
+               tls::CertLookupTree *cert_tree,
                const std::shared_ptr<TicketKeys> &ticket_keys,
                ConnectionHandler *conn_handler,
                std::shared_ptr<DownstreamConfig> downstreamconf)
-    : randgen_(rd()),
+    : randgen_(util::make_mt19937()),
       worker_stat_{},
       dns_tracker_(loop),
       loop_(loop),
@@ -372,7 +368,7 @@ void Worker::process_events() {
     }
 
     auto client_handler =
-        ssl::accept_connection(this, wev.client_fd, &wev.client_addr.sa,
+        tls::accept_connection(this, wev.client_fd, &wev.client_addr.sa,
                                wev.client_addrlen, wev.faddr);
     if (!client_handler) {
       if (LOG_ENABLED(INFO)) {
@@ -420,7 +416,7 @@ void Worker::process_events() {
   }
 }
 
-ssl::CertLookupTree *Worker::get_cert_lookup_tree() const { return cert_tree_; }
+tls::CertLookupTree *Worker::get_cert_lookup_tree() const { return cert_tree_; }
 
 std::shared_ptr<TicketKeys> Worker::get_ticket_keys() {
 #ifdef HAVE_ATOMIC_STD_SHARED_PTR
@@ -509,18 +505,6 @@ size_t match_downstream_addr_group_host(
   const auto &rev_wildcard_router = routerconf.rev_wildcard_router;
   const auto &wildcard_patterns = routerconf.wildcard_patterns;
 
-  if (path.empty() || path[0] != '/') {
-    auto group = router.match(host, StringRef::from_lit("/"));
-    if (group != -1) {
-      if (LOG_ENABLED(INFO)) {
-        LOG(INFO) << "Found pattern with query " << host
-                  << ", matched pattern=" << groups[group]->pattern;
-      }
-      return group;
-    }
-    return catch_all;
-  }
-
   if (LOG_ENABLED(INFO)) {
     LOG(INFO) << "Perform mapping selection, using host=" << host
               << ", path=" << path;
@@ -605,6 +589,10 @@ size_t match_downstream_addr_group(
   auto fragment = std::find(std::begin(raw_path), std::end(raw_path), '#');
   auto query = std::find(std::begin(raw_path), fragment, '?');
   auto path = StringRef{std::begin(raw_path), query};
+
+  if (path.empty() || path[0] != '/') {
+    path = StringRef::from_lit("/");
+  }
 
   if (hostport.empty()) {
     return match_downstream_addr_group_host(routerconf, hostport, path, groups,

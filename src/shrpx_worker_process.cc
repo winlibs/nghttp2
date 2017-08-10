@@ -51,7 +51,7 @@
 #include "shrpx_memcached_dispatcher.h"
 #include "shrpx_memcached_request.h"
 #include "shrpx_process.h"
-#include "shrpx_ssl.h"
+#include "shrpx_tls.h"
 #include "shrpx_log.h"
 #include "util.h"
 #include "app_helper.h"
@@ -275,8 +275,7 @@ void memcached_get_ticket_key_cb(struct ev_loop *loop, ev_timer *w,
   auto req = make_unique<MemcachedRequest>();
   req->key = "nghttpx:tls-ticket-key";
   req->op = MEMCACHED_OP_GET;
-  req->cb = [conn_handler, dispatcher, w](MemcachedRequest *req,
-                                          MemcachedResult res) {
+  req->cb = [conn_handler, w](MemcachedRequest *req, MemcachedResult res) {
     switch (res.status_code) {
     case MEMCACHED_ERR_NO_ERROR:
       break;
@@ -392,10 +391,6 @@ void nb_child_cb(struct ev_loop *loop, ev_child *w, int revents) {
 } // namespace
 #endif // HAVE_NEVERBLEED
 
-namespace {
-std::random_device rd;
-} // namespace
-
 int worker_process_event_loop(WorkerProcessConfig *wpconf) {
   int rv;
   std::array<char, STRERROR_BUFSIZE> errbuf;
@@ -416,7 +411,7 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
 
   auto loop = EV_DEFAULT;
 
-  auto gen = std::mt19937(rd());
+  auto gen = util::make_mt19937();
 
   ConnectionHandler conn_handler(loop, gen);
 
@@ -452,7 +447,7 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
   MemchunkPool mcpool;
 
   ev_timer renew_ticket_key_timer;
-  if (ssl::upstream_tls_enabled(config->conn)) {
+  if (tls::upstream_tls_enabled(config->conn)) {
     auto &ticketconf = config->tls.ticket;
     auto &memcachedconf = ticketconf.memcached;
 
@@ -551,7 +546,12 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
   ipcev.data = &conn_handler;
   ev_io_start(loop, &ipcev);
 
-  if (ssl::upstream_tls_enabled(config->conn) && !config->tls.ocsp.disabled) {
+  if (tls::upstream_tls_enabled(config->conn) && !config->tls.ocsp.disabled) {
+    if (config->tls.ocsp.startup) {
+      conn_handler.set_enable_acceptor_on_ocsp_completion(true);
+      conn_handler.disable_acceptor();
+    }
+
     conn_handler.proceed_next_cert_ocsp();
   }
 

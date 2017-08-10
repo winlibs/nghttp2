@@ -42,7 +42,7 @@
 #include "shrpx_config.h"
 #include "shrpx_http_downstream_connection.h"
 #include "shrpx_http2_downstream_connection.h"
-#include "shrpx_ssl.h"
+#include "shrpx_tls.h"
 #include "shrpx_worker.h"
 #include "shrpx_downstream_connection_pool.h"
 #include "shrpx_downstream.h"
@@ -56,7 +56,7 @@
 #endif // HAVE_SPDYLAY
 #include "util.h"
 #include "template.h"
-#include "ssl.h"
+#include "tls.h"
 
 using namespace nghttp2;
 
@@ -93,10 +93,6 @@ void readcb(struct ev_loop *loop, ev_io *w, int revents) {
   auto handler = static_cast<ClientHandler *>(conn->data);
 
   if (handler->do_read() != 0) {
-    delete handler;
-    return;
-  }
-  if (handler->do_write() != 0) {
     delete handler;
     return;
   }
@@ -580,7 +576,7 @@ int ClientHandler::validate_next_proto() {
     CLOG(INFO, this) << "The negotiated next protocol: " << proto;
   }
 
-  if (!ssl::in_proto_list(get_config()->tls.npn_list, proto)) {
+  if (!tls::in_proto_list(get_config()->tls.npn_list, proto)) {
     if (LOG_ENABLED(INFO)) {
       CLOG(INFO, this) << "The negotiated protocol is not supported: " << proto;
     }
@@ -980,31 +976,33 @@ ClientHandler::get_downstream_connection(int &err, Downstream *downstream) {
     return make_unique<HealthMonitorDownstreamConnection>();
   }
 
+  auto &balloc = downstream->get_block_allocator();
+
   // Fast path.  If we have one group, it must be catch-all group.
-  // proxy mode falls in this case.
   if (groups.size() == 1) {
     group_idx = 0;
-  } else if (req.method == HTTP_CONNECT) {
-    //  We don't know how to treat CONNECT request in host-path
-    //  mapping.  It most likely appears in proxy scenario.  Since we
-    //  have dealt with proxy case already, just use catch-all group.
-    group_idx = catch_all;
   } else {
-    auto &balloc = downstream->get_block_allocator();
-
-    if (!req.authority.empty()) {
-      group_idx = match_downstream_addr_group(
-          routerconf, req.authority, req.path, groups, catch_all, balloc);
+    StringRef authority;
+    if (faddr_->sni_fwd) {
+      authority = sni_;
+    } else if (!req.authority.empty()) {
+      authority = req.authority;
     } else {
       auto h = req.fs.header(http2::HD_HOST);
       if (h) {
-        group_idx = match_downstream_addr_group(routerconf, h->value, req.path,
-                                                groups, catch_all, balloc);
-      } else {
-        group_idx = match_downstream_addr_group(
-            routerconf, StringRef{}, req.path, groups, catch_all, balloc);
+        authority = h->value;
       }
     }
+
+    StringRef path;
+    // CONNECT method does not have path.  But we requires path in
+    // host-path mapping.  As workaround, we assume that path is "/".
+    if (req.method != HTTP_CONNECT) {
+      path = req.path;
+    }
+
+    group_idx = match_downstream_addr_group(routerconf, authority, path, groups,
+                                            catch_all, balloc);
   }
 
   if (LOG_ENABLED(INFO)) {
@@ -1205,7 +1203,7 @@ void ClientHandler::start_immediate_shutdown() {
 }
 
 void ClientHandler::write_accesslog(Downstream *downstream) {
-  nghttp2::ssl::TLSSessionInfo tls_info;
+  nghttp2::tls::TLSSessionInfo tls_info;
   auto &req = downstream->request();
 
   auto config = get_config();
@@ -1219,8 +1217,8 @@ void ClientHandler::write_accesslog(Downstream *downstream) {
   upstream_accesslog(
       config->logging.access.format,
       LogSpec{
-          downstream, ipaddr_, alpn_,
-          nghttp2::ssl::get_tls_session_info(&tls_info, conn_.tls.ssl),
+          downstream, ipaddr_, alpn_, sni_,
+          nghttp2::tls::get_tls_session_info(&tls_info, conn_.tls.ssl),
           std::chrono::high_resolution_clock::now(), // request_end_time
           port_, faddr_->port, config->pid,
       });
@@ -1229,14 +1227,6 @@ void ClientHandler::write_accesslog(Downstream *downstream) {
 ClientHandler::ReadBuf *ClientHandler::get_rb() { return &rb_; }
 
 void ClientHandler::signal_write() { conn_.wlimit.startw(); }
-
-void ClientHandler::signal_write_no_wait() {
-  // ev_feed_event works without starting watcher.  But rate limiter
-  // requires active watcher.  Without that, we might not send pending
-  // data.  Also ClientHandler::write_tls requires it.
-  conn_.wlimit.startw();
-  ev_feed_event(conn_.loop, &conn_.wev, EV_WRITE);
-}
 
 RateLimit *ClientHandler::get_rlimit() { return &conn_.rlimit; }
 RateLimit *ClientHandler::get_wlimit() { return &conn_.wlimit; }

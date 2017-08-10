@@ -46,8 +46,7 @@ Connections
     with "unix:" (e.g., unix:/var/run/backend.sock).
 
     Optionally, if <PATTERN>s are given, the backend address
-    is  only  used  if  request  matches  the  pattern.   If
-    :option:`--http2-proxy`  is  used,  <PATTERN>s are  ignored.   The
+    is  only  used  if  request matches  the  pattern.   The
     pattern  matching is  closely  designed  to ServeMux  in
     net/http package of  Go programming language.  <PATTERN>
     consists of  path, host +  path or just host.   The path
@@ -58,11 +57,16 @@ Connections
     which  only  lacks  trailing  '*/*'  (e.g.,  path  "*/foo/*"
     matches request path  "*/foo*").  If it does  not end with
     "*/*", it  performs exact match against  the request path.
-    If host  is given, it  performs exact match  against the
-    request host.  If  host alone is given,  "*/*" is appended
-    to it,  so that it  matches all request paths  under the
-    host   (e.g.,   specifying   "nghttp2.org"   equals   to
-    "nghttp2.org/").
+    If  host  is given,  it  performs  a match  against  the
+    request host.   For a  request received on  the frontend
+    lister  with "sni-fwd"  parameter enabled,  SNI host  is
+    used instead of a request host.  If host alone is given,
+    "*/*" is  appended to it,  so that it matches  all request
+    paths  under the  host  (e.g., specifying  "nghttp2.org"
+    equals  to "nghttp2.org/").   CONNECT method  is treated
+    specially.  It  does not have  path, and we  don't allow
+    empty path.  To workaround  this, we assume that CONNECT
+    method has "*/*" as path.
 
     Patterns with  host take  precedence over  patterns with
     just path.   Then, longer patterns take  precedence over
@@ -75,6 +79,18 @@ Connections
     "www.nghttp2.org"  and  "git.ngttp2.org", but  does  not
     match  against  "nghttp2.org".   The exact  hosts  match
     takes precedence over the wildcard hosts match.
+
+    If path  part ends with  "\*", it is treated  as wildcard
+    path.  The  wildcard path  behaves differently  from the
+    normal path.  For normal path,  match is made around the
+    boundary of path component  separator,"*/*".  On the other
+    hand, the wildcard  path does not take  into account the
+    path component  separator.  All paths which  include the
+    wildcard  path  without  last  "\*" as  prefix,  and  are
+    strictly longer than wildcard  path without last "\*" are
+    matched.  "\*"  must match  at least one  character.  For
+    example,  the   pattern  "*/foo\**"  matches   "*/foo/*"  and
+    "*/foobar*".  But it does not match "*/foo*", or "*/fo*".
 
     If <PATTERN> is omitted or  empty string, "*/*" is used as
     pattern,  which  matches  all request  paths  (catch-all
@@ -202,6 +218,11 @@ Connections
 
     Optionally, TLS  can be disabled by  specifying "no-tls"
     parameter.  TLS is enabled by default.
+
+    If "sni-fwd" parameter is  used, when performing a match
+    to select a backend server,  SNI host name received from
+    the client  is used  instead of  the request  host.  See
+    :option:`--backend` option about the pattern match.
 
     To  make this  frontend as  API endpoint,  specify "api"
     parameter.   This   is  disabled  by  default.    It  is
@@ -511,14 +532,14 @@ SSL/TLS
     Set allowed  cipher list  for frontend  connection.  The
     format of the string is described in OpenSSL ciphers(1).
 
-    Default: ``ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:ECDHE-ECDSA-DES-CBC3-SHA:ECDHE-RSA-DES-CBC3-SHA:EDH-RSA-DES-CBC3-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA:DES-CBC3-SHA:!DSS``
+    Default: ``ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256``
 
 .. option:: --client-ciphers=<SUITE>
 
     Set  allowed cipher  list for  backend connection.   The
     format of the string is described in OpenSSL ciphers(1).
 
-    Default: ``ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:ECDHE-ECDSA-DES-CBC3-SHA:ECDHE-RSA-DES-CBC3-SHA:EDH-RSA-DES-CBC3-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA:DES-CBC3-SHA:!DSS``
+    Default: ``ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256``
 
 .. option:: --ecdh-curves=<LIST>
 
@@ -537,11 +558,14 @@ SSL/TLS
 
 .. option:: --cacert=<PATH>
 
-    Set path to trusted CA  certificate file used in backend
-    TLS connections.   The file must  be in PEM  format.  It
-    can  contain  multiple   certificates.   If  the  linked
-    OpenSSL is configured to  load system wide certificates,
-    they are loaded at startup regardless of this option.
+    Set path to trusted CA  certificate file.  It is used in
+    backend  TLS connections  to verify  peer's certificate.
+    It is also used to  verify OCSP response from the script
+    set by :option:`--fetch-ocsp-response-file`\.  The  file must be in
+    PEM format.   It can contain multiple  certificates.  If
+    the  linked OpenSSL  is configured  to load  system wide
+    certificates, they  are loaded at startup  regardless of
+    this option.
 
 .. option:: --private-key-passwd-file=<PATH>
 
@@ -554,12 +578,12 @@ SSL/TLS
     Specify  additional certificate  and  private key  file.
     nghttpx will  choose certificates based on  the hostname
     indicated by client using TLS SNI extension.  If nghttpx
-    is  built with  OpenSSL >=  1.0.2, signature  algorithms
-    (e.g., ECDSA+SHA256, RSA+SHA256) presented by client are
-    also taken  into consideration.  This allows  nghttpx to
-    send ECDSA certificate to  modern clients, while sending
-    RSA based certificate to older clients.  This option can
-    be  used multiple  times.  To  make OCSP  stapling work,
+    is  built with  OpenSSL  >= 1.0.2,  the shared  elliptic
+    curves (e.g., P-256) between  client and server are also
+    taken into  consideration.  This allows nghttpx  to send
+    ECDSA certificate  to modern clients, while  sending RSA
+    based certificate to older  clients.  This option can be
+    used  multiple  times.   To  make  OCSP  stapling  work,
     <CERTPATH> must be absolute path.
 
     Additional parameter  can be specified in  <PARAM>.  The
@@ -615,10 +639,14 @@ SSL/TLS
     :option:`--tls-min-proto-version` and  :option:`\--tls-max-proto-version` are
     enabled.  If the protocol list advertised by client does
     not  overlap  this range,  you  will  receive the  error
-    message "unknown protocol".  The available versions are:
+    message "unknown protocol".  If a protocol version lower
+    than TLSv1.2 is specified, make sure that the compatible
+    ciphers are  included in :option:`--ciphers` option.   The default
+    cipher  list  only   includes  ciphers  compatible  with
+    TLSv1.2 or above.  The available versions are:
     TLSv1.2, TLSv1.1, and TLSv1.0
 
-    Default: ``TLSv1.1``
+    Default: ``TLSv1.2``
 
 .. option:: --tls-max-proto-version=<VER>
 
@@ -733,6 +761,18 @@ SSL/TLS
     Set interval to update OCSP response cache.
 
     Default: ``4h``
+
+.. option:: --ocsp-startup
+
+    Start  accepting connections  after initial  attempts to
+    get OCSP responses  finish.  It does not  matter some of
+    the  attempts  fail.  This  feature  is  useful if  OCSP
+    responses   must    be   available    before   accepting
+    connections.
+
+.. option:: --no-verify-ocsp
+
+    nghttpx does not verify OCSP response.
 
 .. option:: --no-ocsp
 
@@ -1037,11 +1077,12 @@ Logging
     * $alpn: ALPN identifier of the protocol which generates
       the response.   For HTTP/1,  ALPN is  always http/1.1,
       regardless of minor version.
-    * $ssl_cipher: cipher used for SSL/TLS connection.
-    * $ssl_protocol: protocol for SSL/TLS connection.
-    * $ssl_session_id: session ID for SSL/TLS connection.
-    * $ssl_session_reused:  "r"   if  SSL/TLS   session  was
+    * $tls_cipher: cipher used for SSL/TLS connection.
+    * $tls_protocol: protocol for SSL/TLS connection.
+    * $tls_session_id: session ID for SSL/TLS connection.
+    * $tls_session_reused:  "r"   if  SSL/TLS   session  was
       reused.  Otherwise, "."
+    * $tls_sni: SNI server name for SSL/TLS connection.
     * $backend_host:  backend  host   used  to  fulfill  the
       request.  "-" if backend host is not available.
     * $backend_port:  backend  port   used  to  fulfill  the
@@ -1091,6 +1132,19 @@ HTTP
 
     Strip X-Forwarded-For  header field from  inbound client
     requests.
+
+.. option:: --no-add-x-forwarded-proto
+
+    Don't append  additional X-Forwarded-Proto  header field
+    to  the   backend  request.   If  inbound   client  sets
+    X-Forwarded-Proto,                                   and
+    :option:`--no-strip-incoming-x-forwarded-proto`  option  is  used,
+    they are passed to the backend.
+
+.. option:: --no-strip-incoming-x-forwarded-proto
+
+    Don't strip X-Forwarded-Proto  header field from inbound
+    client requests.
 
 .. option:: --add-forwarded=<LIST>
 
@@ -1330,6 +1384,16 @@ Process
     Run this program as <USER>.   This option is intended to
     be used to drop root privileges.
 
+.. option:: --single-process
+
+    Run this program in a  single process mode for debugging
+    purpose.  Without this option,  nghttpx creates at least
+    2  processes:  master  and worker  processes.   If  this
+    option is  used, master  and worker  are unified  into a
+    single process.  nghttpx still spawns additional process
+    if neverbleed is used.  In  the single process mode, the
+    signal handling feature is disabled.
+
 
 Scripting
 ~~~~~~~~~
@@ -1344,7 +1408,9 @@ Misc
 
 .. option:: --conf=<PATH>
 
-    Load configuration from <PATH>.
+    Load  configuration  from   <PATH>.   Please  note  that
+    nghttpx always  tries to read the  default configuration
+    file if :option:`--conf` is not given.
 
     Default: ``/etc/nghttpx/nghttpx.conf``
 
@@ -1545,6 +1611,22 @@ be customized using :option:`--fetch-ocsp-response-file` option.
 
 If OCSP query is failed, previous OCSP response, if any, is continued
 to be used.
+
+:option:`--fetch-ocsp-response-file` option provides wide range of
+possibility to manage OCSP response.  It can take an arbitrary script
+or executable.  The requirement is that it supports the command-line
+interface of ``fetch-ocsp-response`` script, and it must return a
+valid DER encoded OCSP response on success.  It must return exit code
+0 on success, and 75 for temporary error, and the other error code for
+generic failure.  For large cluster of servers, it is not efficient
+for each server to perform OCSP query using ``fetch-ocsp-response``.
+Instead, you can retrieve OCSP response in some way, and store it in a
+disk or a shared database.  Then specify a program in
+:option:`--fetch-ocsp-response-file` to fetch it from those stores.
+This could provide a way to share the OCSP response between fleet of
+servers, and also any OCSP query strategy can be applied which may be
+beyond the ability of nghttpx itself or ``fetch-ocsp-response``
+script.
 
 TLS SESSION RESUMPTION
 ----------------------

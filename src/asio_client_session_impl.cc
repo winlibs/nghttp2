@@ -47,6 +47,7 @@ session_impl::session_impl(
       deadline_(io_service),
       connect_timeout_(connect_timeout),
       read_timeout_(boost::posix_time::seconds(60)),
+      ping_(io_service),
       session_(nullptr),
       data_pending_(nullptr),
       data_pendinglen_(0),
@@ -102,6 +103,27 @@ void session_impl::handle_deadline() {
       std::bind(&session_impl::handle_deadline, this->shared_from_this()));
 }
 
+void handle_ping2(const boost::system::error_code &ec, int) {}
+
+void session_impl::start_ping() {
+  ping_.expires_from_now(boost::posix_time::seconds(30));
+  ping_.async_wait(std::bind(&session_impl::handle_ping, shared_from_this(),
+                             std::placeholders::_1));
+}
+
+void session_impl::handle_ping(const boost::system::error_code &ec) {
+  if (stopped_ || ec == boost::asio::error::operation_aborted ||
+      !streams_.empty()) {
+    return;
+  }
+
+  nghttp2_submit_ping(session_, NGHTTP2_FLAG_NONE, nullptr);
+
+  signal_write();
+
+  start_ping();
+}
+
 void session_impl::connected(tcp::resolver::iterator endpoint_it) {
   if (!setup_session()) {
     return;
@@ -111,6 +133,8 @@ void session_impl::connected(tcp::resolver::iterator endpoint_it) {
 
   do_write();
   do_read();
+
+  start_ping();
 
   auto &connect_cb = on_connect();
   if (connect_cb) {
@@ -433,6 +457,9 @@ std::unique_ptr<stream> session_impl::pop_stream(int32_t stream_id) {
   }
   auto strm = std::move((*it).second);
   streams_.erase(it);
+  if (streams_.empty()) {
+    start_ping();
+  }
   return strm;
 }
 
@@ -441,6 +468,7 @@ stream *session_impl::create_push_stream(int32_t stream_id) {
   strm->stream_id(stream_id);
   auto p = streams_.emplace(stream_id, std::move(strm));
   assert(p.second);
+  ping_.cancel();
   return (*p.first).second.get();
 }
 
@@ -451,7 +479,7 @@ std::unique_ptr<stream> session_impl::create_stream() {
 const request *session_impl::submit(boost::system::error_code &ec,
                                     const std::string &method,
                                     const std::string &uri, generator_cb cb,
-                                    header_map h) {
+                                    header_map h, priority_spec prio) {
   ec.clear();
 
   if (stopped_) {
@@ -531,7 +559,7 @@ const request *session_impl::submit(boost::system::error_code &ec,
     prdptr = &prd;
   }
 
-  auto stream_id = nghttp2_submit_request(session_, nullptr, nva.data(),
+  auto stream_id = nghttp2_submit_request(session_, prio.get(), nva.data(),
                                           nva.size(), prdptr, strm.get());
   if (stream_id < 0) {
     ec = make_error_code(static_cast<nghttp2_error>(stream_id));
@@ -544,6 +572,7 @@ const request *session_impl::submit(boost::system::error_code &ec,
 
   auto p = streams_.emplace(stream_id, std::move(strm));
   assert(p.second);
+  ping_.cancel();
   return &(*p.first).second->request();
 }
 
@@ -715,6 +744,7 @@ void session_impl::stop() {
 
   shutdown_socket();
   deadline_.cancel();
+  ping_.cancel();
   stopped_ = true;
 }
 
