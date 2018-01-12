@@ -81,8 +81,10 @@ typedef struct {
 } my_user_data;
 
 static const nghttp2_nv reqnv[] = {
-    MAKE_NV(":method", "GET"), MAKE_NV(":path", "/"),
-    MAKE_NV(":scheme", "https"), MAKE_NV(":authority", "localhost"),
+    MAKE_NV(":method", "GET"),
+    MAKE_NV(":path", "/"),
+    MAKE_NV(":scheme", "https"),
+    MAKE_NV(":authority", "localhost"),
 };
 
 static const nghttp2_nv resnv[] = {
@@ -938,7 +940,7 @@ void test_nghttp2_session_recv_data(void) {
   stream = open_sent_stream2(session, 1, NGHTTP2_STREAM_CLOSING);
 
   /* Set initial window size 16383 to check stream flow control,
-     isolating it from the conneciton flow control */
+     isolating it from the connection flow control */
   stream->local_window_size = 16383;
 
   ud.data_chunk_recv_cb_called = 0;
@@ -5876,9 +5878,8 @@ void test_nghttp2_submit_altsvc(void) {
 
   len = nghttp2_session_mem_send(session, &data);
 
-  CU_ASSERT(len ==
-            NGHTTP2_FRAME_HDLEN + 2 + sizeof(origin) - 1 + sizeof(field_value) -
-                1);
+  CU_ASSERT(len == NGHTTP2_FRAME_HDLEN + 2 + sizeof(origin) - 1 +
+                       sizeof(field_value) - 1);
 
   nghttp2_frame_unpack_frame_hd(&hd, data);
 

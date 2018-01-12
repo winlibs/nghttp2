@@ -1749,8 +1749,8 @@ void fill_callback(nghttp2_session_callbacks *callbacks, const Config *config) {
     nghttp2_session_callbacks_set_on_invalid_frame_recv_callback(
         callbacks, verbose_on_invalid_frame_recv_callback);
 
-    nghttp2_session_callbacks_set_error_callback(callbacks,
-                                                 verbose_error_callback);
+    nghttp2_session_callbacks_set_error_callback2(callbacks,
+                                                  verbose_error_callback);
   }
 
   nghttp2_session_callbacks_set_on_data_chunk_recv_callback(
@@ -1779,7 +1779,7 @@ struct ClientInfo {
 struct Worker {
   std::unique_ptr<Sessions> sessions;
   ev_async w;
-  // protectes q
+  // protects q
   std::mutex m;
   std::deque<ClientInfo> q;
 };
@@ -2156,7 +2156,7 @@ int HttpServer::run() {
     }
     SSL_CTX_set_tmp_ecdh(ssl_ctx, ecdh);
     EC_KEY_free(ecdh);
-// #endif // OPENSSL_VERSION_NUBMER < 0x10002000L
+    // #endif // OPENSSL_VERSION_NUBMER < 0x10002000L
 
 #endif // OPENSSL_NO_EC
 

@@ -67,7 +67,7 @@ void drop_privileges(
 #ifdef HAVE_NEVERBLEED
     neverbleed_t *nb
 #endif // HAVE_NEVERBLEED
-    ) {
+) {
   std::array<char, STRERROR_BUFSIZE> errbuf;
   auto config = get_config();
 
@@ -116,7 +116,7 @@ void graceful_shutdown(ConnectionHandler *conn_handler) {
 
   conn_handler->disable_acceptor();
 
-  // After disabling accepting new connection, disptach incoming
+  // After disabling accepting new connection, dispatch incoming
   // connection in backlog.
 
   conn_handler->accept_pending_connection();
@@ -539,7 +539,7 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
 #ifdef HAVE_NEVERBLEED
       nb
 #endif // HAVE_NEVERBLEED
-      );
+  );
 
   ev_io ipcev;
   ev_io_init(&ipcev, ipc_readcb, wpconf->ipc_fd, EV_READ);

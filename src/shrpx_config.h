@@ -356,6 +356,31 @@ enum shrpx_session_affinity {
   AFFINITY_NONE,
   // Client IP affinity
   AFFINITY_IP,
+  // Cookie based affinity
+  AFFINITY_COOKIE,
+};
+
+enum shrpx_cookie_secure {
+  // Secure attribute of session affinity cookie is determined by the
+  // request scheme.
+  COOKIE_SECURE_AUTO,
+  // Secure attribute of session affinity cookie is always set.
+  COOKIE_SECURE_YES,
+  // Secure attribute of session affinity cookie is always unset.
+  COOKIE_SECURE_NO,
+};
+
+struct AffinityConfig {
+  // Type of session affinity.
+  shrpx_session_affinity type;
+  struct {
+    // Name of a cookie to use.
+    StringRef name;
+    // Path which a cookie is applied to.
+    StringRef path;
+    // Secure attribute
+    shrpx_cookie_secure secure;
+  } cookie;
 };
 
 enum shrpx_forwarded_param {
@@ -449,15 +474,15 @@ struct AffinityHash {
 
 struct DownstreamAddrGroupConfig {
   DownstreamAddrGroupConfig(const StringRef &pattern)
-      : pattern(pattern), affinity(AFFINITY_NONE), redirect_if_not_tls(false) {}
+      : pattern(pattern), affinity{AFFINITY_NONE}, redirect_if_not_tls(false) {}
 
   StringRef pattern;
   std::vector<DownstreamAddrConfig> addrs;
   // Bunch of session affinity hash.  Only used if affinity ==
   // AFFINITY_IP.
   std::vector<AffinityHash> affinity_hash;
-  // Session affinity
-  shrpx_session_affinity affinity;
+  // Cookie based session affinity configuration.
+  AffinityConfig affinity;
   // true if this group requires that client connection must be TLS,
   // and the request must be redirected to https URI.
   bool redirect_if_not_tls;
@@ -1114,20 +1139,26 @@ int option_lookup_token(const char *name, size_t namelen);
 // stored into the object pointed by |config|. This function returns 0
 // if it succeeds, or -1.  The |included_set| contains the all paths
 // already included while processing this configuration, to avoid loop
-// in --include option.
+// in --include option.  The |pattern_addr_indexer| contains a pair of
+// pattern of backend, and its index in DownstreamConfig::addr_groups.
+// It is introduced to speed up loading configuration file with lots
+// of backends.
 int parse_config(Config *config, const StringRef &opt, const StringRef &optarg,
-                 std::set<StringRef> &included_set);
+                 std::set<StringRef> &included_set,
+                 std::map<StringRef, size_t> &pattern_addr_indexer);
 
 // Similar to parse_config() above, but additional |optid| which
 // should be the return value of option_lookup_token(opt).
 int parse_config(Config *config, int optid, const StringRef &opt,
-                 const StringRef &optarg, std::set<StringRef> &included_set);
+                 const StringRef &optarg, std::set<StringRef> &included_set,
+                 std::map<StringRef, size_t> &pattern_addr_indexer);
 
 // Loads configurations from |filename| and stores them in |config|.
 // This function returns 0 if it succeeds, or -1.  See parse_config()
 // for |include_set|.
 int load_config(Config *config, const char *filename,
-                std::set<StringRef> &include_set);
+                std::set<StringRef> &include_set,
+                std::map<StringRef, size_t> &pattern_addr_indexer);
 
 // Parses header field in |optarg|.  We expect header field is formed
 // like "NAME: VALUE".  We require that NAME is non empty string.  ":"

@@ -125,6 +125,9 @@ public:
 
   Worker *get_worker() const;
 
+  // Initializes forwarded_for_.
+  void init_forwarded_for(int family, const StringRef &ipaddr);
+
   using ReadBuf = DefaultMemchunkBuffer;
 
   ReadBuf *get_rb();
@@ -150,6 +153,11 @@ public:
   Http2Session *select_http2_session_with_affinity(
       const std::shared_ptr<DownstreamAddrGroup> &group, DownstreamAddr *addr);
 
+  // Returns an affinity cookie value for |downstream|.  |cookie_name|
+  // is used to inspect cookie header field in request header fields.
+  uint32_t get_affinity_cookie(Downstream *downstream,
+                               const StringRef &cookie_name);
+
   const UpstreamAddr *get_upstream_addr() const;
 
   void repeat_read_timer();
@@ -162,6 +170,9 @@ public:
   void set_tls_sni(const StringRef &sni);
   // Returns TLS SNI extension value client sent in this connection.
   StringRef get_tls_sni() const;
+
+  // Returns ALPN negotiated in this connection.
+  StringRef get_alpn() const;
 
   BlockAllocator &get_block_allocator();
 

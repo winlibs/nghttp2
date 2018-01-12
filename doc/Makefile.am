@@ -74,12 +74,14 @@ APIDOCS= \
 	nghttp2_rcbuf_decref.rst \
 	nghttp2_rcbuf_get_buf.rst \
 	nghttp2_rcbuf_incref.rst \
+	nghttp2_rcbuf_is_static.rst \
 	nghttp2_select_next_protocol.rst \
 	nghttp2_session_callbacks_del.rst \
 	nghttp2_session_callbacks_new.rst \
 	nghttp2_session_callbacks_set_before_frame_send_callback.rst \
 	nghttp2_session_callbacks_set_data_source_read_length_callback.rst \
 	nghttp2_session_callbacks_set_error_callback.rst \
+	nghttp2_session_callbacks_set_error_callback2.rst \
 	nghttp2_session_callbacks_set_on_begin_frame_callback.rst \
 	nghttp2_session_callbacks_set_on_begin_headers_callback.rst \
 	nghttp2_session_callbacks_set_on_data_chunk_recv_callback.rst \

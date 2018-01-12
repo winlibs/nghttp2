@@ -957,8 +957,8 @@ nghttp2_session_callbacks *create_http2_upstream_callbacks() {
   }
 
   if (config->http2.upstream.debug.frame_debug) {
-    nghttp2_session_callbacks_set_error_callback(callbacks,
-                                                 verbose_error_callback);
+    nghttp2_session_callbacks_set_error_callback2(callbacks,
+                                                  verbose_error_callback);
   }
 
   return callbacks;
@@ -1657,9 +1657,9 @@ int Http2Upstream::on_downstream_header_complete(Downstream *downstream) {
   }
 
   auto nva = std::vector<nghttp2_nv>();
-  // 4 means :status and possible server, via and x-http2-push header
-  // field.
-  nva.reserve(resp.fs.headers().size() + 4 +
+  // 5 means :status and possible server, via, x-http2-push, and
+  // set-cookie (for affinity cookie) header field.
+  nva.reserve(resp.fs.headers().size() + 5 +
               httpconf.add_response_headers.size());
 
   auto response_status = http2::stringify_status(balloc, resp.http_status);
@@ -1697,6 +1697,22 @@ int Http2Upstream::on_downstream_header_complete(Downstream *downstream) {
     auto server = resp.fs.header(http2::HD_SERVER);
     if (server) {
       nva.push_back(http2::make_nv_ls_nocopy("server", (*server).value));
+    }
+  }
+
+  if (req.method != HTTP_CONNECT || !downstream->get_upgraded()) {
+    auto affinity_cookie = downstream->get_affinity_cookie_to_send();
+    if (affinity_cookie) {
+      auto dconn = downstream->get_downstream_connection();
+      assert(dconn);
+      auto &group = dconn->get_downstream_addr_group();
+      auto &shared_addr = group->shared_addr;
+      auto &cookieconf = shared_addr->affinity.cookie;
+      auto secure =
+          http::require_cookie_secure_attribute(cookieconf.secure, req.scheme);
+      auto cookie_str = http::create_affinity_cookie(
+          balloc, cookieconf.name, affinity_cookie, cookieconf.path, secure);
+      nva.push_back(http2::make_nv_ls_nocopy("set-cookie", cookie_str));
     }
   }
 

@@ -51,9 +51,6 @@
 #include "shrpx_api_downstream_connection.h"
 #include "shrpx_health_monitor_downstream_connection.h"
 #include "shrpx_log.h"
-#ifdef HAVE_SPDYLAY
-#include "shrpx_spdy_upstream.h"
-#endif // HAVE_SPDYLAY
 #include "util.h"
 #include "template.h"
 #include "tls.h"
@@ -445,22 +442,29 @@ ClientHandler::ClientHandler(Worker *worker, int fd, SSL *ssl,
       *p = '\0';
 
       forwarded_for_ = StringRef{buf.base, p};
-    } else if (family == AF_INET6) {
-      // 2 for '[' and ']'
-      auto len = 2 + ipaddr_.size();
-      // 1 for terminating NUL.
-      auto buf = make_byte_ref(balloc_, len + 1);
-      auto p = buf.base;
-      *p++ = '[';
-      p = std::copy(std::begin(ipaddr_), std::end(ipaddr_), p);
-      *p++ = ']';
-      *p = '\0';
-
-      forwarded_for_ = StringRef{buf.base, p};
-    } else {
-      // family == AF_INET or family == AF_UNIX
-      forwarded_for_ = ipaddr_;
+    } else if (!faddr_->accept_proxy_protocol &&
+               !config->conn.upstream.accept_proxy_protocol) {
+      init_forwarded_for(family, ipaddr_);
     }
+  }
+}
+
+void ClientHandler::init_forwarded_for(int family, const StringRef &ipaddr) {
+  if (family == AF_INET6) {
+    // 2 for '[' and ']'
+    auto len = 2 + ipaddr.size();
+    // 1 for terminating NUL.
+    auto buf = make_byte_ref(balloc_, len + 1);
+    auto p = buf.base;
+    *p++ = '[';
+    p = std::copy(std::begin(ipaddr), std::end(ipaddr), p);
+    *p++ = ']';
+    *p = '\0';
+
+    forwarded_for_ = StringRef{buf.base, p};
+  } else {
+    // family == AF_INET or family == AF_UNIX
+    forwarded_for_ = ipaddr;
   }
 }
 
@@ -601,36 +605,6 @@ int ClientHandler::validate_next_proto() {
     return 0;
   }
 
-#ifdef HAVE_SPDYLAY
-  auto spdy_version = spdylay_npn_get_version(proto.byte(), proto.size());
-  if (spdy_version) {
-    upstream_ = make_unique<SpdyUpstream>(spdy_version, this);
-
-    switch (spdy_version) {
-    case SPDYLAY_PROTO_SPDY2:
-      alpn_ = StringRef::from_lit("spdy/2");
-      break;
-    case SPDYLAY_PROTO_SPDY3:
-      alpn_ = StringRef::from_lit("spdy/3");
-      break;
-    case SPDYLAY_PROTO_SPDY3_1:
-      alpn_ = StringRef::from_lit("spdy/3.1");
-      break;
-    default:
-      alpn_ = StringRef::from_lit("spdy/unknown");
-    }
-
-    // At this point, input buffer is already filled with some bytes.
-    // The read callback is not called until new data come. So consume
-    // input buffer here.
-    if (on_read() != 0) {
-      return -1;
-    }
-
-    return 0;
-  }
-#endif // HAVE_SPDYLAY
-
   if (proto == StringRef::from_lit("http/1.1")) {
     upstream_ = make_unique<HttpsUpstream>(this);
     alpn_ = StringRef::from_lit("http/1.1");
@@ -692,7 +666,7 @@ void ClientHandler::pool_downstream_connection(
 
   auto &shared_addr = group->shared_addr;
 
-  if (shared_addr->affinity == AFFINITY_NONE) {
+  if (shared_addr->affinity.type == AFFINITY_NONE) {
     auto &dconn_pool = group->shared_addr->dconn_pool;
     dconn_pool.add_downstream_connection(std::move(dconn));
 
@@ -884,11 +858,6 @@ Http2Session *ClientHandler::select_http2_session(
       break;
     }
 
-    if (addr.http2_extra_freelist.size() == 0 &&
-        addr.connect_blocker->blocked()) {
-      continue;
-    }
-
     if (selected_addr == nullptr || load_lighter(&addr, selected_addr)) {
       selected_addr = &addr;
     }
@@ -956,6 +925,24 @@ uint32_t next_cycle(const WeightedPri &pri) {
 }
 } // namespace
 
+uint32_t ClientHandler::get_affinity_cookie(Downstream *downstream,
+                                            const StringRef &cookie_name) {
+  auto h = downstream->find_affinity_cookie(cookie_name);
+  if (h) {
+    return h;
+  }
+
+  auto d = std::uniform_int_distribution<uint32_t>(
+      1, std::numeric_limits<uint32_t>::max());
+  auto rh = d(worker_->get_randgen());
+  h = util::hash32(StringRef{reinterpret_cast<uint8_t *>(&rh),
+                             reinterpret_cast<uint8_t *>(&rh) + sizeof(rh)});
+
+  downstream->renew_affinity_cookie(h);
+
+  return h;
+}
+
 std::unique_ptr<DownstreamConnection>
 ClientHandler::get_downstream_connection(int &err, Downstream *downstream) {
   size_t group_idx;
@@ -1021,27 +1008,59 @@ ClientHandler::get_downstream_connection(int &err, Downstream *downstream) {
   auto &group = groups[group_idx];
   auto &shared_addr = group->shared_addr;
 
-  if (shared_addr->affinity == AFFINITY_IP) {
-    if (!affinity_hash_computed_) {
-      affinity_hash_ = compute_affinity_from_ip(ipaddr_);
-      affinity_hash_computed_ = true;
+  if (shared_addr->affinity.type != AFFINITY_NONE) {
+    uint32_t hash;
+    switch (shared_addr->affinity.type) {
+    case AFFINITY_IP:
+      if (!affinity_hash_computed_) {
+        affinity_hash_ = compute_affinity_from_ip(ipaddr_);
+        affinity_hash_computed_ = true;
+      }
+      hash = affinity_hash_;
+      break;
+    case AFFINITY_COOKIE:
+      hash = get_affinity_cookie(downstream, shared_addr->affinity.cookie.name);
+      break;
+    default:
+      assert(0);
     }
 
     const auto &affinity_hash = shared_addr->affinity_hash;
 
     auto it = std::lower_bound(
-        std::begin(affinity_hash), std::end(affinity_hash), affinity_hash_,
+        std::begin(affinity_hash), std::end(affinity_hash), hash,
         [](const AffinityHash &lhs, uint32_t rhs) { return lhs.hash < rhs; });
 
     if (it == std::end(affinity_hash)) {
       it = std::begin(affinity_hash);
     }
 
+    auto aff_idx =
+        static_cast<size_t>(std::distance(std::begin(affinity_hash), it));
     auto idx = (*it).idx;
+    auto addr = &shared_addr->addrs[idx];
 
-    auto &addr = shared_addr->addrs[idx];
-    if (addr.proto == PROTO_HTTP2) {
-      auto http2session = select_http2_session_with_affinity(group, &addr);
+    if (addr->connect_blocker->blocked()) {
+      size_t i;
+      for (i = aff_idx + 1; i != aff_idx; ++i) {
+        if (i == shared_addr->affinity_hash.size()) {
+          i = 0;
+        }
+        addr = &shared_addr->addrs[shared_addr->affinity_hash[i].idx];
+        if (addr->connect_blocker->blocked()) {
+          continue;
+        }
+        break;
+      }
+      if (i == aff_idx) {
+        err = -1;
+        return nullptr;
+      }
+      aff_idx = i;
+    }
+
+    if (addr->proto == PROTO_HTTP2) {
+      auto http2session = select_http2_session_with_affinity(group, addr);
 
       auto dconn = make_unique<Http2DownstreamConnection>(http2session);
 
@@ -1050,11 +1069,11 @@ ClientHandler::get_downstream_connection(int &err, Downstream *downstream) {
       return std::move(dconn);
     }
 
-    auto &dconn_pool = addr.dconn_pool;
+    auto &dconn_pool = addr->dconn_pool;
     auto dconn = dconn_pool->pop_downstream_connection();
 
     if (!dconn) {
-      dconn = make_unique<HttpDownstreamConnection>(group, idx, conn_.loop,
+      dconn = make_unique<HttpDownstreamConnection>(group, aff_idx, conn_.loop,
                                                     worker_);
     }
 
@@ -1130,7 +1149,7 @@ ClientHandler::get_downstream_connection(int &err, Downstream *downstream) {
     }
 
     dconn =
-        make_unique<HttpDownstreamConnection>(group, -1, conn_.loop, worker_);
+        make_unique<HttpDownstreamConnection>(group, 0, conn_.loop, worker_);
   }
 
   dconn->set_client_handler(this);
@@ -1203,7 +1222,6 @@ void ClientHandler::start_immediate_shutdown() {
 }
 
 void ClientHandler::write_accesslog(Downstream *downstream) {
-  nghttp2::tls::TLSSessionInfo tls_info;
   auto &req = downstream->request();
 
   auto config = get_config();
@@ -1217,10 +1235,15 @@ void ClientHandler::write_accesslog(Downstream *downstream) {
   upstream_accesslog(
       config->logging.access.format,
       LogSpec{
-          downstream, ipaddr_, alpn_, sni_,
-          nghttp2::tls::get_tls_session_info(&tls_info, conn_.tls.ssl),
+          downstream,
+          ipaddr_,
+          alpn_,
+          sni_,
+          conn_.tls.ssl,
           std::chrono::high_resolution_clock::now(), // request_end_time
-          port_, faddr_->port, config->pid,
+          port_,
+          faddr_->port,
+          config->pid,
       });
 }
 
@@ -1459,6 +1482,14 @@ int ClientHandler::proxy_protocol_read() {
                      << " bytes read";
   }
 
+  auto config = get_config();
+  auto &fwdconf = config->http.forwarded;
+
+  if ((fwdconf.params & FORWARDED_FOR) &&
+      fwdconf.for_node_type == FORWARDED_NODE_IP) {
+    init_forwarded_for(family, ipaddr_);
+  }
+
   return on_proxy_protocol_finish();
 }
 
@@ -1483,6 +1514,8 @@ void ClientHandler::set_tls_sni(const StringRef &sni) {
 }
 
 StringRef ClientHandler::get_tls_sni() const { return sni_; }
+
+StringRef ClientHandler::get_alpn() const { return alpn_; }
 
 BlockAllocator &ClientHandler::get_block_allocator() { return balloc_; }
 

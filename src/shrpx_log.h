@@ -62,9 +62,9 @@ using namespace nghttp2;
 
 // Upstream log
 #define ULOG(SEVERITY, UPSTREAM)                                               \
-  (shrpx::Log(SEVERITY, __FILE__, __LINE__)                                    \
-   << "[UPSTREAM:" << UPSTREAM << "]"                                          \
-                                  " ")
+  (shrpx::Log(SEVERITY, __FILE__, __LINE__) << "[UPSTREAM:" << UPSTREAM        \
+                                            << "]"                             \
+                                               " ")
 
 // Downstream log
 #define DLOG(SEVERITY, DOWNSTREAM)                                             \
@@ -138,6 +138,11 @@ enum LogFragmentType {
   SHRPX_LOGF_TLS_SESSION_REUSED,
   SHRPX_LOGF_SSL_SESSION_REUSED = SHRPX_LOGF_TLS_SESSION_REUSED,
   SHRPX_LOGF_TLS_SNI,
+  SHRPX_LOGF_TLS_CLIENT_FINGERPRINT_SHA1,
+  SHRPX_LOGF_TLS_CLIENT_FINGERPRINT_SHA256,
+  SHRPX_LOGF_TLS_CLIENT_ISSUER_NAME,
+  SHRPX_LOGF_TLS_CLIENT_SERIAL,
+  SHRPX_LOGF_TLS_CLIENT_SUBJECT_NAME,
   SHRPX_LOGF_BACKEND_HOST,
   SHRPX_LOGF_BACKEND_PORT,
 };
@@ -154,7 +159,7 @@ struct LogSpec {
   StringRef remote_addr;
   StringRef alpn;
   StringRef sni;
-  const nghttp2::tls::TLSSessionInfo *tls_info;
+  SSL *ssl;
   std::chrono::high_resolution_clock::time_point request_end_time;
   StringRef remote_port;
   uint16_t server_port;

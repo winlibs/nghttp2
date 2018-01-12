@@ -402,11 +402,10 @@ void upstream_accesslog(const std::vector<LogFragment> &lfv,
                   ? req.authority
                   : config->http2_proxy
                         ? construct_absolute_request_uri(balloc, req)
-                        : req.path.empty()
-                              ? req.method == HTTP_OPTIONS
-                                    ? StringRef::from_lit("*")
-                                    : StringRef::from_lit("-")
-                              : req.path;
+                        : req.path.empty() ? req.method == HTTP_OPTIONS
+                                                 ? StringRef::from_lit("*")
+                                                 : StringRef::from_lit("-")
+                                           : req.path;
 
   auto p = std::begin(buf);
   auto last = std::end(buf) - 2;
@@ -489,34 +488,42 @@ void upstream_accesslog(const std::vector<LogFragment> &lfv,
       std::tie(p, last) = copy_escape(lgsp.alpn, p, last);
       break;
     case SHRPX_LOGF_TLS_CIPHER:
-      if (!lgsp.tls_info) {
+      if (!lgsp.ssl) {
         std::tie(p, last) = copy('-', p, last);
         break;
       }
-      std::tie(p, last) = copy(lgsp.tls_info->cipher, p, last);
+      std::tie(p, last) = copy(SSL_get_cipher_name(lgsp.ssl), p, last);
       break;
     case SHRPX_LOGF_TLS_PROTOCOL:
-      if (!lgsp.tls_info) {
-        std::tie(p, last) = copy('-', p, last);
-        break;
-      }
-      std::tie(p, last) = copy(lgsp.tls_info->protocol, p, last);
-      break;
-    case SHRPX_LOGF_TLS_SESSION_ID:
-      if (!lgsp.tls_info || lgsp.tls_info->session_id_length == 0) {
-        std::tie(p, last) = copy('-', p, last);
-        break;
-      }
-      std::tie(p, last) = copy_hex_low(
-          lgsp.tls_info->session_id, lgsp.tls_info->session_id_length, p, last);
-      break;
-    case SHRPX_LOGF_TLS_SESSION_REUSED:
-      if (!lgsp.tls_info) {
+      if (!lgsp.ssl) {
         std::tie(p, last) = copy('-', p, last);
         break;
       }
       std::tie(p, last) =
-          copy(lgsp.tls_info->session_reused ? 'r' : '.', p, last);
+          copy(nghttp2::tls::get_tls_protocol(lgsp.ssl), p, last);
+      break;
+    case SHRPX_LOGF_TLS_SESSION_ID: {
+      auto session = SSL_get_session(lgsp.ssl);
+      if (!session) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      unsigned int session_id_length = 0;
+      auto session_id = SSL_SESSION_get_id(session, &session_id_length);
+      if (session_id_length == 0) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      std::tie(p, last) = copy_hex_low(session_id, session_id_length, p, last);
+      break;
+    }
+    case SHRPX_LOGF_TLS_SESSION_REUSED:
+      if (!lgsp.ssl) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      std::tie(p, last) =
+          copy(SSL_session_reused(lgsp.ssl) ? 'r' : '.', p, last);
       break;
     case SHRPX_LOGF_TLS_SNI:
       if (lgsp.sni.empty()) {
@@ -525,6 +532,71 @@ void upstream_accesslog(const std::vector<LogFragment> &lfv,
       }
       std::tie(p, last) = copy_escape(lgsp.sni, p, last);
       break;
+    case SHRPX_LOGF_TLS_CLIENT_FINGERPRINT_SHA1:
+    case SHRPX_LOGF_TLS_CLIENT_FINGERPRINT_SHA256: {
+      if (!lgsp.ssl) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      auto x = SSL_get_peer_certificate(lgsp.ssl);
+      if (!x) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      std::array<uint8_t, 32> buf;
+      auto len = tls::get_x509_fingerprint(
+          buf.data(), buf.size(), x,
+          lf.type == SHRPX_LOGF_TLS_CLIENT_FINGERPRINT_SHA256 ? EVP_sha256()
+                                                              : EVP_sha1());
+      X509_free(x);
+      if (len <= 0) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      std::tie(p, last) = copy_hex_low(buf.data(), len, p, last);
+      break;
+    }
+    case SHRPX_LOGF_TLS_CLIENT_ISSUER_NAME:
+    case SHRPX_LOGF_TLS_CLIENT_SUBJECT_NAME: {
+      if (!lgsp.ssl) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      auto x = SSL_get_peer_certificate(lgsp.ssl);
+      if (!x) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      auto name = lf.type == SHRPX_LOGF_TLS_CLIENT_ISSUER_NAME
+                      ? tls::get_x509_issuer_name(balloc, x)
+                      : tls::get_x509_subject_name(balloc, x);
+      X509_free(x);
+      if (name.empty()) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      std::tie(p, last) = copy(name, p, last);
+      break;
+    }
+    case SHRPX_LOGF_TLS_CLIENT_SERIAL: {
+      if (!lgsp.ssl) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      auto x = SSL_get_peer_certificate(lgsp.ssl);
+      if (!x) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      auto sn = tls::get_x509_serial(balloc, x);
+      X509_free(x);
+      if (sn.empty()) {
+        std::tie(p, last) = copy('-', p, last);
+        break;
+      }
+      std::tie(p, last) = copy(sn, p, last);
+      break;
+    }
     case SHRPX_LOGF_BACKEND_HOST:
       if (!downstream_addr) {
         std::tie(p, last) = copy('-', p, last);

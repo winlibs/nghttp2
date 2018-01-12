@@ -68,44 +68,44 @@ void proc_wev_cb(struct ev_loop *loop, ev_timer *w, int revents) {
 }
 } // namespace
 
+// DownstreamKey is used to index SharedDownstreamAddr in order to
+// find the same configuration.
+using DownstreamKey =
+    std::tuple<std::vector<std::tuple<StringRef, StringRef, size_t, size_t,
+                                      shrpx_proto, uint16_t, bool, bool, bool>>,
+               bool, int, StringRef, StringRef, int>;
+
 namespace {
-bool match_shared_downstream_addr(
-    const std::shared_ptr<SharedDownstreamAddr> &lhs,
-    const std::shared_ptr<SharedDownstreamAddr> &rhs) {
-  if (lhs->addrs.size() != rhs->addrs.size()) {
-    return false;
+DownstreamKey create_downstream_key(
+    const std::shared_ptr<SharedDownstreamAddr> &shared_addr) {
+  DownstreamKey dkey;
+
+  auto &addrs = std::get<0>(dkey);
+  addrs.resize(shared_addr->addrs.size());
+  auto p = std::begin(addrs);
+  for (auto &a : shared_addr->addrs) {
+    std::get<0>(*p) = a.host;
+    std::get<1>(*p) = a.sni;
+    std::get<2>(*p) = a.fall;
+    std::get<3>(*p) = a.rise;
+    std::get<4>(*p) = a.proto;
+    std::get<5>(*p) = a.port;
+    std::get<6>(*p) = a.host_unix;
+    std::get<7>(*p) = a.tls;
+    std::get<8>(*p) = a.dns;
+    ++p;
   }
+  std::sort(std::begin(addrs), std::end(addrs));
 
-  if (lhs->affinity != rhs->affinity ||
-      lhs->redirect_if_not_tls != rhs->redirect_if_not_tls) {
-    return false;
-  }
+  std::get<1>(dkey) = shared_addr->redirect_if_not_tls;
 
-  auto used = std::vector<bool>(lhs->addrs.size());
+  auto &affinity = shared_addr->affinity;
+  std::get<2>(dkey) = affinity.type;
+  std::get<3>(dkey) = affinity.cookie.name;
+  std::get<4>(dkey) = affinity.cookie.path;
+  std::get<5>(dkey) = affinity.cookie.secure;
 
-  for (auto &a : lhs->addrs) {
-    size_t i;
-    for (i = 0; i < rhs->addrs.size(); ++i) {
-      if (used[i]) {
-        continue;
-      }
-
-      auto &b = rhs->addrs[i];
-      if (a.host == b.host && a.port == b.port && a.host_unix == b.host_unix &&
-          a.proto == b.proto && a.tls == b.tls && a.sni == b.sni &&
-          a.fall == b.fall && a.rise == b.rise && a.dns == b.dns) {
-        break;
-      }
-    }
-
-    if (i == rhs->addrs.size()) {
-      return false;
-    }
-
-    used[i] = true;
-  }
-
-  return true;
+  return dkey;
 }
 } // namespace
 
@@ -156,7 +156,7 @@ void Worker::replace_downstream_config(
 
     auto &shared_addr = g->shared_addr;
 
-    if (shared_addr->affinity == AFFINITY_NONE) {
+    if (shared_addr->affinity.type == AFFINITY_NONE) {
       shared_addr->dconn_pool.remove_all();
       continue;
     }
@@ -175,6 +175,8 @@ void Worker::replace_downstream_config(
   downstream_addr_groups_ =
       std::vector<std::shared_ptr<DownstreamAddrGroup>>(groups.size());
 
+  std::map<DownstreamKey, size_t> addr_groups_indexer;
+
   for (size_t i = 0; i < groups.size(); ++i) {
     auto &src = groups[i];
     auto &dst = downstream_addr_groups_[i];
@@ -186,7 +188,16 @@ void Worker::replace_downstream_config(
     auto shared_addr = std::make_shared<SharedDownstreamAddr>();
 
     shared_addr->addrs.resize(src.addrs.size());
-    shared_addr->affinity = src.affinity;
+    shared_addr->affinity.type = src.affinity.type;
+    if (src.affinity.type == AFFINITY_COOKIE) {
+      shared_addr->affinity.cookie.name =
+          make_string_ref(shared_addr->balloc, src.affinity.cookie.name);
+      if (!src.affinity.cookie.path.empty()) {
+        shared_addr->affinity.cookie.path =
+            make_string_ref(shared_addr->balloc, src.affinity.cookie.path);
+      }
+      shared_addr->affinity.cookie.secure = src.affinity.cookie.secure;
+    }
     shared_addr->affinity_hash = src.affinity_hash;
     shared_addr->redirect_if_not_tls = src.redirect_if_not_tls;
 
@@ -252,14 +263,11 @@ void Worker::replace_downstream_config(
 
     // share the connection if patterns have the same set of backend
     // addresses.
-    auto end = std::begin(downstream_addr_groups_) + i;
-    auto it = std::find_if(
-        std::begin(downstream_addr_groups_), end,
-        [&shared_addr](const std::shared_ptr<DownstreamAddrGroup> &group) {
-          return match_shared_downstream_addr(group->shared_addr, shared_addr);
-        });
 
-    if (it == end) {
+    auto dkey = create_downstream_key(shared_addr);
+    auto it = addr_groups_indexer.find(dkey);
+
+    if (it == std::end(addr_groups_indexer)) {
       if (LOG_ENABLED(INFO)) {
         LOG(INFO) << "number of http/1.1 backend: " << num_http1
                   << ", number of h2 backend: " << num_http2;
@@ -268,19 +276,22 @@ void Worker::replace_downstream_config(
       shared_addr->http1_pri.weight = num_http1;
       shared_addr->http2_pri.weight = num_http2;
 
-      if (shared_addr->affinity != AFFINITY_NONE) {
+      if (shared_addr->affinity.type != AFFINITY_NONE) {
         for (auto &addr : shared_addr->addrs) {
           addr.dconn_pool = make_unique<DownstreamConnectionPool>();
         }
       }
 
       dst->shared_addr = shared_addr;
+
+      addr_groups_indexer.emplace(std::move(dkey), i);
     } else {
+      auto &g = *(std::begin(downstream_addr_groups_) + (*it).second);
       if (LOG_ENABLED(INFO)) {
         LOG(INFO) << dst->pattern << " shares the same backend group with "
-                  << (*it)->pattern;
+                  << g->pattern;
       }
-      dst->shared_addr = (*it)->shared_addr;
+      dst->shared_addr = g->shared_addr;
     }
   }
 }

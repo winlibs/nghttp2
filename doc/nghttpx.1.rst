@@ -14,7 +14,7 @@ SYNOPSIS
 DESCRIPTION
 -----------
 
-A reverse proxy for HTTP/2, HTTP/1 and SPDY.
+A reverse proxy for HTTP/2, and HTTP/1.
 
 .. describe:: <PRIVATE_KEY>
 
@@ -59,7 +59,7 @@ Connections
     "*/*", it  performs exact match against  the request path.
     If  host  is given,  it  performs  a match  against  the
     request host.   For a  request received on  the frontend
-    lister  with "sni-fwd"  parameter enabled,  SNI host  is
+    listener with  "sni-fwd" parameter enabled, SNI  host is
     used instead of a request host.  If host alone is given,
     "*/*" is  appended to it,  so that it matches  all request
     paths  under the  host  (e.g., specifying  "nghttp2.org"
@@ -164,16 +164,32 @@ Connections
     The     session     affinity    is     enabled     using
     "affinity=<METHOD>"  parameter.   If  "ip" is  given  in
     <METHOD>, client  IP based session affinity  is enabled.
-    If  "none" is  given  in <METHOD>,  session affinity  is
-    disabled, and this is the default.  The session affinity
-    is enabled per  <PATTERN>.  If at least  one backend has
-    "affinity" parameter,  and its  <METHOD> is  not "none",
-    session  affinity is  enabled  for  all backend  servers
-    sharing  the  same  <PATTERN>.   It is  advised  to  set
-    "affinity"  parameter  to   all  backend  explicitly  if
-    session affinity  is desired.  The session  affinity may
-    break if one of the backend gets unreachable, or backend
-    settings are reloaded or replaced by API.
+    If "cookie"  is given in <METHOD>,  cookie based session
+    affinity is  enabled.  If  "none" is given  in <METHOD>,
+    session affinity  is disabled, and this  is the default.
+    The session  affinity is  enabled per <PATTERN>.   If at
+    least  one backend  has  "affinity"  parameter, and  its
+    <METHOD> is not "none",  session affinity is enabled for
+    all backend  servers sharing the same  <PATTERN>.  It is
+    advised  to  set  "affinity" parameter  to  all  backend
+    explicitly if session affinity  is desired.  The session
+    affinity  may   break  if   one  of  the   backend  gets
+    unreachable,  or   backend  settings  are   reloaded  or
+    replaced by API.
+
+    If   "affinity=cookie"    is   used,    the   additional
+    configuration                is                required.
+    "affinity-cookie-name=<NAME>" must be  used to specify a
+    name     of     cookie      to     use.      Optionally,
+    "affinity-cookie-path=<PATH>" can  be used to  specify a
+    path   which   cookie    is   applied.    The   optional
+    "affinity-cookie-secure=<SECURE>"  controls  the  Secure
+    attribute of a cookie.  The default value is "auto", and
+    the Secure attribute is  determined by a request scheme.
+    If a request scheme is "https", then Secure attribute is
+    set.  Otherwise, it  is not set.  If  <SECURE> is "yes",
+    the  Secure attribute  is  always set.   If <SECURE>  is
+    "no", the Secure attribute is always omitted.
 
     By default, name resolution of backend host name is done
     at  start  up,  or reloading  configuration.   If  "dns"
@@ -424,8 +440,7 @@ Timeout
 
 .. option:: --frontend-http2-read-timeout=<DURATION>
 
-    Specify  read  timeout  for  HTTP/2  and  SPDY  frontend
-    connection.
+    Specify read timeout for HTTP/2 frontend connection.
 
     Default: ``3m``
 
@@ -450,15 +465,15 @@ Timeout
 
 .. option:: --stream-read-timeout=<DURATION>
 
-    Specify  read timeout  for HTTP/2  and SPDY  streams.  0
-    means no timeout.
+    Specify  read timeout  for HTTP/2  streams.  0  means no
+    timeout.
 
     Default: ``0``
 
 .. option:: --stream-write-timeout=<DURATION>
 
-    Specify write  timeout for  HTTP/2 and SPDY  streams.  0
-    means no timeout.
+    Specify write  timeout for  HTTP/2 streams.  0  means no
+    timeout.
 
     Default: ``1m``
 
@@ -887,13 +902,13 @@ SSL/TLS
     option.  But be aware its implications.
 
 
-HTTP/2 and SPDY
-~~~~~~~~~~~~~~~
+HTTP/2
+~~~~~~
 
 .. option:: -c, --frontend-http2-max-concurrent-streams=<N>
 
     Set the maximum number of  the concurrent streams in one
-    frontend HTTP/2 and SPDY session.
+    frontend HTTP/2 session.
 
     Default: `` 100``
 
@@ -908,16 +923,15 @@ HTTP/2 and SPDY
 
 .. option:: --frontend-http2-window-size=<SIZE>
 
-    Sets the  per-stream initial  window size of  HTTP/2 and
-    SPDY frontend connection.
+    Sets  the  per-stream  initial  window  size  of  HTTP/2
+    frontend connection.
 
     Default: ``65535``
 
 .. option:: --frontend-http2-connection-window-size=<SIZE>
 
-    Sets the  per-connection window size of  HTTP/2 and SPDY
-    frontend  connection.  For  SPDY  connection, the  value
-    less than 64KiB is rounded up to 64KiB.
+    Sets the  per-connection window size of  HTTP/2 frontend
+    connection.
 
     Default: ``65535``
 
@@ -953,8 +967,7 @@ HTTP/2 and SPDY
     It is  also supported if  both frontend and  backend are
     HTTP/2 in default mode.  In  this case, server push from
     backend session is relayed  to frontend, and server push
-    via Link header field  is also supported.  SPDY frontend
-    does not support server push.
+    via Link header field is also supported.
 
 .. option:: --frontend-http2-optimize-write-buffer-size
 
@@ -1022,7 +1035,7 @@ Mode
 .. describe:: (default mode)
 
     
-    Accept HTTP/2, SPDY and HTTP/1.1 over SSL/TLS.  "no-tls"
+    Accept  HTTP/2,  and  HTTP/1.1 over  SSL/TLS.   "no-tls"
     parameter is  used in  :option:`--frontend` option,  accept HTTP/2
     and HTTP/1.1 over cleartext  TCP.  The incoming HTTP/1.1
     connection  can  be  upgraded  to  HTTP/2  through  HTTP
@@ -1078,6 +1091,16 @@ Logging
       the response.   For HTTP/1,  ALPN is  always http/1.1,
       regardless of minor version.
     * $tls_cipher: cipher used for SSL/TLS connection.
+    * $tls_client_fingerprint_sha256: SHA-256 fingerprint of
+      client certificate.
+    * $tls_client_fingerprint_sha1:  SHA-1   fingerprint  of
+      client certificate.
+    * $tls_client_subject_name:   subject  name   in  client
+      certificate.
+    * $tls_client_issuer_name:   issuer   name   in   client
+      certificate.
+    * $tls_client_serial:    serial    number   in    client
+      certificate.
     * $tls_protocol: protocol for SSL/TLS connection.
     * $tls_session_id: session ID for SSL/TLS connection.
     * $tls_session_reused:  "r"   if  SSL/TLS   session  was
@@ -1302,7 +1325,7 @@ API
 
     Set the maximum size of request body for API request.
 
-    Default: ``16K``
+    Default: ``32M``
 
 
 DNS
@@ -1490,7 +1513,7 @@ Error log
   <datetime> <master-pid> <current-pid> <thread-id> <level> (<filename>:<line>) <msg>
 
   <datetime>
-    It is a conbination of date and time when the log is written.  It
+    It is a combination of date and time when the log is written.  It
     is in ISO 8601 format.
 
   <master-pid>
@@ -1641,7 +1664,7 @@ By default, session ID is shared by all worker threads.
 
 If :option:`--tls-session-cache-memcached` is given, nghttpx will
 insert serialized session data to memcached with
-``nghttpx:tls-session-cache:`` + lowercased hex string of session ID
+``nghttpx:tls-session-cache:`` + lowercase hex string of session ID
 as a memcached entry key, with expiry time 12 hours.  Session timeout
 is set to 12 hours.
 
@@ -1723,6 +1746,14 @@ MRUBY SCRIPTING
   The current mruby extension API is experimental and not frozen.  The
   API is subject to change in the future release.
 
+.. warning::
+
+  Almost all string value returned from method, or attribute is a
+  fresh new mruby string, which involves memory allocation, and
+  copies.  Therefore, it is strongly recommended to store a return
+  value in a local variable, and use it, instead of calling method or
+  accessing attribute repeatedly.
+
 nghttpx allows users to extend its capability using mruby scripts.
 nghttpx has 2 hook points to execute mruby script: request phase and
 response phase.  The request phase hook is invoked after all request
@@ -1769,7 +1800,7 @@ respectively.
     .. rb:attr_reader:: ctx
 
         Return Ruby hash object.  It persists until request finishes.
-        So values set in request phase hoo can be retrieved in
+        So values set in request phase hook can be retrieved in
         response phase hook.
 
     .. rb:attr_reader:: phase
@@ -1800,6 +1831,46 @@ respectively.
     .. rb:attr_reader:: tls_sni
 
         Return the TLS SNI value which client sent in this connection.
+
+    .. rb:attr_reader:: tls_client_fingerprint_sha256
+
+        Return the SHA-256 fingerprint of a client certificate.
+
+    .. rb:attr_reader:: tls_client_fingerprint_sha1
+
+        Return the SHA-1 fingerprint of a client certificate.
+
+    .. rb:attr_reader:: tls_client_issuer_name
+
+        Return the issuer name of a client certificate.
+
+    .. rb:attr_reader:: tls_client_subject_name
+
+        Return the subject name of a client certificate.
+
+    .. rb:attr_reader:: tls_client_serial
+
+        Return the serial number of a client certificate.
+
+    .. rb:attr_reader:: tls_cipher
+
+        Return a TLS cipher negotiated in this connection.
+
+    .. rb:attr_reader:: tls_protocol
+
+        Return a TLS protocol version negotiated in this connection.
+
+    .. rb:attr_reader:: tls_session_id
+
+        Return a session ID for this connection in hex string.
+
+    .. rb:attr_reader:: tls_session_reused
+
+        Return true if, and only if a SSL/TLS session is reused.
+
+    .. rb:attr_reader:: alpn
+
+        Return ALPN identifier negotiated in this connection.
 
 .. rb:class:: Request
 
@@ -2045,7 +2116,7 @@ The replacement is done instantly without breaking existing
 connections or requests.  It also avoids any process creation as is
 the case with hot swapping with signals.
 
-The one limitation is that only numeric IP address is allowd in
+The one limitation is that only numeric IP address is allowed in
 :option:`backend <--backend>` in request body unless "dns" parameter
 is used while non numeric hostname is allowed in command-line or
 configuration file is read using :option:`--conf`.
