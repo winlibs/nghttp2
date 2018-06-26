@@ -44,13 +44,13 @@ using namespace nghttp2;
 
 namespace shrpx {
 
-#if !OPENSSL_1_1_API
+#if !LIBRESSL_2_7_API && !OPENSSL_1_1_API
 
 void *BIO_get_data(BIO *bio) { return bio->ptr; }
 void BIO_set_data(BIO *bio, void *ptr) { bio->ptr = ptr; }
 void BIO_set_init(BIO *bio, int init) { bio->init = init; }
 
-#endif // !OPENSSL_1_1_API
+#endif // !LIBRESSL_2_7_API && !OPENSSL_1_1_API
 
 Connection::Connection(struct ev_loop *loop, int fd, SSL *ssl,
                        MemchunkPool *mcpool, ev_tstamp write_timeout,
@@ -523,7 +523,9 @@ int Connection::check_http2_requirement() {
   const unsigned char *next_proto = nullptr;
   unsigned int next_proto_len;
 
+#ifndef OPENSSL_NO_NEXTPROTONEG
   SSL_get0_next_proto_negotiated(tls.ssl, &next_proto, &next_proto_len);
+#endif // !OPENSSL_NO_NEXTPROTONEG
 #if OPENSSL_VERSION_NUMBER >= 0x10002000L
   if (next_proto == nullptr) {
     SSL_get0_alpn_selected(tls.ssl, &next_proto, &next_proto_len);

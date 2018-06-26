@@ -59,6 +59,7 @@
 #include "base64.h"
 #include "tls.h"
 #include "template.h"
+#include "ssl_compat.h"
 
 #ifndef O_BINARY
 #define O_BINARY (0)
@@ -680,15 +681,16 @@ int HttpClient::initiate_connection() {
       const auto &host_string =
           config.host_override.empty() ? host : config.host_override;
 
-#if (!defined(LIBRESSL_VERSION_NUMBER) &&                                      \
-     OPENSSL_VERSION_NUMBER >= 0x10002000L) ||                                 \
+#if LIBRESSL_2_7_API ||                                                        \
+    (!LIBRESSL_IN_USE && OPENSSL_VERSION_NUMBER >= 0x10002000L) ||             \
     defined(OPENSSL_IS_BORINGSSL)
       auto param = SSL_get0_param(ssl);
       X509_VERIFY_PARAM_set_hostflags(param, 0);
       X509_VERIFY_PARAM_set1_host(param, host_string.c_str(),
                                   host_string.size());
-#endif // (!defined(LIBRESSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >=
-       // 0x10002000L) || defined(OPENSSL_IS_BORINGSSL)
+#endif // LIBRESSL_2_7_API || (!LIBRESSL_IN_USE &&
+       // OPENSSL_VERSION_NUMBER >= 0x10002000L) ||
+       // defined(OPENSSL_IS_BORINGSSL)
       SSL_set_verify(ssl, SSL_VERIFY_PEER, verify_cb);
 
       if (!util::numeric_host(host_string.c_str())) {
@@ -1095,7 +1097,9 @@ int HttpClient::connection_made() {
     // Check NPN or ALPN result
     const unsigned char *next_proto = nullptr;
     unsigned int next_proto_len;
+#ifndef OPENSSL_NO_NEXTPROTONEG
     SSL_get0_next_proto_negotiated(ssl, &next_proto, &next_proto_len);
+#endif // !OPENSSL_NO_NEXTPROTONEG
     for (int i = 0; i < 2; ++i) {
       if (next_proto) {
         auto proto = StringRef{next_proto, next_proto_len};
@@ -2220,6 +2224,7 @@ id  responseEnd requestStart  process code size request path)"
 }
 } // namespace
 
+#ifndef OPENSSL_NO_NEXTPROTONEG
 namespace {
 int client_select_next_proto_cb(SSL *ssl, unsigned char **out,
                                 unsigned char *outlen, const unsigned char *in,
@@ -2243,6 +2248,7 @@ int client_select_next_proto_cb(SSL *ssl, unsigned char **out,
   return SSL_TLSEXT_ERR_OK;
 }
 } // namespace
+#endif // !OPENSSL_NO_NEXTPROTONEG
 
 namespace {
 int communicate(
@@ -2308,8 +2314,10 @@ int communicate(
         goto fin;
       }
     }
+#ifndef OPENSSL_NO_NEXTPROTONEG
     SSL_CTX_set_next_proto_select_cb(ssl_ctx, client_select_next_proto_cb,
                                      nullptr);
+#endif // !OPENSSL_NO_NEXTPROTONEG
 
 #if OPENSSL_VERSION_NUMBER >= 0x10002000L
     auto proto_list = util::get_default_alpn();

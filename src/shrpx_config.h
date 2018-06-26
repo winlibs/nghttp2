@@ -343,6 +343,8 @@ constexpr auto SHRPX_OPT_NO_STRIP_INCOMING_X_FORWARDED_PROTO =
     StringRef::from_lit("no-strip-incoming-x-forwarded-proto");
 constexpr auto SHRPX_OPT_OCSP_STARTUP = StringRef::from_lit("ocsp-startup");
 constexpr auto SHRPX_OPT_NO_VERIFY_OCSP = StringRef::from_lit("no-verify-ocsp");
+constexpr auto SHRPX_OPT_VERIFY_CLIENT_TOLERATE_EXPIRED =
+    StringRef::from_lit("verify-client-tolerate-expired");
 
 constexpr size_t SHRPX_OBFUSCATED_NODE_LENGTH = 8;
 
@@ -461,6 +463,10 @@ struct DownstreamAddrConfig {
   bool tls;
   // true if dynamic DNS is enabled
   bool dns;
+  // true if :scheme pseudo header field should be upgraded to secure
+  // variant (e.g., "https") when forwarding request to a backend
+  // connected by TLS connection.
+  bool upgrade_scheme;
 };
 
 // Mapping hash to idx which is an index into
@@ -598,6 +604,8 @@ struct TLSConfig {
     // certificate validation
     StringRef cacert;
     bool enabled;
+    // true if we accept an expired client certificate.
+    bool tolerate_expired;
   } client_verify;
 
   // Client (backend connection) TLS configuration.
@@ -1121,6 +1129,7 @@ enum {
   SHRPX_OPTID_USER,
   SHRPX_OPTID_VERIFY_CLIENT,
   SHRPX_OPTID_VERIFY_CLIENT_CACERT,
+  SHRPX_OPTID_VERIFY_CLIENT_TOLERATE_EXPIRED,
   SHRPX_OPTID_WORKER_FRONTEND_CONNECTIONS,
   SHRPX_OPTID_WORKER_READ_BURST,
   SHRPX_OPTID_WORKER_READ_RATE,

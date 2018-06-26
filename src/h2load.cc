@@ -857,7 +857,9 @@ int Client::connection_made() {
     const unsigned char *next_proto = nullptr;
     unsigned int next_proto_len;
 
+#ifndef OPENSSL_NO_NEXTPROTONEG
     SSL_get0_next_proto_negotiated(ssl, &next_proto, &next_proto_len);
+#endif // !OPENSSL_NO_NEXTPROTONEG
 #if OPENSSL_VERSION_NUMBER >= 0x10002000L
     if (next_proto == nullptr) {
       SSL_get0_alpn_selected(ssl, &next_proto, &next_proto_len);
@@ -1563,6 +1565,7 @@ std::string get_reqline(const char *uri, const http_parser_url &u) {
 }
 } // namespace
 
+#ifndef OPENSSL_NO_NEXTPROTONEG
 namespace {
 int client_select_next_proto_cb(SSL *ssl, unsigned char **out,
                                 unsigned char *outlen, const unsigned char *in,
@@ -1577,6 +1580,7 @@ int client_select_next_proto_cb(SSL *ssl, unsigned char **out,
   return SSL_TLSEXT_ERR_NOACK;
 }
 } // namespace
+#endif // !OPENSSL_NO_NEXTPROTONEG
 
 namespace {
 constexpr char UNIX_PATH_PREFIX[] = "unix:";
@@ -1852,7 +1856,7 @@ Options:
               connections per period.  When the rate is 0, the program
               will run  as it  normally does, creating  connections at
               whatever variable rate it  wants.  The default value for
-              this option is 0.
+              this option is 0.  -r and -D are mutually exclusive.
   --rate-period=<DURATION>
               Specifies the time  period between creating connections.
               The period  must be a positive  number, representing the
@@ -1861,7 +1865,8 @@ Options:
               option is 1s.
   -D, --duration=<N>
               Specifies the main duration for the measurements in case
-              of timing-based benchmarking.
+              of timing-based  benchmarking.  -D  and -r  are mutually
+              exclusive.
   --warm-up-time=<DURATION>
               Specifies the  time  period  before  starting the actual
               measurements, in  case  of  timing-based benchmarking.
@@ -2294,6 +2299,11 @@ int main(int argc, char **argv) {
     exit(EXIT_FAILURE);
   }
 
+  if (config.is_timing_based_mode() && config.is_rate_mode()) {
+    std::cerr << "-r, -D: they are mutually exclusive." << std::endl;
+    exit(EXIT_FAILURE);
+  }
+
   if (config.nreqs == 0 && !config.is_timing_based_mode()) {
     std::cerr << "-n: the number of requests must be strictly greater than 0 "
                  "if timing-based test is not being run."
@@ -2399,8 +2409,10 @@ int main(int argc, char **argv) {
     exit(EXIT_FAILURE);
   }
 
+#ifndef OPENSSL_NO_NEXTPROTONEG
   SSL_CTX_set_next_proto_select_cb(ssl_ctx, client_select_next_proto_cb,
                                    nullptr);
+#endif // !OPENSSL_NO_NEXTPROTONEG
 
 #if OPENSSL_VERSION_NUMBER >= 0x10002000L
   std::vector<unsigned char> proto_list;
