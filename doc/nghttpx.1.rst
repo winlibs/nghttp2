@@ -121,7 +121,10 @@ Connections
     The  parameters are  delimited  by  ";".  The  available
     parameters       are:      "proto=<PROTO>",       "tls",
     "sni=<SNI_HOST>",         "fall=<N>",        "rise=<N>",
-    "affinity=<METHOD>",  "dns", and  "redirect-if-not-tls".
+    "affinity=<METHOD>",    "dns",    "redirect-if-not-tls",
+    "upgrade-scheme",                        "mruby=<PATH>",
+    "read-timeout=<DURATION>",   "write-timeout=<DURATION>",
+    "group=<GROUP>",  "group-weight=<N>", and  "weight=<N>".
     The  parameter  consists   of  keyword,  and  optionally
     followed by  "=" and value.  For  example, the parameter
     "proto=h2"  consists of  the keyword  "proto" and  value
@@ -218,6 +221,44 @@ Connections
     particular backend.  This is  a workaround for a backend
     server  which  requires  "https" :scheme  pseudo  header
     field on TLS encrypted connection.
+
+    "mruby=<PATH>"  parameter  specifies  a  path  to  mruby
+    script  file  which  is  invoked when  this  pattern  is
+    matched.  All backends which share the same pattern must
+    have the same mruby path.
+
+    "read-timeout=<DURATION>" and "write-timeout=<DURATION>"
+    parameters  specify the  read and  write timeout  of the
+    backend connection  when this  pattern is  matched.  All
+    backends which share the same pattern must have the same
+    timeouts.  If these timeouts  are entirely omitted for a
+    pattern,            :option:`--backend-read-timeout`           and
+    :option:`--backend-write-timeout` are used.
+
+    "group=<GROUP>"  parameter specifies  the name  of group
+    this backend address belongs to.  By default, it belongs
+    to  the unnamed  default group.   The name  of group  is
+    unique   per   pattern.   "group-weight=<N>"   parameter
+    specifies the  weight of  the group.  The  higher weight
+    gets  more frequently  selected  by  the load  balancing
+    algorithm.  <N> must be  [1, 256] inclusive.  The weight
+    8 has 4 times more weight  than 2.  <N> must be the same
+    for  all addresses  which  share the  same <GROUP>.   If
+    "group-weight" is  omitted in an address,  but the other
+    address  which  belongs  to  the  same  group  specifies
+    "group-weight",   its    weight   is   used.     If   no
+    "group-weight"  is  specified  for  all  addresses,  the
+    weight of a group becomes 1.  "group" and "group-weight"
+    are ignored if session affinity is enabled.
+
+    "weight=<N>"  parameter  specifies  the  weight  of  the
+    backend  address  inside  a  group  which  this  address
+    belongs  to.  The  higher  weight  gets more  frequently
+    selected by  the load balancing algorithm.   <N> must be
+    [1,  256] inclusive.   The  weight 8  has  4 times  more
+    weight  than weight  2.  If  this parameter  is omitted,
+    weight  becomes  1.   "weight"  is  ignored  if  session
+    affinity is enabled.
 
     Since ";" and ":" are  used as delimiter, <PATTERN> must
     not  contain these  characters.  Since  ";" has  special
@@ -553,15 +594,37 @@ SSL/TLS
 
     Set allowed  cipher list  for frontend  connection.  The
     format of the string is described in OpenSSL ciphers(1).
+    This option  sets cipher suites for  TLSv1.2 or earlier.
+    Use :option:`--tls13-ciphers` for TLSv1.3.
 
     Default: ``ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256``
+
+.. option:: --tls13-ciphers=<SUITE>
+
+    Set allowed  cipher list  for frontend  connection.  The
+    format of the string is described in OpenSSL ciphers(1).
+    This  option  sets  cipher   suites  for  TLSv1.3.   Use
+    :option:`--ciphers` for TLSv1.2 or earlier.
+
+    Default: ``TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256``
 
 .. option:: --client-ciphers=<SUITE>
 
     Set  allowed cipher  list for  backend connection.   The
     format of the string is described in OpenSSL ciphers(1).
+    This option  sets cipher suites for  TLSv1.2 or earlier.
+    Use :option:`--tls13-client-ciphers` for TLSv1.3.
 
     Default: ``ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256``
+
+.. option:: --tls13-client-ciphers=<SUITE>
+
+    Set  allowed cipher  list for  backend connection.   The
+    format of the string is described in OpenSSL ciphers(1).
+    This  option  sets  cipher   suites  for  TLSv1.3.   Use
+    :option:`--tls13-client-ciphers` for TLSv1.2 or earlier.
+
+    Default: ``TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256``
 
 .. option:: --ecdh-curves=<LIST>
 
@@ -673,7 +736,7 @@ SSL/TLS
     ciphers are  included in :option:`--ciphers` option.   The default
     cipher  list  only   includes  ciphers  compatible  with
     TLSv1.2 or above.  The available versions are:
-    TLSv1.2, TLSv1.1, and TLSv1.0
+    TLSv1.3, TLSv1.2, TLSv1.1, and TLSv1.0
 
     Default: ``TLSv1.2``
 
@@ -685,9 +748,9 @@ SSL/TLS
     enabled.  If the protocol list advertised by client does
     not  overlap  this range,  you  will  receive the  error
     message "unknown protocol".  The available versions are:
-    TLSv1.2, TLSv1.1, and TLSv1.0
+    TLSv1.3, TLSv1.2, TLSv1.1, and TLSv1.0
 
-    Default: ``TLSv1.2``
+    Default: ``TLSv1.3``
 
 .. option:: --tls-ticket-key-file=<PATH>
 
@@ -914,6 +977,22 @@ SSL/TLS
     HTTP/2.   To  use  those   cipher  suites  with  HTTP/2,
     consider   to  use   :option:`--client-no-http2-cipher-black-list`
     option.  But be aware its implications.
+
+.. option:: --tls-no-postpone-early-data
+
+    By default,  nghttpx postpones forwarding  HTTP requests
+    sent in early data, including those sent in partially in
+    it, until TLS handshake finishes.  If all backend server
+    recognizes "Early-Data" header  field, using this option
+    makes nghttpx  not postpone  forwarding request  and get
+    full potential of 0-RTT data.
+
+.. option:: --tls-max-early-data=<SIZE>
+
+    Sets  the  maximum  amount  of 0-RTT  data  that  server
+    accepts.
+
+    Default: ``16K``
 
 
 HTTP/2
@@ -1231,6 +1310,11 @@ HTTP
     Don't append to  Via header field.  If  Via header field
     is received, it is left unaltered.
 
+.. option:: --no-strip-incoming-early-data
+
+    Don't strip Early-Data header  field from inbound client
+    requests.
+
 .. option:: --no-location-rewrite
 
     Don't  rewrite location  header field  in default  mode.
@@ -1438,6 +1522,12 @@ Scripting
 .. option:: --mruby-file=<PATH>
 
     Set mruby script file
+
+.. option:: --ignore-per-pattern-mruby-error
+
+    Ignore mruby compile error  for per-pattern mruby script
+    file.  If error  occurred, it is treated as  if no mruby
+    file were specified for the pattern.
 
 
 Misc
@@ -1777,9 +1867,28 @@ server.  These hooks allows users to modify header fields, or common
 HTTP variables, like authority or request path, and even return custom
 response without forwarding request to backend servers.
 
-To specify mruby script file, use :option:`--mruby-file` option.  The
-script will be evaluated once per thread on startup, and it must
-instantiate object and evaluate it as the return value (e.g.,
+There are 2 levels of mruby script invocations: global and
+per-pattern.  The global mruby script is set by :option:`--mruby-file`
+option and is called for all requests.  The per-pattern mruby script
+is set by "mruby" parameter in :option:`-b` option.  It is invoked for
+a request which matches the particular pattern.  The order of hook
+invocation is: global request phase hook, per-pattern request phase
+hook, per-pattern response phase hook, and finally global response
+phase hook.  If a hook returns a response, any later hooks are not
+invoked.  The global request hook is invoked before the pattern
+matching is made and changing request path may affect the pattern
+matching.
+
+Please note that request and response hooks of per-pattern mruby
+script for a single request might not come from the same script.  This
+might happen after a request hook is executed, backend failed for some
+reason, and at the same time, backend configuration is replaced by API
+request, and then the request uses new configuration on retry.  The
+response hook from new configuration, if it is specified, will be
+invoked.
+
+The all mruby script will be evaluated once per thread on startup, and
+it must instantiate object and evaluate it as the return value (e.g.,
 ``App.new``).  This object is called app object.  If app object
 defines ``on_req`` method, it is called with :rb:class:`Nghttpx::Env`
 object on request hook.  Similarly, if app object defines ``on_resp``
@@ -1895,6 +2004,14 @@ respectively.
     .. rb:attr_reader:: alpn
 
         Return ALPN identifier negotiated in this connection.
+
+    .. rb:attr_reader:: tls_handshake_finished
+
+        Return true if SSL/TLS handshake has finished.  If it returns
+        false in the request phase hook, the request is received in
+        TLSv1.3 early data (0-RTT) and might be vulnerable to the
+        replay attack.  nghttpx will send Early-Data header field to
+        backend servers to indicate this.
 
 .. rb:class:: Request
 
@@ -2026,10 +2143,10 @@ respectively.
         not be invoked.  When this method is called in response phase
         hook, response from backend server is canceled and discarded.
         The status code and response header fields should be set
-        before using this method.  To set status code, use :rb:meth To
-        set response header fields, use
+        before using this method.  To set status code, use
         :rb:attr:`Nghttpx::Response#status`.  If status code is not
-        set, 200 is used.  :rb:meth:`Nghttpx::Response#add_header` and
+        set, 200 is used.  To set response header fields,
+        :rb:meth:`Nghttpx::Response#add_header` and
         :rb:meth:`Nghttpx::Response#set_header`.  When this method is
         invoked in response phase hook, the response headers are
         filled with the ones received from backend server.  To send

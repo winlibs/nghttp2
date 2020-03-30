@@ -169,6 +169,12 @@ OPTIONS = [
     "ocsp-startup",
     "no-verify-ocsp",
     "verify-client-tolerate-expired",
+    "ignore-per-pattern-mruby-error",
+    "tls-no-postpone-early-data",
+    "tls-max-early-data",
+    "tls13-ciphers",
+    "tls13-client-ciphers",
+    "no-strip-incoming-early-data",
 ]
 
 LOGVARS = [
@@ -202,5 +208,5 @@ LOGVARS = [
 ]
 
 if __name__ == '__main__':
-    gentokenlookup(OPTIONS, 'SHRPX_OPTID', value_type='char', comp_fun='util::strieq_l')
-    gentokenlookup(LOGVARS, 'SHRPX_LOGF', value_type='char', comp_fun='util::strieq_l', return_type='LogFragmentType', fail_value='SHRPX_LOGF_NONE')
+    gentokenlookup(OPTIONS, 'SHRPX_OPTID_', value_type='char', comp_fun='util::strieq_l')
+    gentokenlookup(LOGVARS, 'LogFragmentType::', value_type='char', comp_fun='util::strieq_l', return_type='LogFragmentType', fail_value='LogFragmentType::NONE')

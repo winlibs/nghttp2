@@ -99,6 +99,8 @@ public:
 
   void pool_downstream_connection(std::unique_ptr<DownstreamConnection> dconn);
   void remove_downstream_connection(DownstreamConnection *dconn);
+  DownstreamAddr *get_downstream_addr(int &err, DownstreamAddrGroup *group,
+                                      Downstream *downstream);
   // Returns DownstreamConnection object based on request path.  This
   // function returns non-null DownstreamConnection, and assigns 0 to
   // |err| if it succeeds, or returns nullptr, and assigns negative
@@ -148,10 +150,8 @@ public:
   StringRef get_forwarded_for() const;
 
   Http2Session *
-  select_http2_session(const std::shared_ptr<DownstreamAddrGroup> &group);
-
-  Http2Session *select_http2_session_with_affinity(
-      const std::shared_ptr<DownstreamAddrGroup> &group, DownstreamAddr *addr);
+  get_http2_session(const std::shared_ptr<DownstreamAddrGroup> &group,
+                    DownstreamAddr *addr);
 
   // Returns an affinity cookie value for |downstream|.  |cookie_name|
   // is used to inspect cookie header field in request header fields.

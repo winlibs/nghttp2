@@ -146,13 +146,22 @@ std::string colorizeHeaders(const char *hdrs) {
     nhdrs += TTY_HTTP_HD;
     nhdrs.append(p, np);
     nhdrs += TTY_RST;
+    auto redact = util::strieq_l("authorization", StringRef{p, np});
     p = np;
     np = strchr(p, '\n');
     if (!np) {
-      nhdrs.append(p);
+      if (redact) {
+        nhdrs.append(": <redacted>");
+      } else {
+        nhdrs.append(p);
+      }
       break;
     }
-    nhdrs.append(p, np + 1);
+    if (redact) {
+      nhdrs.append(": <redacted>\n");
+    } else {
+      nhdrs.append(p, np + 1);
+    }
     p = np + 1;
   }
   return nhdrs;
@@ -199,12 +208,12 @@ StringRef create_affinity_cookie(BlockAllocator &balloc, const StringRef &name,
   return StringRef{iov.base, p};
 }
 
-bool require_cookie_secure_attribute(shrpx_cookie_secure secure,
+bool require_cookie_secure_attribute(SessionAffinityCookieSecure secure,
                                      const StringRef &scheme) {
   switch (secure) {
-  case COOKIE_SECURE_AUTO:
+  case SessionAffinityCookieSecure::AUTO:
     return scheme == "https";
-  case COOKIE_SECURE_YES:
+  case SessionAffinityCookieSecure::YES:
     return true;
   default:
     return false;

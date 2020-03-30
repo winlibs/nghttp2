@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "H2LOAD" "1" "May 08, 2018" "1.32.0" "nghttp2"
+.TH "H2LOAD" "1" "Nov 15, 2019" "1.40.0" "nghttp2"
 .SH NAME
 h2load \- HTTP/2 benchmarking tool
 .
@@ -273,6 +273,17 @@ Default: \fB4K\fP
 .UNINDENT
 .INDENT 0.0
 .TP
+.B \-\-log\-file=<PATH>
+Write per\-request information to a file as tab\-separated
+columns: start  time as  microseconds since  epoch; HTTP
+status code;  microseconds until end of  response.  More
+columns may be added later.  Rows are ordered by end\-of\-
+response  time when  using  one worker  thread, but  may
+appear slightly  out of order with  multiple threads due
+to buffering.  Status code is \-1 for failed streams.
+.UNINDENT
+.INDENT 0.0
+.TP
 .B \-v, \-\-verbose
 Output debug information.
 .UNINDENT
@@ -377,13 +388,16 @@ range (mean +/\- sd) against total number of successful requests.
 .INDENT 7.0
 .TP
 .B min
-The minimum time taken to connect to a server.
+The minimum time taken to connect to a server including TLS
+handshake.
 .TP
 .B max
-The maximum time taken to connect to a server.
+The maximum time taken to connect to a server including TLS
+handshake.
 .TP
 .B mean
-The mean time taken to connect to a server.
+The mean time taken to connect to a server including TLS
+handshake.
 .TP
 .B sd
 The standard deviation of the time taken to connect to a server.

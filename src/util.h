@@ -28,11 +28,11 @@
 #include "nghttp2_config.h"
 
 #ifdef HAVE_UNISTD_H
-#include <unistd.h>
+#  include <unistd.h>
 #endif // HAVE_UNISTD_H
 #include <getopt.h>
 #ifdef HAVE_NETDB_H
-#include <netdb.h>
+#  include <netdb.h>
 #endif // HAVE_NETDB_H
 
 #include <cmath>
@@ -47,7 +47,7 @@
 #include <map>
 #include <random>
 
-#include "http-parser/http_parser.h"
+#include "url-parser/url_parser.h"
 
 #include "template.h"
 #include "network.h"
@@ -370,14 +370,12 @@ template <typename T> std::string utos(T n) {
     res = "0";
     return res;
   }
-  int i = 0;
-  T t = n;
-  for (; t; t /= 10, ++i)
+  size_t nlen = 0;
+  for (auto t = n; t; t /= 10, ++nlen)
     ;
-  res.resize(i);
-  --i;
-  for (; n; --i, n /= 10) {
-    res[i] = (n % 10) + '0';
+  res.resize(nlen);
+  for (; n; n /= 10) {
+    res[--nlen] = (n % 10) + '0';
   }
   return res;
 }
@@ -387,15 +385,13 @@ template <typename T, typename OutputIt> OutputIt utos(OutputIt dst, T n) {
     *dst++ = '0';
     return dst;
   }
-  int i = 0;
-  T t = n;
-  for (; t; t /= 10, ++i)
+  size_t nlen = 0;
+  for (auto t = n; t; t /= 10, ++nlen)
     ;
-  --i;
-  auto p = dst + i;
-  auto res = p + 1;
-  for (; n; --i, n /= 10) {
-    *p-- = (n % 10) + '0';
+  auto p = dst + nlen;
+  auto res = p;
+  for (; n; n /= 10) {
+    *--p = (n % 10) + '0';
   }
   return res;
 }
@@ -743,6 +739,13 @@ OutputIt random_alpha_digit(OutputIt first, OutputIt last, Generator &gen) {
   return first;
 }
 
+// Fills random bytes to the range [|first|, |last|).
+template <typename OutputIt, typename Generator>
+void random_bytes(OutputIt first, OutputIt last, Generator &gen) {
+  std::uniform_int_distribution<> dis(0, 255);
+  std::generate(first, last, [&dis, &gen]() { return dis(gen); });
+}
+
 template <typename OutputIterator, typename CharT, size_t N>
 OutputIterator copy_lit(OutputIterator it, CharT (&s)[N]) {
   return std::copy_n(s, N - 1, it);
@@ -757,6 +760,10 @@ uint32_t hash32(const StringRef &s);
 // returns 0 if it succeeds, or -1.
 int sha256(uint8_t *buf, const StringRef &s);
 
+// Computes SHA-1 of |s|, and stores it in |buf|.  This function
+// returns 0 if it succeeds, or -1.
+int sha1(uint8_t *buf, const StringRef &s);
+
 // Returns host from |hostport|.  If host cannot be found in
 // |hostport|, returns empty string.  The returned string might not be
 // NULL-terminated.
@@ -764,6 +771,10 @@ StringRef extract_host(const StringRef &hostport);
 
 // Returns new std::mt19937 object.
 std::mt19937 make_mt19937();
+
+// daemonize calls daemon(3).  If __APPLE__ is defined, it implements
+// daemon() using fork().
+int daemonize(int nochdir, int noclose);
 
 } // namespace util
 

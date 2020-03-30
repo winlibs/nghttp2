@@ -27,12 +27,12 @@
 #include <getopt.h>
 #include <signal.h>
 #ifdef HAVE_NETINET_IN_H
-#include <netinet/in.h>
+#  include <netinet/in.h>
 #endif // HAVE_NETINET_IN_H
 #include <netinet/tcp.h>
 #include <sys/stat.h>
 #ifdef HAVE_FCNTL_H
-#include <fcntl.h>
+#  include <fcntl.h>
 #endif // HAVE_FCNTL_H
 
 #include <cstdio>
@@ -48,7 +48,7 @@
 
 #include <openssl/err.h>
 
-#include "http-parser/http_parser.h"
+#include "url-parser/url_parser.h"
 
 #include "h2load_http1_session.h"
 #include "h2load_http2_session.h"
@@ -58,7 +58,7 @@
 #include "template.h"
 
 #ifndef O_BINARY
-#define O_BINARY (0)
+#  define O_BINARY (0)
 #endif // O_BINARY
 
 using namespace nghttp2;
@@ -91,6 +91,7 @@ Config::Config()
       header_table_size(4_k),
       encoder_header_table_size(4_k),
       data_fd(-1),
+      log_fd(-1),
       port(0),
       default_port(0),
       verbose(false),
@@ -211,7 +212,7 @@ void rate_period_timeout_w_cb(struct ev_loop *loop, ev_timer *w, int revents) {
       --worker->nreqs_rem;
     }
     auto client =
-        make_unique<Client>(worker->next_client_id++, worker, req_todo);
+        std::make_unique<Client>(worker->next_client_id++, worker, req_todo);
 
     ++worker->nconns_made;
 
@@ -748,6 +749,7 @@ void Client::on_header(int32_t stream_id, const uint8_t *name, size_t namelen,
       }
     }
 
+    stream.req_stat.status = status;
     if (status >= 200 && status < 300) {
       ++worker->stats.status[2];
       stream.status_success = 1;
@@ -775,6 +777,7 @@ void Client::on_status_code(int32_t stream_id, uint16_t status) {
     return;
   }
 
+  stream.req_stat.status = status;
   if (status >= 200 && status < 300) {
     ++worker->stats.status[2];
     stream.status_success = 1;
@@ -821,6 +824,33 @@ void Client::on_stream_close(int32_t stream_id, bool success, bool final) {
     }
     ++worker->stats.req_done;
     ++req_done;
+
+    if (worker->config->log_fd != -1) {
+      auto start = std::chrono::duration_cast<std::chrono::microseconds>(
+          req_stat->request_wall_time.time_since_epoch());
+      auto delta = std::chrono::duration_cast<std::chrono::microseconds>(
+          req_stat->stream_close_time - req_stat->request_time);
+
+      std::array<uint8_t, 256> buf;
+      auto p = std::begin(buf);
+      p = util::utos(p, start.count());
+      *p++ = '\t';
+      if (success) {
+        p = util::utos(p, req_stat->status);
+      } else {
+        *p++ = '-';
+        *p++ = '1';
+      }
+      *p++ = '\t';
+      p = util::utos(p, delta.count());
+      *p++ = '\n';
+
+      auto nwrite = static_cast<size_t>(std::distance(std::begin(buf), p));
+      assert(nwrite <= buf.size());
+      while (write(worker->config->log_fd, buf.data(), nwrite) == -1 &&
+             errno == EINTR)
+        ;
+    }
   }
 
   worker->report_progress();
@@ -869,9 +899,9 @@ int Client::connection_made() {
     if (next_proto) {
       auto proto = StringRef{next_proto, next_proto_len};
       if (util::check_h2_is_selected(proto)) {
-        session = make_unique<Http2Session>(this);
+        session = std::make_unique<Http2Session>(this);
       } else if (util::streq(NGHTTP2_H1_1, proto)) {
-        session = make_unique<Http1Session>(this);
+        session = std::make_unique<Http1Session>(this);
       }
 
       // Just assign next_proto to selected_proto anyway to show the
@@ -886,7 +916,7 @@ int Client::connection_made() {
           std::cout
               << "Server does not support NPN/ALPN. Falling back to HTTP/1.1."
               << std::endl;
-          session = make_unique<Http1Session>(this);
+          session = std::make_unique<Http1Session>(this);
           selected_proto = NGHTTP2_H1_1.str();
           break;
         }
@@ -910,11 +940,11 @@ int Client::connection_made() {
   } else {
     switch (config.no_tls_proto) {
     case Config::PROTO_HTTP2:
-      session = make_unique<Http2Session>(this);
+      session = std::make_unique<Http2Session>(this);
       selected_proto = NGHTTP2_CLEARTEXT_PROTO_VERSION_ID;
       break;
     case Config::PROTO_HTTP1_1:
-      session = make_unique<Http1Session>(this);
+      session = std::make_unique<Http1Session>(this);
       selected_proto = NGHTTP2_H1_1.str();
       break;
     default:
@@ -1177,6 +1207,7 @@ int Client::write_tls() {
 
 void Client::record_request_time(RequestStat *req_stat) {
   req_stat->request_time = std::chrono::steady_clock::now();
+  req_stat->request_wall_time = std::chrono::system_clock::now();
 }
 
 void Client::record_connect_start_time() {
@@ -1319,7 +1350,7 @@ void Worker::run() {
         --nreqs_rem;
       }
 
-      auto client = make_unique<Client>(next_client_id++, this, req_todo);
+      auto client = std::make_unique<Client>(next_client_id++, this, req_todo);
       if (client->connect() != 0) {
         std::cerr << "client could not connect to host" << std::endl;
         client->fail();
@@ -1513,7 +1544,7 @@ process_time_stats(const std::vector<std::unique_ptr<Worker>> &workers) {
 namespace {
 void resolve_host() {
   if (config.base_uri_unix) {
-    auto res = make_unique<addrinfo>();
+    auto res = std::make_unique<addrinfo>();
     res->ai_family = config.unix_addr.sun_family;
     res->ai_socktype = SOCK_STREAM;
     res->ai_addrlen = sizeof(config.unix_addr);
@@ -1722,13 +1753,13 @@ std::unique_ptr<Worker> create_worker(uint32_t id, SSL_CTX *ssl_ctx,
   }
 
   if (config.is_rate_mode()) {
-    return make_unique<Worker>(id, ssl_ctx, nreqs, nclients, rate, max_samples,
-                               &config);
+    return std::make_unique<Worker>(id, ssl_ctx, nreqs, nclients, rate,
+                                    max_samples, &config);
   } else {
     // Here rate is same as client because the rate_timeout callback
     // will be called only once
-    return make_unique<Worker>(id, ssl_ctx, nreqs, nclients, nclients,
-                               max_samples, &config);
+    return std::make_unique<Worker>(id, ssl_ctx, nreqs, nclients, nclients,
+                                    max_samples, &config);
   }
 }
 } // namespace
@@ -1799,10 +1830,12 @@ Options:
   -c, --clients=<N>
               Number  of concurrent  clients.   With  -r option,  this
               specifies the maximum number of connections to be made.
-              Default: )" << config.nclients << R"(
+              Default: )"
+      << config.nclients << R"(
   -t, --threads=<N>
               Number of native threads.
-              Default: )" << config.nthreads << R"(
+              Default: )"
+      << config.nthreads << R"(
   -i, --input-file=<PATH>
               Path of a file with multiple URIs are separated by EOLs.
               This option will disable URIs getting from command-line.
@@ -1825,7 +1858,8 @@ Options:
   -W, --connection-window-bits=<N>
               Sets  the  connection  level   initial  window  size  to
               (2**<N>)-1.
-              Default: )" << config.connection_window_bits << R"(
+              Default: )"
+      << config.connection_window_bits << R"(
   -H, --header=<HEADER>
               Add/Override a header to the requests.
   --ciphers=<SUITE>
@@ -1836,8 +1870,8 @@ Options:
   -p, --no-tls-proto=<PROTOID>
               Specify ALPN identifier of the  protocol to be used when
               accessing http URI without SSL/TLS.
-              Available protocols: )" << NGHTTP2_CLEARTEXT_PROTO_VERSION_ID
-      << R"( and )" << NGHTTP2_H1_1 << R"(
+              Available protocols: )"
+      << NGHTTP2_CLEARTEXT_PROTO_VERSION_ID << R"( and )" << NGHTTP2_H1_1 << R"(
               Default: )"
       << NGHTTP2_CLEARTEXT_PROTO_VERSION_ID << R"(
   -d, --data=<PATH>
@@ -1921,7 +1955,8 @@ Options:
               NPN.  The parameter must be  delimited by a single comma
               only  and any  white spaces  are  treated as  a part  of
               protocol string.
-              Default: )" << DEFAULT_NPN_LIST << R"(
+              Default: )"
+      << DEFAULT_NPN_LIST << R"(
   --h1        Short        hand         for        --npn-list=http/1.1
               --no-tls-proto=http/1.1,    which   effectively    force
               http/1.1 for both http and https URI.
@@ -1936,6 +1971,14 @@ Options:
               this option value and the value which server specified.
               Default: )"
       << util::utos_unit(config.encoder_header_table_size) << R"(
+  --log-file=<PATH>
+              Write per-request information to a file as tab-separated
+              columns: start  time as  microseconds since  epoch; HTTP
+              status code;  microseconds until end of  response.  More
+              columns may be added later.  Rows are ordered by end-of-
+              response  time when  using  one worker  thread, but  may
+              appear slightly  out of order with  multiple threads due
+              to buffering.  Status code is -1 for failed streams.
   -v, --verbose
               Output debug information.
   --version   Display version information and exit.
@@ -1949,7 +1992,8 @@ Options:
   The <DURATION> argument is an integer and an optional unit (e.g., 1s
   is 1 second and 500ms is 500 milliseconds).  Units are h, m, s or ms
   (hours, minutes, seconds and milliseconds, respectively).  If a unit
-  is omitted, a second is used as unit.)" << std::endl;
+  is omitted, a second is used as unit.)"
+      << std::endl;
 }
 } // namespace
 
@@ -1961,6 +2005,7 @@ int main(int argc, char **argv) {
 #endif // NOTHREADS
 
   std::string datafile;
+  std::string logfile;
   bool nreqs_set_manually = false;
   while (1) {
     static int flag = 0;
@@ -1991,6 +2036,7 @@ int main(int argc, char **argv) {
         {"header-table-size", required_argument, &flag, 7},
         {"encoder-header-table-size", required_argument, &flag, 8},
         {"warm-up-time", required_argument, &flag, 9},
+        {"log-file", required_argument, &flag, 10},
         {nullptr, 0, nullptr, 0}};
     int option_index = 0;
     auto c = getopt_long(argc, argv,
@@ -2214,6 +2260,10 @@ int main(int argc, char **argv) {
           exit(EXIT_FAILURE);
         }
         break;
+      case 10:
+        // --log-file
+        logfile = optarg;
+        break;
       }
       break;
     default:
@@ -2374,6 +2424,15 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
     config.data_length = data_stat.st_size;
+  }
+
+  if (!logfile.empty()) {
+    config.log_fd = open(logfile.c_str(), O_WRONLY | O_CREAT | O_APPEND,
+                         S_IRUSR | S_IWUSR | S_IRGRP);
+    if (config.log_fd == -1) {
+      std::cerr << "--log-file: Could not open file " << logfile << std::endl;
+      exit(EXIT_FAILURE);
+    }
   }
 
   struct sigaction act {};
@@ -2686,14 +2745,14 @@ int main(int argc, char **argv) {
 finished in )"
             << util::format_duration(duration) << ", " << rps << " req/s, "
             << util::utos_funit(bps) << R"(B/s
-requests: )" << stats.req_todo << " total, "
-            << stats.req_started << " started, " << stats.req_done << " done, "
-            << stats.req_status_success << " succeeded, " << stats.req_failed
-            << " failed, " << stats.req_error << " errored, "
-            << stats.req_timedout << R"( timeout
-status codes: )" << stats.status[2] << " 2xx, "
-            << stats.status[3] << " 3xx, " << stats.status[4] << " 4xx, "
-            << stats.status[5] << R"( 5xx
+requests: )" << stats.req_todo
+            << " total, " << stats.req_started << " started, " << stats.req_done
+            << " done, " << stats.req_status_success << " succeeded, "
+            << stats.req_failed << " failed, " << stats.req_error
+            << " errored, " << stats.req_timedout << R"( timeout
+status codes: )"
+            << stats.status[2] << " 2xx, " << stats.status[3] << " 3xx, "
+            << stats.status[4] << " 4xx, " << stats.status[5] << R"( 5xx
 traffic: )" << util::utos_funit(stats.bytes_total)
             << "B (" << stats.bytes_total << ") total, "
             << util::utos_funit(stats.bytes_head) << "B (" << stats.bytes_head
@@ -2701,12 +2760,12 @@ traffic: )" << util::utos_funit(stats.bytes_total)
             << "%), " << util::utos_funit(stats.bytes_body) << "B ("
             << stats.bytes_body << R"() data
                      min         max         mean         sd        +/- sd
-time for request: )" << std::setw(10)
-            << util::format_duration(ts.request.min) << "  " << std::setw(10)
-            << util::format_duration(ts.request.max) << "  " << std::setw(10)
-            << util::format_duration(ts.request.mean) << "  " << std::setw(10)
-            << util::format_duration(ts.request.sd) << std::setw(9)
-            << util::dtos(ts.request.within_sd) << "%"
+time for request: )"
+            << std::setw(10) << util::format_duration(ts.request.min) << "  "
+            << std::setw(10) << util::format_duration(ts.request.max) << "  "
+            << std::setw(10) << util::format_duration(ts.request.mean) << "  "
+            << std::setw(10) << util::format_duration(ts.request.sd)
+            << std::setw(9) << util::dtos(ts.request.within_sd) << "%"
             << "\ntime for connect: " << std::setw(10)
             << util::format_duration(ts.connect.min) << "  " << std::setw(10)
             << util::format_duration(ts.connect.max) << "  " << std::setw(10)
@@ -2725,6 +2784,10 @@ time for request: )" << std::setw(10)
             << util::dtos(ts.rps.within_sd) << "%" << std::endl;
 
   SSL_CTX_free(ssl_ctx);
+
+  if (config.log_fd != -1) {
+    close(config.log_fd);
+  }
 
   return 0;
 }

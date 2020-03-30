@@ -26,13 +26,13 @@
 
 #include <sys/stat.h>
 #ifdef HAVE_UNISTD_H
-#include <unistd.h>
+#  include <unistd.h>
 #endif // HAVE_UNISTD_H
 #ifdef HAVE_FCNTL_H
-#include <fcntl.h>
+#  include <fcntl.h>
 #endif // HAVE_FCNTL_H
 #ifdef HAVE_NETINET_IN_H
-#include <netinet/in.h>
+#  include <netinet/in.h>
 #endif // HAVE_NETINET_IN_H
 #include <netinet/tcp.h>
 #include <getopt.h>
@@ -50,7 +50,7 @@
 #include <openssl/err.h>
 
 #ifdef HAVE_JANSSON
-#include <jansson.h>
+#  include <jansson.h>
 #endif // HAVE_JANSSON
 
 #include "app_helper.h"
@@ -62,7 +62,7 @@
 #include "ssl_compat.h"
 
 #ifndef O_BINARY
-#define O_BINARY (0)
+#  define O_BINARY (0)
 #endif // O_BINARY
 
 namespace nghttp2 {
@@ -127,6 +127,7 @@ Config::Config()
   nghttp2_option_set_peer_max_concurrent_streams(http2_option,
                                                  peer_max_concurrent_streams);
   nghttp2_option_set_builtin_recv_extension_type(http2_option, NGHTTP2_ALTSVC);
+  nghttp2_option_set_builtin_recv_extension_type(http2_option, NGHTTP2_ORIGIN);
 }
 
 Config::~Config() { nghttp2_option_del(http2_option); }
@@ -232,7 +233,7 @@ void Request::init_html_parser() {
     base_uri += util::get_uri_field(uri.c_str(), u, UF_QUERY);
   }
 
-  html_parser = make_unique<HtmlParser>(base_uri);
+  html_parser = std::make_unique<HtmlParser>(base_uri);
 }
 
 int Request::update_html_parser(const uint8_t *data, size_t len, int fin) {
@@ -400,7 +401,7 @@ void ContinueTimer::dispatch_continue() {
 }
 
 namespace {
-int htp_msg_begincb(http_parser *htp) {
+int htp_msg_begincb(llhttp_t *htp) {
   if (config.verbose) {
     print_timer();
     std::cout << " HTTP Upgrade response" << std::endl;
@@ -410,7 +411,7 @@ int htp_msg_begincb(http_parser *htp) {
 } // namespace
 
 namespace {
-int htp_msg_completecb(http_parser *htp) {
+int htp_msg_completecb(llhttp_t *htp) {
   auto client = static_cast<HttpClient *>(htp->data);
   client->upgrade_response_status_code = htp->status_code;
   client->upgrade_response_complete = true;
@@ -419,15 +420,17 @@ int htp_msg_completecb(http_parser *htp) {
 } // namespace
 
 namespace {
-constexpr http_parser_settings htp_hooks = {
-    htp_msg_begincb,   // http_cb      on_message_begin;
-    nullptr,           // http_data_cb on_url;
-    nullptr,           // http_data_cb on_status;
-    nullptr,           // http_data_cb on_header_field;
-    nullptr,           // http_data_cb on_header_value;
-    nullptr,           // http_cb      on_headers_complete;
-    nullptr,           // http_data_cb on_body;
-    htp_msg_completecb // http_cb      on_message_complete;
+constexpr llhttp_settings_t htp_hooks = {
+    htp_msg_begincb,    // llhttp_cb      on_message_begin;
+    nullptr,            // llhttp_data_cb on_url;
+    nullptr,            // llhttp_data_cb on_status;
+    nullptr,            // llhttp_data_cb on_header_field;
+    nullptr,            // llhttp_data_cb on_header_value;
+    nullptr,            // llhttp_cb      on_headers_complete;
+    nullptr,            // llhttp_data_cb on_body;
+    htp_msg_completecb, // llhttp_cb      on_message_complete;
+    nullptr,            // llhttp_cb      on_chunk_header
+    nullptr,            // llhttp_cb      on_chunk_complete
 };
 } // namespace
 
@@ -526,7 +529,7 @@ int submit_request(HttpClient *client, const Headers &headers, Request *req) {
   req->req_nva = std::move(build_headers);
 
   if (expect_continue) {
-    auto timer = make_unique<ContinueTimer>(client->loop, req);
+    auto timer = std::make_unique<ContinueTimer>(client->loop, req);
     req->continue_timer = std::move(timer);
   }
 
@@ -884,8 +887,8 @@ int HttpClient::connected() {
   writefn = &HttpClient::write_clear;
 
   if (need_upgrade()) {
-    htp = make_unique<http_parser>();
-    http_parser_init(htp.get(), HTTP_RESPONSE);
+    htp = std::make_unique<llhttp_t>();
+    llhttp_init(htp.get(), HTTP_RESPONSE, &htp_hooks);
     htp->data = this;
 
     return do_write();
@@ -1030,19 +1033,22 @@ int HttpClient::on_upgrade_connect() {
 int HttpClient::on_upgrade_read(const uint8_t *data, size_t len) {
   int rv;
 
-  auto nread = http_parser_execute(htp.get(), &htp_hooks,
-                                   reinterpret_cast<const char *>(data), len);
+  auto htperr =
+      llhttp_execute(htp.get(), reinterpret_cast<const char *>(data), len);
+  auto nread = htperr == HPE_OK
+                   ? len
+                   : static_cast<size_t>(reinterpret_cast<const uint8_t *>(
+                                             llhttp_get_error_pos(htp.get())) -
+                                         data);
 
   if (config.verbose) {
     std::cout.write(reinterpret_cast<const char *>(data), nread);
   }
 
-  auto htperr = HTTP_PARSER_ERRNO(htp.get());
-
-  if (htperr != HPE_OK) {
+  if (htperr != HPE_OK && htperr != HPE_PAUSED_UPGRADE) {
     std::cerr << "[ERROR] Failed to parse HTTP Upgrade response header: "
-              << "(" << http_errno_name(htperr) << ") "
-              << http_errno_description(htperr) << std::endl;
+              << "(" << llhttp_errno_name(htperr) << ") "
+              << llhttp_get_error_reason(htp.get()) << std::endl;
     return -1;
   }
 
@@ -1452,8 +1458,8 @@ bool HttpClient::add_request(const std::string &uri,
     path_cache.insert(uri);
   }
 
-  reqvec.push_back(
-      make_unique<Request>(uri, u, data_prd, data_length, pri_spec, level));
+  reqvec.push_back(std::make_unique<Request>(uri, u, data_prd, data_length,
+                                             pri_spec, level));
   return true;
 }
 
@@ -1853,7 +1859,7 @@ int on_begin_headers_callback(nghttp2_session *session,
 
     nghttp2_priority_spec_default_init(&pri_spec);
 
-    auto req = make_unique<Request>("", u, nullptr, 0, pri_spec);
+    auto req = std::make_unique<Request>("", u, nullptr, 0, pri_spec);
     req->stream_id = stream_id;
 
     nghttp2_session_set_stream_user_data(session, stream_id, req.get());

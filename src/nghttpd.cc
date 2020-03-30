@@ -25,11 +25,11 @@
 #include "nghttp2_config.h"
 
 #ifdef __sgi
-#define daemon _daemonize
+#  define daemon _daemonize
 #endif
 
 #ifdef HAVE_UNISTD_H
-#include <unistd.h>
+#  include <unistd.h>
 #endif // HAVE_UNISTD_H
 #include <signal.h>
 #include <getopt.h>
@@ -174,7 +174,8 @@ Options:
   --mime-types-file=<PATH>
               Path  to file  that contains  MIME media  types and  the
               extensions that represent them.
-              Default: )" << config.mime_types_file << R"(
+              Default: )"
+      << config.mime_types_file << R"(
   --no-content-length
               Don't send content-length header field.
   --version   Display version information and exit.
@@ -434,7 +435,7 @@ int main(int argc, char **argv) {
 #ifdef __sgi
     if (daemon(0, 0, 0, 0) == -1) {
 #else
-    if (daemon(0, 0) == -1) {
+    if (util::daemonize(0, 0) == -1) {
 #endif
       perror("daemon");
       exit(EXIT_FAILURE);
