@@ -69,6 +69,7 @@ struct Config {
   nghttp2::Headers custom_headers;
   std::string scheme;
   std::string host;
+  std::string connect_to_host;
   std::string ifile;
   std::string ciphers;
   // length of upload data
@@ -101,6 +102,7 @@ struct Config {
   int log_fd;
   uint16_t port;
   uint16_t default_port;
+  uint16_t connect_to_port;
   bool verbose;
   bool timing_script;
   std::string base_uri;
@@ -112,6 +114,8 @@ struct Config {
   // list of supported NPN/ALPN protocol strings in the order of
   // preference.
   std::vector<std::string> npn_list;
+  // The number of request per second for each client.
+  double rps;
 
   Config();
   ~Config();
@@ -119,6 +123,7 @@ struct Config {
   bool is_rate_mode() const;
   bool is_timing_based_mode() const;
   bool has_base_uri() const;
+  bool rps_enabled() const;
 };
 
 struct RequestStat {
@@ -213,7 +218,7 @@ struct Stats {
   std::array<size_t, 6> status;
   // The statistics per request
   std::vector<RequestStat> req_stats;
-  // THe statistics per client
+  // The statistics per client
   std::vector<ClientStat> client_stats;
 };
 
@@ -334,6 +339,20 @@ struct Client {
   // true if the current connection will be closed, and no more new
   // request cannot be processed.
   bool final;
+  // rps_watcher is a timer to invoke callback periodically to
+  // generate a new request.
+  ev_timer rps_watcher;
+  // The timestamp that starts the period which contributes to the
+  // next request generation.
+  ev_tstamp rps_duration_started;
+  // The number of requests allowed by rps, but limited by stream
+  // concurrency.
+  size_t rps_req_pending;
+  // The number of in-flight streams.  req_inflight has similar value
+  // but it only measures requests made during Phase::MAIN_DURATION.
+  // rps_req_inflight measures the number of requests in all phases,
+  // and it is only used if --rps is given.
+  size_t rps_req_inflight;
 
   enum { ERR_CONNECT_FAIL = -100 };
 

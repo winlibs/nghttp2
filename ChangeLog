@@ -1,0 +1,242 @@
+commit b799b063f882cc97f8484e95b41d0326260d9b93 (HEAD, tag: v1.44.0, origin/master, origin/HEAD, master)
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-07-18
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-07-18
+
+    Update manual pages
+
+commit 368014b8dd726e73f63a3b90a8b1e2abaa95274d
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-07-18
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-07-18
+
+    Bump version number to v1.44.0, LT revision to 34:2:20
+
+commit fa16e66a6df498acd60b37d01814bceb8b361957
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-07-14
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-07-14
+
+    nghttpx: Fix max distance in weight group/address cycle comparison
+
+commit 40af31da4c27f26837e0f43bf4f9c070a9521caa
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-07-14
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-07-14
+
+    nghttpx: Set connect_blocker and live_check after shuffling addresses
+
+commit 9e6c0685a2696f4480f15f9960c7703f717d1f61
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-05-15
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-05-15
+
+    Fix build failure
+
+commit ebad3d475590cbd539880a6841572cc666e1ab1c
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-05-13
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-05-13
+
+    Port new ngtcp2 map implementation
+
+commit d4fd0681ef51d0290c7fbd54b1305910022ca690
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-05-13
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-05-13
+
+    Bump llhttp to 6.0.2
+
+commit 43a47aa08b50a9f81186f45dc15a532f53d8b507
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-05-13
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-05-13
+
+    Do not return HPE_USER from where it is prohibited
+
+commit 20079b4c2f688385ba9ecf723f958d0448894879
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-04-02
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-04-02
+
+    Update bash_completions
+
+commit 2aeec7703ed4551a5a5c37c1b916ad4650f09d9b
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-04-02
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-04-02
+
+    Update manual pages
+
+commit cef458c31ce0c16fe7b1df6d971b75ed1df70505
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-04-02
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-04-02
+
+    Replace black-list with block-list
+    
+    nghttpx --no-http2-cipher-black-list and
+    --client-no-http2-cipher-black-list are deprecated and replaced with
+    --no-http2-cipher-block-list and --client-no-http2-cipher-block-list
+    respectively.
+
+commit 617a5766a2ab2fbc7f446a0d8a1d59a6872bd019
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-04-02
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-04-02
+
+    Replace master with main
+
+commit f1d67335542b21602e204ed1f80d861a1d720445
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-03-10
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-03-10
+
+    Initialize Config rps field
+
+commit 5f3bcb1f586971d621681b554b5a7837515ee59f
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-03-06
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-03-06
+
+    Add precious variables for libev and jemalloc and use JEMALLOC_CFLAGS
+
+commit b419bfd95f525941f79985191abf48ae1d65c14f
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-02-24
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-02-24
+
+    Remove unused field
+
+commit e406a2c15e4d79ead398d781a621be3eb0f5c214
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-02-23
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-02-23
+
+    Update doc
+
+commit 962a75c45e46ba8e4d801ca336ddab9370ad8cb1
+Merge: 92944f78 6cdc13d6
+Author:     Tatsuhiro Tsujikawa <404610+tatsuhiro-t@users.noreply.github.com>
+AuthorDate: 2021-02-23
+Commit:     GitHub <noreply@github.com>
+CommitDate: 2021-02-23
+
+    Merge pull request #1559 from nghttp2/h2load-rps
+    
+    h2load: Add --rps option
+
+commit 6cdc13d6c6837ab60a6f163cb14aecb480d7de85
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-02-23
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-02-23
+
+    h2load: Add --rps option
+
+commit 92944f784791d7fd75d51db82df4b26003f3d427
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-02-23
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-02-23
+
+    h2load: Allow unit in -D option
+
+commit 276792a81209e975dcbfa62d86b66425613d8164
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-02-23
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-02-23
+
+    Remove unnecessary function
+    
+    on_stream_close is called after on_frame_not_send_callback with
+    success=false without this function.
+
+commit 579fa6ea9305904257393beb2504c572f137ee89
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-02-21
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-02-21
+
+    Add more --with-* configure flags
+
+commit 2f2b211766fd012eccd780e5175dbbef6d14dd61
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-02-21
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-02-21
+
+    Add LIBTOOL_LDFLAGS configure variable
+
+commit 88a3cb51afe8c04c983ad810c02fdd4ddcc35e8c
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-02-18
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-02-18
+
+    Bump llhttp to 4.0.0
+
+commit 40679cf638541729752470900004c5acfdb247d1
+Merge: 5b587e85 50a1121d
+Author:     Tatsuhiro Tsujikawa <404610+tatsuhiro-t@users.noreply.github.com>
+AuthorDate: 2021-02-08
+Commit:     GitHub <noreply@github.com>
+CommitDate: 2021-02-08
+
+    Merge pull request #1553 from nghttp2/nghttpx-fix-accesslog-method
+    
+    nghttpx: Remove trailing white space after $method log variable
+
+commit 5b587e85784e694574385957e176bc2cba208373
+Merge: 3239c5ef 5b9892a9
+Author:     Tatsuhiro Tsujikawa <404610+tatsuhiro-t@users.noreply.github.com>
+AuthorDate: 2021-02-08
+Commit:     GitHub <noreply@github.com>
+CommitDate: 2021-02-08
+
+    Merge pull request #1550 from jktjkt/docs-asio-fix-typos
+    
+    docs: asio: fix some typos
+
+commit 50a1121d812fc2091302cfb97364bafaee771f79
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-02-08
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-02-08
+
+    nghttpx: Remove trailing white space after $method log variable
+
+commit 3239c5efcc47acefc2cd98d8dee081406554810b
+Author:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+AuthorDate: 2021-02-02
+Commit:     Tatsuhiro Tsujikawa <tatsuhiro.t@gmail.com>
+CommitDate: 2021-02-02
+
+    Bump up version number to v1.44.0-DEV
+
+commit 5b9892a9026634352e30ff0fe3465f0dd77e4a18
+Author:     Jan Kundrát <jan.kundrat@cesnet.cz>
+AuthorDate: 2021-01-15
+Commit:     Jan Kundrát <jan.kundrat@cesnet.cz>
+CommitDate: 2021-01-15
+
+    docs: asio: fix some typos
+    
+    Really just a s/pusedo/pseudo/g and s/exluced/excluded/g.

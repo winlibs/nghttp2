@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "NGHTTPX" "1" "Nov 15, 2019" "1.40.0" "nghttp2"
+.TH "NGHTTPX" "1" "Jul 18, 2021" "1.44.0" "nghttp2"
 .SH NAME
 nghttpx \- HTTP/2 proxy
 .
@@ -277,8 +277,11 @@ weight  becomes  1.   "weight"  is  ignored  if  session
 affinity is enabled.
 .sp
 Since ";" and ":" are  used as delimiter, <PATTERN> must
-not  contain these  characters.  Since  ";" has  special
-meaning in shell, the option value must be quoted.
+not contain  these characters.  In order  to include ":"
+in  <PATTERN>,  one  has  to  specify  "%3A"  (which  is
+percent\-encoded  from of  ":") instead.   Since ";"  has
+special  meaning  in shell,  the  option  value must  be
+quoted.
 .sp
 Default: \fB127.0.0.1,80\fP
 .UNINDENT
@@ -316,7 +319,7 @@ specify  "healthmon"  parameter.   This is  disabled  by
 default.  Any  requests which come through  this address
 are replied with 200 HTTP status, without no body.
 .sp
-To  accept   PROXY  protocol   version  1   on  frontend
+To accept  PROXY protocol  version 1  and 2  on frontend
 connection,  specify  "proxyproto" parameter.   This  is
 disabled by default.
 .sp
@@ -1003,19 +1006,19 @@ Default: \fB1s\fP
 .UNINDENT
 .INDENT 0.0
 .TP
-.B \-\-no\-http2\-cipher\-black\-list
-Allow  black  listed  cipher suite  on  frontend  HTTP/2
+.B \-\-no\-http2\-cipher\-block\-list
+Allow  block  listed  cipher suite  on  frontend  HTTP/2
 connection.                                          See
 \fI\%https://tools.ietf.org/html/rfc7540#appendix\-A\fP  for  the
-complete HTTP/2 cipher suites black list.
+complete HTTP/2 cipher suites block list.
 .UNINDENT
 .INDENT 0.0
 .TP
-.B \-\-client\-no\-http2\-cipher\-black\-list
-Allow  black  listed  cipher  suite  on  backend  HTTP/2
+.B \-\-client\-no\-http2\-cipher\-block\-list
+Allow  block  listed  cipher  suite  on  backend  HTTP/2
 connection.                                          See
 \fI\%https://tools.ietf.org/html/rfc7540#appendix\-A\fP  for  the
-complete HTTP/2 cipher suites black list.
+complete HTTP/2 cipher suites block list.
 .UNINDENT
 .INDENT 0.0
 .TP
@@ -1040,9 +1043,9 @@ in hex.  An  empty line, and line which  starts with \(aq#\(aq
 are skipped.  The default  enabled cipher list might not
 contain any PSK cipher suite.  In that case, desired PSK
 cipher suites  must be  enabled using  \fI\%\-\-ciphers\fP option.
-The  desired PSK  cipher suite  may be  black listed  by
+The  desired PSK  cipher suite  may be  block listed  by
 HTTP/2.   To  use  those   cipher  suites  with  HTTP/2,
-consider  to  use  \fI\%\-\-no\-http2\-cipher\-black\-list\fP  option.
+consider  to  use  \fI\%\-\-no\-http2\-cipher\-block\-list\fP  option.
 But be aware its implications.
 .UNINDENT
 .INDENT 0.0
@@ -1057,9 +1060,9 @@ The first identity and  secret pair encountered is used.
 The default  enabled cipher  list might not  contain any
 PSK  cipher suite.   In  that case,  desired PSK  cipher
 suites  must be  enabled using  \fI\%\-\-client\-ciphers\fP option.
-The  desired PSK  cipher suite  may be  black listed  by
+The  desired PSK  cipher suite  may be  block listed  by
 HTTP/2.   To  use  those   cipher  suites  with  HTTP/2,
-consider   to  use   \fI\%\-\-client\-no\-http2\-cipher\-black\-list\fP
+consider   to  use   \fI\%\-\-client\-no\-http2\-cipher\-block\-list\fP
 option.  But be aware its implications.
 .UNINDENT
 .INDENT 0.0
@@ -1324,6 +1327,18 @@ request.  "\-" if backend host is not available.
 .IP \(bu 2
 $backend_port:  backend  port   used  to  fulfill  the
 request.  "\-" if backend host is not available.
+.IP \(bu 2
+$method: HTTP method
+.IP \(bu 2
+$path:  Request  path  including query.   For  CONNECT
+request, authority is recorded.
+.IP \(bu 2
+$path_without_query:  $path   up  to  the   first  \(aq?\(aq
+character.    For   CONNECT  request,   authority   is
+recorded.
+.IP \(bu 2
+$protocol_version:   HTTP  version   (e.g.,  HTTP/1.1,
+HTTP/2)
 .UNINDENT
 .sp
 The  variable  can  be  enclosed  by  "{"  and  "}"  for
@@ -1654,10 +1669,10 @@ be used to drop root privileges.
 .B \-\-single\-process
 Run this program in a  single process mode for debugging
 purpose.  Without this option,  nghttpx creates at least
-2  processes:  master  and worker  processes.   If  this
-option is  used, master  and worker  are unified  into a
-single process.  nghttpx still spawns additional process
-if neverbleed is used.  In  the single process mode, the
+2 processes: main and  worker processes.  If this option
+is  used, main  and  worker are  unified  into a  single
+process.   nghttpx still  spawns  additional process  if
+neverbleed  is used.   In the  single process  mode, the
 signal handling feature is disabled.
 .UNINDENT
 .SS Scripting

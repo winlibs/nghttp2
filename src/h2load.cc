@@ -94,10 +94,12 @@ Config::Config()
       log_fd(-1),
       port(0),
       default_port(0),
+      connect_to_port(0),
       verbose(false),
       timing_script(false),
       base_uri_unix(false),
-      unix_addr{} {}
+      unix_addr{},
+      rps(0.) {}
 
 Config::~Config() {
   if (addrs) {
@@ -116,6 +118,7 @@ Config::~Config() {
 bool Config::is_rate_mode() const { return (this->rate != 0); }
 bool Config::is_timing_based_mode() const { return (this->duration > 0); }
 bool Config::has_base_uri() const { return (!this->base_uri.empty()); }
+bool Config::rps_enabled() const { return this->rps > 0.0; }
 Config config;
 
 namespace {
@@ -286,6 +289,51 @@ void warmup_timeout_cb(struct ev_loop *loop, ev_timer *w, int revents) {
 } // namespace
 
 namespace {
+void rps_cb(struct ev_loop *loop, ev_timer *w, int revents) {
+  auto client = static_cast<Client *>(w->data);
+  auto &session = client->session;
+
+  assert(!config.timing_script);
+
+  if (client->req_left == 0) {
+    ev_timer_stop(loop, w);
+    return;
+  }
+
+  auto now = ev_now(loop);
+  auto d = now - client->rps_duration_started;
+  auto n = static_cast<size_t>(round(d * config.rps));
+  client->rps_req_pending += n;
+  client->rps_duration_started = now - d + static_cast<double>(n) / config.rps;
+
+  if (client->rps_req_pending == 0) {
+    return;
+  }
+
+  auto nreq = session->max_concurrent_streams() - client->rps_req_inflight;
+  if (nreq == 0) {
+    return;
+  }
+
+  nreq = config.is_timing_based_mode() ? std::max(nreq, client->req_left)
+                                       : std::min(nreq, client->req_left);
+  nreq = std::min(nreq, client->rps_req_pending);
+
+  client->rps_req_inflight += nreq;
+  client->rps_req_pending -= nreq;
+
+  for (; nreq > 0; --nreq) {
+    if (client->submit_request() != 0) {
+      client->process_request_failure();
+      break;
+    }
+  }
+
+  client->signal_write();
+}
+} // namespace
+
+namespace {
 // Called when an a connection has been inactive for a set period of time
 // or a fixed amount of time after all requests have been made on a
 // connection
@@ -373,7 +421,10 @@ Client::Client(uint32_t id, Worker *worker, size_t req_todo)
       id(id),
       fd(-1),
       new_connection_requested(false),
-      final(false) {
+      final(false),
+      rps_duration_started(0),
+      rps_req_pending(0),
+      rps_req_inflight(0) {
   if (req_todo == 0) { // this means infinite number of requests are to be made
     // This ensures that number of requests are unbounded
     // Just a positive number is fine, we chose the first positive number
@@ -395,6 +446,9 @@ Client::Client(uint32_t id, Worker *worker, size_t req_todo)
 
   ev_timer_init(&request_timeout_watcher, client_request_timeout_cb, 0., 0.);
   request_timeout_watcher.data = this;
+
+  ev_timer_init(&rps_watcher, rps_cb, 0., 0.);
+  rps_watcher.data = this;
 }
 
 Client::~Client() {
@@ -551,6 +605,7 @@ void Client::disconnect() {
 
   ev_timer_stop(worker->loop, &conn_inactivity_watcher);
   ev_timer_stop(worker->loop, &conn_active_watcher);
+  ev_timer_stop(worker->loop, &rps_watcher);
   ev_timer_stop(worker->loop, &request_timeout_watcher);
   streams.clear();
   session.reset();
@@ -865,8 +920,18 @@ void Client::on_stream_close(int32_t stream_id, bool success, bool final) {
       if (!ev_is_active(&request_timeout_watcher)) {
         ev_feed_event(worker->loop, &request_timeout_watcher, EV_TIMER);
       }
-    } else if (submit_request() != 0) {
-      process_request_failure();
+    } else if (!config.rps_enabled()) {
+      if (submit_request() != 0) {
+        process_request_failure();
+      }
+    } else if (rps_req_pending) {
+      --rps_req_pending;
+      if (submit_request() != 0) {
+        process_request_failure();
+      }
+    } else {
+      assert(rps_req_inflight);
+      --rps_req_inflight;
     }
   }
 }
@@ -961,10 +1026,25 @@ int Client::connection_made() {
 
   record_connect_time();
 
-  if (!config.timing_script) {
+  if (config.rps_enabled()) {
+    rps_watcher.repeat = std::max(0.01, 1. / config.rps);
+    ev_timer_again(worker->loop, &rps_watcher);
+    rps_duration_started = ev_now(worker->loop);
+  }
+
+  if (config.rps_enabled()) {
+    assert(req_left);
+
+    ++rps_req_inflight;
+
+    if (submit_request() != 0) {
+      process_request_failure();
+    }
+  } else if (!config.timing_script) {
     auto nreq = config.is_timing_based_mode()
                     ? std::max(req_left, session->max_concurrent_streams())
                     : std::min(req_left, session->max_concurrent_streams());
+
     for (; nreq > 0; --nreq) {
       if (submit_request() != 0) {
         process_request_failure();
@@ -1563,8 +1643,13 @@ void resolve_host() {
   hints.ai_protocol = 0;
   hints.ai_flags = AI_ADDRCONFIG;
 
-  rv = getaddrinfo(config.host.c_str(), util::utos(config.port).c_str(), &hints,
-                   &res);
+  const auto &resolve_host =
+      config.connect_to_host.empty() ? config.host : config.connect_to_host;
+  auto port =
+      config.connect_to_port == 0 ? config.port : config.connect_to_port;
+
+  rv =
+      getaddrinfo(resolve_host.c_str(), util::utos(port).c_str(), &hints, &res);
   if (rv != 0) {
     std::cerr << "getaddrinfo() failed: " << gai_strerror(rv) << std::endl;
     exit(EXIT_FAILURE);
@@ -1897,7 +1982,7 @@ Options:
               length of the period in time.  This option is ignored if
               the rate option is not used.  The default value for this
               option is 1s.
-  -D, --duration=<N>
+  -D, --duration=<DURATION>
               Specifies the main duration for the measurements in case
               of timing-based  benchmarking.  -D  and -r  are mutually
               exclusive.
@@ -1937,7 +2022,8 @@ Options:
               port defined in  the first URI are  used solely.  Values
               contained  in  other  URIs,  if  present,  are  ignored.
               Definition of a  base URI overrides all  scheme, host or
-              port values.
+              port   values.   --timing-script-file   and  --rps   are
+              mutually exclusive.
   -B, --base-uri=(<URI>|unix:<PATH>)
               Specify URI from which the scheme, host and port will be
               used  for  all requests.   The  base  URI overrides  all
@@ -1979,6 +2065,11 @@ Options:
               response  time when  using  one worker  thread, but  may
               appear slightly  out of order with  multiple threads due
               to buffering.  Status code is -1 for failed streams.
+  --connect-to=<HOST>[:<PORT>]
+              Host and port to connect  instead of using the authority
+              in <URI>.
+  --rps=<N>   Specify request  per second for each  client.  --rps and
+              --timing-script-file are mutually exclusive.
   -v, --verbose
               Output debug information.
   --version   Display version information and exit.
@@ -2037,6 +2128,8 @@ int main(int argc, char **argv) {
         {"encoder-header-table-size", required_argument, &flag, 8},
         {"warm-up-time", required_argument, &flag, 9},
         {"log-file", required_argument, &flag, 10},
+        {"connect-to", required_argument, &flag, 11},
+        {"rps", required_argument, &flag, 12},
         {nullptr, 0, nullptr, 0}};
     int option_index = 0;
     auto c = getopt_long(argc, argv,
@@ -2189,10 +2282,9 @@ int main(int argc, char **argv) {
       break;
     }
     case 'D':
-      config.duration = strtoul(optarg, nullptr, 10);
-      if (config.duration == 0) {
-        std::cerr << "-D: the main duration for timing-based benchmarking "
-                  << "must be positive." << std::endl;
+      config.duration = util::parse_duration_with_unit(optarg);
+      if (!std::isfinite(config.duration)) {
+        std::cerr << "-D: value error " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
       break;
@@ -2264,6 +2356,30 @@ int main(int argc, char **argv) {
         // --log-file
         logfile = optarg;
         break;
+      case 11: {
+        // --connect-to
+        auto p = util::split_hostport(StringRef{optarg});
+        int64_t port = 0;
+        if (p.first.empty() ||
+            (!p.second.empty() && (port = util::parse_uint(p.second)) == -1)) {
+          std::cerr << "--connect-to: Invalid value " << optarg << std::endl;
+          exit(EXIT_FAILURE);
+        }
+        config.connect_to_host = p.first.str();
+        config.connect_to_port = port;
+        break;
+      }
+      case 12: {
+        char *end;
+        auto v = std::strtod(optarg, &end);
+        if (end == optarg || *end != '\0' || !std::isfinite(v) ||
+            1. / v < 1e-6) {
+          std::cerr << "--rps: Invalid value " << optarg << std::endl;
+          exit(EXIT_FAILURE);
+        }
+        config.rps = v;
+        break;
+      }
       }
       break;
     default:
@@ -2351,6 +2467,12 @@ int main(int argc, char **argv) {
 
   if (config.is_timing_based_mode() && config.is_rate_mode()) {
     std::cerr << "-r, -D: they are mutually exclusive." << std::endl;
+    exit(EXIT_FAILURE);
+  }
+
+  if (config.timing_script && config.rps_enabled()) {
+    std::cerr << "--timing-script-file, --rps: they are mutually exclusive."
+              << std::endl;
     exit(EXIT_FAILURE);
   }
 
@@ -2494,7 +2616,7 @@ int main(int argc, char **argv) {
   shared_nva.emplace_back(":method", config.data_fd == -1 ? "GET" : "POST");
   shared_nva.emplace_back("user-agent", user_agent);
 
-  // list overridalbe headers
+  // list header fields that can be overridden.
   auto override_hdrs = make_array<std::string>(":authority", ":host", ":method",
                                                ":scheme", "user-agent");
 

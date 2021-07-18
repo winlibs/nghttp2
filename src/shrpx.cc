@@ -124,10 +124,10 @@ constexpr auto ENV_UNIX_PATH = StringRef::from_lit("NGHTTP2_UNIX_PATH");
 // descriptor.  <PATH> is a path to UNIX domain socket.
 constexpr auto ENV_ACCEPT_PREFIX = StringRef::from_lit("NGHTTPX_ACCEPT_");
 
-// This environment variable contains PID of the original master
-// process, assuming that it created this master process as a result
-// of SIGUSR2.  The new master process is expected to send QUIT signal
-// to the original master process to shut it down gracefully.
+// This environment variable contains PID of the original main
+// process, assuming that it created this main process as a result of
+// SIGUSR2.  The new main process is expected to send QUIT signal to
+// the original main process to shut it down gracefully.
 constexpr auto ENV_ORIG_PID = StringRef::from_lit("NGHTTPX_ORIG_PID");
 
 #ifndef _KERNEL_FASTOPEN
@@ -419,7 +419,7 @@ void exec_binary() {
 
   // child process
 
-  shrpx_signal_unset_master_proc_ign_handler();
+  shrpx_signal_unset_main_proc_ign_handler();
 
   rv = shrpx_signal_unblock_all();
   if (rv != 0) {
@@ -548,7 +548,7 @@ void ipc_send(WorkerProcess *wp, uint8_t ipc_event) {
 
 namespace {
 void reopen_log(WorkerProcess *wp) {
-  LOG(NOTICE) << "Reopening log files: master process";
+  LOG(NOTICE) << "Reopening log files: main process";
 
   auto config = get_config();
   auto &loggingconf = config->logging;
@@ -1092,7 +1092,7 @@ void close_unused_inherited_addr(const std::vector<InheritedAddr> &iaddrs) {
 } // namespace
 
 namespace {
-// Returns the PID of the original master process from environment
+// Returns the PID of the original main process from environment
 // variable ENV_ORIG_PID.
 pid_t get_orig_pid_from_env() {
   auto s = getenv(ENV_ORIG_PID.c_str());
@@ -1310,7 +1310,7 @@ namespace {
 int event_loop() {
   std::array<char, STRERROR_BUFSIZE> errbuf;
 
-  shrpx_signal_set_master_proc_ign_handler();
+  shrpx_signal_set_main_proc_ign_handler();
 
   auto config = mod_config();
 
@@ -1369,7 +1369,7 @@ int event_loop() {
   shrpx_sd_notifyf(0, "READY=1");
 
   if (orig_pid != -1) {
-    LOG(NOTICE) << "Send QUIT signal to the original master process to tell "
+    LOG(NOTICE) << "Send QUIT signal to the original main process to tell "
                    "that we are ready to serve requests.";
     kill(orig_pid, SIGQUIT);
   }
@@ -1877,8 +1877,11 @@ Connections:
               affinity is enabled.
 
               Since ";" and ":" are  used as delimiter, <PATTERN> must
-              not  contain these  characters.  Since  ";" has  special
-              meaning in shell, the option value must be quoted.
+              not contain  these characters.  In order  to include ":"
+              in  <PATTERN>,  one  has  to  specify  "%3A"  (which  is
+              percent-encoded  from of  ":") instead.   Since ";"  has
+              special  meaning  in shell,  the  option  value must  be
+              quoted.
 
               Default: )"
       << DEFAULT_DOWNSTREAM_HOST << "," << DEFAULT_DOWNSTREAM_PORT << R"(
@@ -1914,7 +1917,7 @@ Connections:
               default.  Any  requests which come through  this address
               are replied with 200 HTTP status, without no body.
 
-              To  accept   PROXY  protocol   version  1   on  frontend
+              To accept  PROXY protocol  version 1  and 2  on frontend
               connection,  specify  "proxyproto" parameter.   This  is
               disabled by default.
 
@@ -2385,16 +2388,16 @@ SSL/TLS:
               TLS HTTP/2 backends.
               Default: )"
       << util::duration_str(config->tls.dyn_rec.idle_timeout) << R"(
-  --no-http2-cipher-black-list
-              Allow  black  listed  cipher suite  on  frontend  HTTP/2
+  --no-http2-cipher-block-list
+              Allow  block  listed  cipher suite  on  frontend  HTTP/2
               connection.                                          See
               https://tools.ietf.org/html/rfc7540#appendix-A  for  the
-              complete HTTP/2 cipher suites black list.
-  --client-no-http2-cipher-black-list
-              Allow  black  listed  cipher  suite  on  backend  HTTP/2
+              complete HTTP/2 cipher suites block list.
+  --client-no-http2-cipher-block-list
+              Allow  block  listed  cipher  suite  on  backend  HTTP/2
               connection.                                          See
               https://tools.ietf.org/html/rfc7540#appendix-A  for  the
-              complete HTTP/2 cipher suites black list.
+              complete HTTP/2 cipher suites block list.
   --tls-sct-dir=<DIR>
               Specifies the  directory where  *.sct files  exist.  All
               *.sct   files   in  <DIR>   are   read,   and  sent   as
@@ -2413,9 +2416,9 @@ SSL/TLS:
               are skipped.  The default  enabled cipher list might not
               contain any PSK cipher suite.  In that case, desired PSK
               cipher suites  must be  enabled using  --ciphers option.
-              The  desired PSK  cipher suite  may be  black listed  by
+              The  desired PSK  cipher suite  may be  block listed  by
               HTTP/2.   To  use  those   cipher  suites  with  HTTP/2,
-              consider  to  use  --no-http2-cipher-black-list  option.
+              consider  to  use  --no-http2-cipher-block-list  option.
               But be aware its implications.
   --client-psk-secrets=<PATH>
               Read PSK identity and secrets from <PATH>.  This is used
@@ -2427,9 +2430,9 @@ SSL/TLS:
               The default  enabled cipher  list might not  contain any
               PSK  cipher suite.   In  that case,  desired PSK  cipher
               suites  must be  enabled using  --client-ciphers option.
-              The  desired PSK  cipher suite  may be  black listed  by
+              The  desired PSK  cipher suite  may be  block listed  by
               HTTP/2.   To  use  those   cipher  suites  with  HTTP/2,
-              consider   to  use   --client-no-http2-cipher-black-list
+              consider   to  use   --client-no-http2-cipher-block-list
               option.  But be aware its implications.
   --tls-no-postpone-early-data
               By default,  nghttpx postpones forwarding  HTTP requests
@@ -2607,6 +2610,14 @@ Logging:
                 request.  "-" if backend host is not available.
               * $backend_port:  backend  port   used  to  fulfill  the
                 request.  "-" if backend host is not available.
+              * $method: HTTP method
+              * $path:  Request  path  including query.   For  CONNECT
+                request, authority is recorded.
+              * $path_without_query:  $path   up  to  the   first  '?'
+                character.    For   CONNECT  request,   authority   is
+                recorded.
+              * $protocol_version:   HTTP  version   (e.g.,  HTTP/1.1,
+                HTTP/2)
 
               The  variable  can  be  enclosed  by  "{"  and  "}"  for
               disambiguation (e.g., ${remote_addr}).
@@ -2822,10 +2833,10 @@ Process:
   --single-process
               Run this program in a  single process mode for debugging
               purpose.  Without this option,  nghttpx creates at least
-              2  processes:  master  and worker  processes.   If  this
-              option is  used, master  and worker  are unified  into a
-              single process.  nghttpx still spawns additional process
-              if neverbleed is used.  In  the single process mode, the
+              2 processes: main and  worker processes.  If this option
+              is  used, main  and  worker are  unified  into a  single
+              process.   nghttpx still  spawns  additional process  if
+              neverbleed  is used.   In the  single process  mode, the
               signal handling feature is disabled.
 
 Scripting:
@@ -3520,6 +3531,9 @@ int main(int argc, char **argv) {
         {SHRPX_OPT_TLS13_CLIENT_CIPHERS.c_str(), required_argument, &flag, 165},
         {SHRPX_OPT_NO_STRIP_INCOMING_EARLY_DATA.c_str(), no_argument, &flag,
          166},
+        {SHRPX_OPT_NO_HTTP2_CIPHER_BLOCK_LIST.c_str(), no_argument, &flag, 167},
+        {SHRPX_OPT_CLIENT_NO_HTTP2_CIPHER_BLOCK_LIST.c_str(), no_argument,
+         &flag, 168},
         {nullptr, 0, nullptr, 0}};
 
     int option_index = 0;
@@ -4311,6 +4325,16 @@ int main(int argc, char **argv) {
       case 166:
         // --no-strip-incoming-early-data
         cmdcfgs.emplace_back(SHRPX_OPT_NO_STRIP_INCOMING_EARLY_DATA,
+                             StringRef::from_lit("yes"));
+        break;
+      case 167:
+        // --no-http2-cipher-block-list
+        cmdcfgs.emplace_back(SHRPX_OPT_NO_HTTP2_CIPHER_BLOCK_LIST,
+                             StringRef::from_lit("yes"));
+        break;
+      case 168:
+        // --client-no-http2-cipher-block-list
+        cmdcfgs.emplace_back(SHRPX_OPT_CLIENT_NO_HTTP2_CIPHER_BLOCK_LIST,
                              StringRef::from_lit("yes"));
         break;
       default:

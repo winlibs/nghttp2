@@ -189,7 +189,7 @@ Log::~Log() {
 
   lgconf->update_tstamp_millis(std::chrono::system_clock::now());
 
-  // Error log format: <datetime> <master-pid> <current-pid>
+  // Error log format: <datetime> <main-pid> <current-pid>
   // <thread-id> <level> (<filename>:<line>) <msg>
   rv = snprintf(buf, sizeof(buf), "%s %d %d %s %s%s%s (%s:%d) %.*s\n",
                 lgconf->tstamp->time_iso8601.c_str(), config->pid, lgconf->pid,
@@ -251,7 +251,7 @@ Log &Log::operator<<(long long n) {
     return *this;
   }
   *last_++ = '-';
-  *last_ += nlen;
+  last_ += nlen;
   update_full();
 
   auto p = last_ - 1;
@@ -603,6 +603,11 @@ void upstream_accesslog(const std::vector<LogFragment> &lfv,
                                                  ? StringRef::from_lit("*")
                                                  : StringRef::from_lit("-")
                                            : req.path;
+  auto path_without_query =
+      req.method == HTTP_CONNECT
+          ? path
+          : StringRef{std::begin(path),
+                      std::find(std::begin(path), std::end(path), '?')};
 
   auto p = std::begin(buf);
   auto last = std::end(buf) - 2;
@@ -626,6 +631,23 @@ void upstream_accesslog(const std::vector<LogFragment> &lfv,
       std::tie(p, last) = copy(' ', p, last);
       std::tie(p, last) = copy_escape(path, p, last);
       std::tie(p, last) = copy_l(" HTTP/", p, last);
+      std::tie(p, last) = copy(req.http_major, p, last);
+      if (req.http_major < 2) {
+        std::tie(p, last) = copy('.', p, last);
+        std::tie(p, last) = copy(req.http_minor, p, last);
+      }
+      break;
+    case LogFragmentType::METHOD:
+      std::tie(p, last) = copy(method, p, last);
+      break;
+    case LogFragmentType::PATH:
+      std::tie(p, last) = copy_escape(path, p, last);
+      break;
+    case LogFragmentType::PATH_WITHOUT_QUERY:
+      std::tie(p, last) = copy_escape(path_without_query, p, last);
+      break;
+    case LogFragmentType::PROTOCOL_VERSION:
+      std::tie(p, last) = copy_l("HTTP/", p, last);
       std::tie(p, last) = copy(req.http_major, p, last);
       if (req.http_major < 2) {
         std::tie(p, last) = copy('.', p, last);

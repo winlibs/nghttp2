@@ -261,8 +261,11 @@ Connections
     affinity is enabled.
 
     Since ";" and ":" are  used as delimiter, <PATTERN> must
-    not  contain these  characters.  Since  ";" has  special
-    meaning in shell, the option value must be quoted.
+    not contain  these characters.  In order  to include ":"
+    in  <PATTERN>,  one  has  to  specify  "%3A"  (which  is
+    percent-encoded  from of  ":") instead.   Since ";"  has
+    special  meaning  in shell,  the  option  value must  be
+    quoted.
 
 
     Default: ``127.0.0.1,80``
@@ -300,7 +303,7 @@ Connections
     default.  Any  requests which come through  this address
     are replied with 200 HTTP status, without no body.
 
-    To  accept   PROXY  protocol   version  1   on  frontend
+    To accept  PROXY protocol  version 1  and 2  on frontend
     connection,  specify  "proxyproto" parameter.   This  is
     disabled by default.
 
@@ -922,19 +925,19 @@ SSL/TLS
 
     Default: ``1s``
 
-.. option:: --no-http2-cipher-black-list
+.. option:: --no-http2-cipher-block-list
 
-    Allow  black  listed  cipher suite  on  frontend  HTTP/2
+    Allow  block  listed  cipher suite  on  frontend  HTTP/2
     connection.                                          See
     https://tools.ietf.org/html/rfc7540#appendix-A  for  the
-    complete HTTP/2 cipher suites black list.
+    complete HTTP/2 cipher suites block list.
 
-.. option:: --client-no-http2-cipher-black-list
+.. option:: --client-no-http2-cipher-block-list
 
-    Allow  black  listed  cipher  suite  on  backend  HTTP/2
+    Allow  block  listed  cipher  suite  on  backend  HTTP/2
     connection.                                          See
     https://tools.ietf.org/html/rfc7540#appendix-A  for  the
-    complete HTTP/2 cipher suites black list.
+    complete HTTP/2 cipher suites block list.
 
 .. option:: --tls-sct-dir=<DIR>
 
@@ -957,9 +960,9 @@ SSL/TLS
     are skipped.  The default  enabled cipher list might not
     contain any PSK cipher suite.  In that case, desired PSK
     cipher suites  must be  enabled using  :option:`--ciphers` option.
-    The  desired PSK  cipher suite  may be  black listed  by
+    The  desired PSK  cipher suite  may be  block listed  by
     HTTP/2.   To  use  those   cipher  suites  with  HTTP/2,
-    consider  to  use  :option:`--no-http2-cipher-black-list`  option.
+    consider  to  use  :option:`--no-http2-cipher-block-list`  option.
     But be aware its implications.
 
 .. option:: --client-psk-secrets=<PATH>
@@ -973,9 +976,9 @@ SSL/TLS
     The default  enabled cipher  list might not  contain any
     PSK  cipher suite.   In  that case,  desired PSK  cipher
     suites  must be  enabled using  :option:`--client-ciphers` option.
-    The  desired PSK  cipher suite  may be  black listed  by
+    The  desired PSK  cipher suite  may be  block listed  by
     HTTP/2.   To  use  those   cipher  suites  with  HTTP/2,
-    consider   to  use   :option:`--client-no-http2-cipher-black-list`
+    consider   to  use   :option:`--client-no-http2-cipher-block-list`
     option.  But be aware its implications.
 
 .. option:: --tls-no-postpone-early-data
@@ -1203,6 +1206,14 @@ Logging
       request.  "-" if backend host is not available.
     * $backend_port:  backend  port   used  to  fulfill  the
       request.  "-" if backend host is not available.
+    * $method: HTTP method
+    * $path:  Request  path  including query.   For  CONNECT
+      request, authority is recorded.
+    * $path_without_query:  $path   up  to  the   first  '?'
+      character.    For   CONNECT  request,   authority   is
+      recorded.
+    * $protocol_version:   HTTP  version   (e.g.,  HTTP/1.1,
+      HTTP/2)
 
     The  variable  can  be  enclosed  by  "{"  and  "}"  for
     disambiguation (e.g., ${remote_addr}).
@@ -1509,10 +1520,10 @@ Process
 
     Run this program in a  single process mode for debugging
     purpose.  Without this option,  nghttpx creates at least
-    2  processes:  master  and worker  processes.   If  this
-    option is  used, master  and worker  are unified  into a
-    single process.  nghttpx still spawns additional process
-    if neverbleed is used.  In  the single process mode, the
+    2 processes: main and  worker processes.  If this option
+    is  used, main  and  worker are  unified  into a  single
+    process.   nghttpx still  spawns  additional process  if
+    neverbleed  is used.   In the  single process  mode, the
     signal handling feature is disabled.
 
 

@@ -387,6 +387,11 @@ LogFragmentType log_var_lookup_token(const char *name, size_t namelen) {
     break;
   case 4:
     switch (name[3]) {
+    case 'h':
+      if (util::strieq_l("pat", name, 3)) {
+        return LogFragmentType::PATH;
+      }
+      break;
     case 'n':
       if (util::strieq_l("alp", name, 3)) {
         return LogFragmentType::ALPN;
@@ -396,6 +401,11 @@ LogFragmentType log_var_lookup_token(const char *name, size_t namelen) {
     break;
   case 6:
     switch (name[5]) {
+    case 'd':
+      if (util::strieq_l("metho", name, 5)) {
+        return LogFragmentType::METHOD;
+      }
+      break;
     case 's':
       if (util::strieq_l("statu", name, 5)) {
         return LogFragmentType::STATUS;
@@ -502,6 +512,15 @@ LogFragmentType log_var_lookup_token(const char *name, size_t namelen) {
       break;
     }
     break;
+  case 16:
+    switch (name[15]) {
+    case 'n':
+      if (util::strieq_l("protocol_versio", name, 15)) {
+        return LogFragmentType::PROTOCOL_VERSION;
+      }
+      break;
+    }
+    break;
   case 17:
     switch (name[16]) {
     case 'l':
@@ -519,6 +538,11 @@ LogFragmentType log_var_lookup_token(const char *name, size_t namelen) {
       }
       if (util::strieq_l("tls_session_reuse", name, 17)) {
         return LogFragmentType::TLS_SESSION_REUSED;
+      }
+      break;
+    case 'y':
+      if (util::strieq_l("path_without_quer", name, 17)) {
+        return LogFragmentType::PATH_WITHOUT_QUERY;
       }
       break;
     }
@@ -1085,9 +1109,9 @@ int parse_mapping(Config *config, DownstreamAddrConfig &addr,
       *p = '\0';
       pattern = StringRef{iov.base, p};
     } else {
-      auto path = http2::normalize_path(downstreamconf.balloc,
-                                        StringRef{slash, std::end(raw_pattern)},
-                                        StringRef{});
+      auto path = http2::normalize_path_colon(
+          downstreamconf.balloc, StringRef{slash, std::end(raw_pattern)},
+          StringRef{});
       auto iov = make_byte_ref(downstreamconf.balloc,
                                std::distance(std::begin(raw_pattern), slash) +
                                    path.size() + 1);
@@ -2258,6 +2282,9 @@ int option_lookup_token(const char *name, size_t namelen) {
       if (util::strieq_l("no-http2-cipher-black-lis", name, 25)) {
         return SHRPX_OPTID_NO_HTTP2_CIPHER_BLACK_LIST;
       }
+      if (util::strieq_l("no-http2-cipher-block-lis", name, 25)) {
+        return SHRPX_OPTID_NO_HTTP2_CIPHER_BLOCK_LIST;
+      }
       break;
     }
     break;
@@ -2378,6 +2405,9 @@ int option_lookup_token(const char *name, size_t namelen) {
     case 't':
       if (util::strieq_l("client-no-http2-cipher-black-lis", name, 32)) {
         return SHRPX_OPTID_CLIENT_NO_HTTP2_CIPHER_BLACK_LIST;
+      }
+      if (util::strieq_l("client-no-http2-cipher-block-lis", name, 32)) {
+        return SHRPX_OPTID_CLIENT_NO_HTTP2_CIPHER_BLOCK_LIST;
       }
       break;
     }
@@ -3463,8 +3493,11 @@ int parse_config(Config *config, int optid, const StringRef &opt,
     return 0;
   }
   case SHRPX_OPTID_NO_HTTP2_CIPHER_BLACK_LIST:
-    config->tls.no_http2_cipher_black_list = util::strieq_l("yes", optarg);
-
+    LOG(WARN) << opt << ": deprecated.  Use "
+              << SHRPX_OPT_NO_HTTP2_CIPHER_BLOCK_LIST << " instead.";
+    // fall through
+  case SHRPX_OPTID_NO_HTTP2_CIPHER_BLOCK_LIST:
+    config->tls.no_http2_cipher_block_list = util::strieq_l("yes", optarg);
     return 0;
   case SHRPX_OPTID_BACKEND_HTTP1_TLS:
   case SHRPX_OPTID_BACKEND_TLS:
@@ -3666,7 +3699,11 @@ int parse_config(Config *config, int optid, const StringRef &opt,
     return 0;
 #endif // LIBRESSL_LEGACY_API
   case SHRPX_OPTID_CLIENT_NO_HTTP2_CIPHER_BLACK_LIST:
-    config->tls.client.no_http2_cipher_black_list =
+    LOG(WARN) << opt << ": deprecated.  Use "
+              << SHRPX_OPT_CLIENT_NO_HTTP2_CIPHER_BLOCK_LIST << " instead.";
+    // fall through
+  case SHRPX_OPTID_CLIENT_NO_HTTP2_CIPHER_BLOCK_LIST:
+    config->tls.client.no_http2_cipher_block_list =
         util::strieq_l("yes", optarg);
 
     return 0;
