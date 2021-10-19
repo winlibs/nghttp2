@@ -10,7 +10,7 @@ Synopsis
 .. function:: int nghttp2_check_authority(const uint8_t *value, size_t len)
 
     
-    Returns nonzero if the *value* which is supposed to the value of
+    Returns nonzero if the *value* which is supposed to be the value of the
     :authority or host header field is valid according to
     https://tools.ietf.org/html/rfc3986#section-3.2
     

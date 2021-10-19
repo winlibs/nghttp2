@@ -74,7 +74,7 @@ Connection::Connection(struct ev_loop *loop, int fd, SSL *ssl,
       read_timeout(read_timeout) {
 
   ev_io_init(&wev, writecb, fd, EV_WRITE);
-  ev_io_init(&rev, readcb, fd, EV_READ);
+  ev_io_init(&rev, readcb, proto == Proto::HTTP3 ? 0 : fd, EV_READ);
 
   wev.data = this;
   rev.data = this;
@@ -128,7 +128,7 @@ void Connection::disconnect() {
     tls.early_data_finish = false;
   }
 
-  if (fd != -1) {
+  if (proto != Proto::HTTP3 && fd != -1) {
     shutdown(fd, SHUT_WR);
     close(fd);
     fd = -1;
@@ -312,10 +312,13 @@ BIO_METHOD *create_bio_method() {
 void Connection::set_ssl(SSL *ssl) {
   tls.ssl = ssl;
 
-  auto &tlsconf = get_config()->tls;
-  auto bio = BIO_new(tlsconf.bio_method);
-  BIO_set_data(bio, this);
-  SSL_set_bio(tls.ssl, bio, bio);
+  if (proto != Proto::HTTP3) {
+    auto &tlsconf = get_config()->tls;
+    auto bio = BIO_new(tlsconf.bio_method);
+    BIO_set_data(bio, this);
+    SSL_set_bio(tls.ssl, bio, bio);
+  }
+
   SSL_set_app_data(tls.ssl, this);
 }
 
@@ -394,11 +397,14 @@ int Connection::tls_handshake() {
 
   ERR_clear_error();
 
-#if OPENSSL_1_1_1_API
+#if OPENSSL_1_1_1_API || defined(OPENSSL_IS_BORINGSSL)
+  auto &tlsconf = get_config()->tls;
+#endif // OPENSSL_1_1_1_API || defined(OPENSSL_IS_BORINGSSL)
+
+#if OPENSSL_1_1_1_API && !defined(OPENSSL_IS_BORINGSSL)
   if (!tls.server_handshake || tls.early_data_finish) {
     rv = SSL_do_handshake(tls.ssl);
   } else {
-    auto &tlsconf = get_config()->tls;
     for (;;) {
       size_t nread;
 
@@ -446,9 +452,9 @@ int Connection::tls_handshake() {
       }
     }
   }
-#else  // !OPENSSL_1_1_1_API
+#else  // !(OPENSSL_1_1_1_API && !defined(OPENSSL_IS_BORINGSSL))
   rv = SSL_do_handshake(tls.ssl);
-#endif // !OPENSSL_1_1_1_API
+#endif // !(OPENSSL_1_1_1_API && !defined(OPENSSL_IS_BORINGSSL))
 
   if (rv <= 0) {
     auto err = SSL_get_error(tls.ssl, rv);
@@ -496,7 +502,12 @@ int Connection::tls_handshake() {
   // Don't send handshake data if handshake was completed in OpenSSL
   // routine.  We have to check HTTP/2 requirement if HTTP/2 was
   // negotiated before sending finished message to the peer.
-  if (rv != 1 && tls.wbuf.rleft()) {
+  if ((rv != 1
+#ifdef OPENSSL_IS_BORINGSSL
+       || SSL_in_init(tls.ssl)
+#endif // OPENSSL_IS_BORINGSSL
+           ) &&
+      tls.wbuf.rleft()) {
     // First write indicates that resumption stuff has done.
     if (tls.handshake_state != TLSHandshakeState::WRITE_STARTED) {
       tls.handshake_state = TLSHandshakeState::WRITE_STARTED;
@@ -531,6 +542,40 @@ int Connection::tls_handshake() {
     }
     return SHRPX_ERR_INPROGRESS;
   }
+
+#ifdef OPENSSL_IS_BORINGSSL
+  if (!tlsconf.no_postpone_early_data && SSL_in_early_data(tls.ssl) &&
+      SSL_in_init(tls.ssl)) {
+    auto nread = SSL_read(tls.ssl, buf.data(), buf.size());
+    if (nread <= 0) {
+      auto err = SSL_get_error(tls.ssl, nread);
+      switch (err) {
+      case SSL_ERROR_WANT_READ:
+      case SSL_ERROR_WANT_WRITE:
+        break;
+      case SSL_ERROR_ZERO_RETURN:
+        return SHRPX_ERR_EOF;
+      case SSL_ERROR_SSL:
+        if (LOG_ENABLED(INFO)) {
+          LOG(INFO) << "SSL_read: "
+                    << ERR_error_string(ERR_get_error(), nullptr);
+        }
+        return SHRPX_ERR_NETWORK;
+      default:
+        if (LOG_ENABLED(INFO)) {
+          LOG(INFO) << "SSL_read: SSL_get_error returned " << err;
+        }
+        return SHRPX_ERR_NETWORK;
+      }
+    } else {
+      tls.earlybuf.append(buf.data(), nread);
+    }
+
+    if (SSL_in_init(tls.ssl)) {
+      return SHRPX_ERR_INPROGRESS;
+    }
+  }
+#endif // OPENSSL_IS_BORINGSSL
 
   // Handshake was done
 
@@ -567,6 +612,36 @@ int Connection::write_tls_pending_handshake() {
     }
     tls.wbuf.drain(nwrite);
   }
+
+#ifdef OPENSSL_IS_BORINGSSL
+  if (!SSL_in_init(tls.ssl)) {
+    // This will send a session ticket.
+    auto nwrite = SSL_write(tls.ssl, "", 0);
+    if (nwrite < 0) {
+      auto err = SSL_get_error(tls.ssl, nwrite);
+      switch (err) {
+      case SSL_ERROR_WANT_READ:
+        if (LOG_ENABLED(INFO)) {
+          LOG(INFO) << "Close connection due to TLS renegotiation";
+        }
+        return SHRPX_ERR_NETWORK;
+      case SSL_ERROR_WANT_WRITE:
+        break;
+      case SSL_ERROR_SSL:
+        if (LOG_ENABLED(INFO)) {
+          LOG(INFO) << "SSL_write: "
+                    << ERR_error_string(ERR_get_error(), nullptr);
+        }
+        return SHRPX_ERR_NETWORK;
+      default:
+        if (LOG_ENABLED(INFO)) {
+          LOG(INFO) << "SSL_write: SSL_get_error returned " << err;
+        }
+        return SHRPX_ERR_NETWORK;
+      }
+    }
+  }
+#endif // OPENSSL_IS_BORINGSSL
 
   // We have to start read watcher, since later stage of code expects
   // this.
@@ -695,7 +770,7 @@ ssize_t Connection::write_tls(const void *data, size_t len) {
 
   ERR_clear_error();
 
-#if OPENSSL_1_1_1_API
+#if OPENSSL_1_1_1_API && !defined(OPENSSL_IS_BORINGSSL)
   int rv;
   if (SSL_is_init_finished(tls.ssl)) {
     rv = SSL_write(tls.ssl, data, len);
@@ -707,9 +782,9 @@ ssize_t Connection::write_tls(const void *data, size_t len) {
       rv = nwrite;
     }
   }
-#else  // !OPENSSL_1_1_1_API
+#else  // !(OPENSSL_1_1_1_API && !defined(OPENSSL_IS_BORINGSSL))
   auto rv = SSL_write(tls.ssl, data, len);
-#endif // !OPENSSL_1_1_1_API
+#endif // !(OPENSSL_1_1_1_API && !defined(OPENSSL_IS_BORINGSSL))
 
   if (rv <= 0) {
     auto err = SSL_get_error(tls.ssl, rv);
@@ -769,7 +844,7 @@ ssize_t Connection::read_tls(void *data, size_t len) {
     tls.last_readlen = 0;
   }
 
-#if OPENSSL_1_1_1_API
+#if OPENSSL_1_1_1_API && !defined(OPENSSL_IS_BORINGSSL)
   if (!tls.early_data_finish) {
     // TLSv1.3 handshake is still going on.
     size_t nread;
@@ -808,7 +883,7 @@ ssize_t Connection::read_tls(void *data, size_t len) {
     }
     return nread;
   }
-#endif // OPENSSL_1_1_1_API
+#endif // OPENSSL_1_1_1_API && !defined(OPENSSL_IS_BORINGSSL)
 
   auto rv = SSL_read(tls.ssl, data, len);
 

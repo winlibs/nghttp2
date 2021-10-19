@@ -50,6 +50,10 @@
 #include "shrpx_connect_blocker.h"
 #include "shrpx_api_downstream_connection.h"
 #include "shrpx_health_monitor_downstream_connection.h"
+#include "shrpx_null_downstream_connection.h"
+#ifdef ENABLE_HTTP3
+#  include "shrpx_http3_upstream.h"
+#endif // ENABLE_HTTP3
 #include "shrpx_log.h"
 #include "util.h"
 #include "template.h"
@@ -285,6 +289,19 @@ int ClientHandler::write_tls() {
   }
 }
 
+#ifdef ENABLE_HTTP3
+int ClientHandler::read_quic(const UpstreamAddr *faddr,
+                             const Address &remote_addr,
+                             const Address &local_addr, const uint8_t *data,
+                             size_t datalen) {
+  auto upstream = static_cast<Http3Upstream *>(upstream_.get());
+
+  return upstream->on_read(faddr, remote_addr, local_addr, data, datalen);
+}
+
+int ClientHandler::write_quic() { return upstream_->on_write(); }
+#endif // ENABLE_HTTP3
+
 int ClientHandler::upstream_noop() { return 0; }
 
 int ClientHandler::upstream_read() {
@@ -401,7 +418,8 @@ ClientHandler::ClientHandler(Worker *worker, int fd, SSL *ssl,
             get_config()->conn.upstream.ratelimit.write,
             get_config()->conn.upstream.ratelimit.read, writecb, readcb,
             timeoutcb, this, get_config()->tls.dyn_rec.warmup_threshold,
-            get_config()->tls.dyn_rec.idle_timeout, Proto::NONE),
+            get_config()->tls.dyn_rec.idle_timeout,
+            faddr->quic ? Proto::HTTP3 : Proto::NONE),
       ipaddr_(make_string_ref(balloc_, ipaddr)),
       port_(make_string_ref(balloc_, port)),
       faddr_(faddr),
@@ -417,19 +435,23 @@ ClientHandler::ClientHandler(Worker *worker, int fd, SSL *ssl,
 
   reneg_shutdown_timer_.data = this;
 
-  conn_.rlimit.startw();
+  if (!faddr->quic) {
+    conn_.rlimit.startw();
+  }
   ev_timer_again(conn_.loop, &conn_.rt);
 
   auto config = get_config();
 
-  if (faddr_->accept_proxy_protocol ||
-      config->conn.upstream.accept_proxy_protocol) {
-    read_ = &ClientHandler::read_clear;
-    write_ = &ClientHandler::noop;
-    on_read_ = &ClientHandler::proxy_protocol_read;
-    on_write_ = &ClientHandler::upstream_noop;
-  } else {
-    setup_upstream_io_callback();
+  if (!faddr->quic) {
+    if (faddr_->accept_proxy_protocol ||
+        config->conn.upstream.accept_proxy_protocol) {
+      read_ = &ClientHandler::read_clear;
+      write_ = &ClientHandler::noop;
+      on_read_ = &ClientHandler::proxy_protocol_read;
+      on_write_ = &ClientHandler::upstream_noop;
+    } else {
+      setup_upstream_io_callback();
+    }
   }
 
   auto &fwdconf = config->http.forwarded;
@@ -491,6 +513,18 @@ void ClientHandler::setup_upstream_io_callback() {
   }
 }
 
+#ifdef ENABLE_HTTP3
+void ClientHandler::setup_http3_upstream(
+    std::unique_ptr<Http3Upstream> &&upstream) {
+  upstream_ = std::move(upstream);
+  write_ = &ClientHandler::write_quic;
+
+  auto config = get_config();
+
+  reset_upstream_read_timeout(config->conn.upstream.timeout.http3_read);
+}
+#endif // ENABLE_HTTP3
+
 ClientHandler::~ClientHandler() {
   if (LOG_ENABLED(INFO)) {
     CLOG(INFO, this) << "Deleting";
@@ -511,7 +545,8 @@ ClientHandler::~ClientHandler() {
 
   // TODO If backend is http/2, and it is in CONNECTED state, signal
   // it and make it loopbreak when output is zero.
-  if (worker_->get_graceful_shutdown() && worker_stat->num_connections == 0) {
+  if (worker_->get_graceful_shutdown() && worker_stat->num_connections == 0 &&
+      worker_stat->num_close_waits == 0) {
     ev_break(conn_.loop);
   }
 
@@ -973,6 +1008,13 @@ ClientHandler::get_downstream_connection(int &err, Downstream *downstream) {
   }
 
   auto &group = groups[group_idx];
+
+  if (group->shared_addr->dnf) {
+    auto dconn = std::make_unique<NullDownstreamConnection>(group);
+    dconn->set_client_handler(this);
+    return dconn;
+  }
+
   auto addr = get_downstream_addr(err, group.get(), downstream);
   if (addr == nullptr) {
     return nullptr;
@@ -1555,5 +1597,14 @@ StringRef ClientHandler::get_tls_sni() const { return sni_; }
 StringRef ClientHandler::get_alpn() const { return alpn_; }
 
 BlockAllocator &ClientHandler::get_block_allocator() { return balloc_; }
+
+void ClientHandler::set_alpn_from_conn() {
+  const unsigned char *alpn;
+  unsigned int alpnlen;
+
+  SSL_get0_alpn_selected(conn_.tls.ssl, &alpn, &alpnlen);
+
+  alpn_ = make_string_ref(balloc_, StringRef{alpn, alpnlen});
+}
 
 } // namespace shrpx

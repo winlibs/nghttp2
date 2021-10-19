@@ -1070,13 +1070,12 @@ Http2Upstream::Http2Upstream(ClientHandler *handler)
                       << nghttp2_strerror(rv);
   }
 
-  auto window_size =
-      faddr->alt_mode != UpstreamAltMode::NONE
-          ? std::numeric_limits<int32_t>::max()
-          : http2conf.upstream.optimize_window_size
-                ? std::min(http2conf.upstream.connection_window_size,
-                           NGHTTP2_INITIAL_CONNECTION_WINDOW_SIZE)
-                : http2conf.upstream.connection_window_size;
+  auto window_size = faddr->alt_mode != UpstreamAltMode::NONE
+                         ? std::numeric_limits<int32_t>::max()
+                     : http2conf.upstream.optimize_window_size
+                         ? std::min(http2conf.upstream.connection_window_size,
+                                    NGHTTP2_INITIAL_CONNECTION_WINDOW_SIZE)
+                         : http2conf.upstream.connection_window_size;
 
   rv = nghttp2_session_set_local_window_size(session_, NGHTTP2_FLAG_NONE, 0,
                                              window_size);
@@ -1726,9 +1725,9 @@ int Http2Upstream::on_downstream_header_complete(Downstream *downstream) {
   }
 
   auto nva = std::vector<nghttp2_nv>();
-  // 5 means :status and possible server, via, x-http2-push, and
-  // set-cookie (for affinity cookie) header field.
-  nva.reserve(resp.fs.headers().size() + 5 +
+  // 6 means :status and possible server, via, x-http2-push, alt-svc,
+  // and set-cookie (for affinity cookie) header field.
+  nva.reserve(resp.fs.headers().size() + 6 +
               httpconf.add_response_headers.size());
 
   if (downstream->get_non_final_response()) {
@@ -1793,6 +1792,14 @@ int Http2Upstream::on_downstream_header_complete(Downstream *downstream) {
       auto cookie_str = http::create_affinity_cookie(
           balloc, cookieconf.name, affinity_cookie, cookieconf.path, secure);
       nva.push_back(http2::make_nv_ls_nocopy("set-cookie", cookie_str));
+    }
+  }
+
+  if (!resp.fs.header(http2::HD_ALT_SVC)) {
+    // We won't change or alter alt-svc from backend for now
+    if (!httpconf.http2_altsvc_header_value.empty()) {
+      nva.push_back(http2::make_nv_ls_nocopy(
+          "alt-svc", httpconf.http2_altsvc_header_value));
     }
   }
 

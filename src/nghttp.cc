@@ -198,11 +198,11 @@ StringRef Request::get_real_host() const {
 
 uint16_t Request::get_real_port() const {
   auto scheme = get_real_scheme();
-  return config.host_override.empty()
-             ? util::has_uri_field(u, UF_PORT) ? u.port
-                                               : scheme == "https" ? 443 : 80
-             : config.port_override == 0 ? scheme == "https" ? 443 : 80
-                                         : config.port_override;
+  return config.host_override.empty() ? util::has_uri_field(u, UF_PORT) ? u.port
+                                        : scheme == "https"             ? 443
+                                                                        : 80
+         : config.port_override == 0  ? scheme == "https" ? 443 : 80
+                                      : config.port_override;
 }
 
 void Request::init_html_parser() {
@@ -1681,8 +1681,9 @@ void update_html_parser(HttpClient *client, Request *req, const uint8_t *data,
       continue;
     }
 
-    auto link_port =
-        util::has_uri_field(u, UF_PORT) ? u.port : scheme == "https" ? 443 : 80;
+    auto link_port = util::has_uri_field(u, UF_PORT) ? u.port
+                     : scheme == "https"             ? 443
+                                                     : 80;
 
     if (port != link_port) {
       continue;
@@ -2267,7 +2268,7 @@ int communicate(
   auto loop = EV_DEFAULT;
   SSL_CTX *ssl_ctx = nullptr;
   if (scheme == "https") {
-    ssl_ctx = SSL_CTX_new(SSLv23_client_method());
+    ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (!ssl_ctx) {
       std::cerr << "[ERROR] Failed to create SSL_CTX: "
                 << ERR_error_string(ERR_get_error(), nullptr) << std::endl;

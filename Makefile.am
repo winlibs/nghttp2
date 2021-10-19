@@ -20,7 +20,7 @@
 # LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-SUBDIRS = lib third-party src examples python tests integration-tests \
+SUBDIRS = lib third-party src bpf examples python tests integration-tests \
 	doc contrib script
 
 # Now with python setuptools, make uninstall will leave many files we
@@ -46,7 +46,11 @@ EXTRA_DIST = nghttpx.conf.sample proxy.pac.sample android-config android-make \
 	cmake/FindLibevent.cmake \
 	cmake/FindJansson.cmake \
 	cmake/FindLibcares.cmake \
-	cmake/FindSystemd.cmake
+	cmake/FindSystemd.cmake \
+	cmake/FindLibbpf.cmake \
+	cmake/FindLibnghttp3.cmake \
+	cmake/FindLibngtcp2.cmake \
+	cmake/FindLibngtcp2_crypto_openssl.cmake
 
 .PHONY: clang-format
 
@@ -58,4 +62,4 @@ clang-format:
 	test -z $${CLANGFORMAT} && CLANGFORMAT="clang-format"; \
 	$${CLANGFORMAT} -i lib/*.{c,h} lib/includes/nghttp2/*.h \
 	src/*.{c,cc,h} src/includes/nghttp2/*.h examples/*.{c,cc} \
-	tests/*.{c,h}
+	tests/*.{c,h} bpf/*.c

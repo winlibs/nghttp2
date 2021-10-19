@@ -53,6 +53,9 @@ class Downstream;
 struct WorkerStat;
 struct DownstreamAddrGroup;
 struct DownstreamAddr;
+#ifdef ENABLE_HTTP3
+class Http3Upstream;
+#endif // ENABLE_HTTP3
 
 class ClientHandler {
 public:
@@ -143,6 +146,13 @@ public:
 
   void setup_upstream_io_callback();
 
+#ifdef ENABLE_HTTP3
+  void setup_http3_upstream(std::unique_ptr<Http3Upstream> &&upstream);
+  int read_quic(const UpstreamAddr *faddr, const Address &remote_addr,
+                const Address &local_addr, const uint8_t *data, size_t datalen);
+  int write_quic();
+#endif // ENABLE_HTTP3
+
   // Returns string suitable for use in "by" parameter of Forwarded
   // header field.
   StringRef get_forwarded_by() const;
@@ -176,6 +186,8 @@ public:
   StringRef get_alpn() const;
 
   BlockAllocator &get_block_allocator();
+
+  void set_alpn_from_conn();
 
 private:
   // Allocator to allocate memory for connection-wide objects.  Make
