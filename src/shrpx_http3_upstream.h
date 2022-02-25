@@ -92,7 +92,8 @@ public:
            const ngtcp2_cid *odcid, const uint8_t *token, size_t tokenlen);
 
   int on_read(const UpstreamAddr *faddr, const Address &remote_addr,
-              const Address &local_addr, const uint8_t *data, size_t datalen);
+              const Address &local_addr, const ngtcp2_pkt_info &pi,
+              const uint8_t *data, size_t datalen);
 
   int write_streams();
 
@@ -123,8 +124,8 @@ public:
   void http_begin_request_headers(int64_t stream_id);
   int http_recv_request_header(Downstream *downstream, int32_t token,
                                nghttp3_rcbuf *name, nghttp3_rcbuf *value,
-                               uint8_t flags);
-  int http_end_request_headers(Downstream *downstream);
+                               uint8_t flags, bool trailer);
+  int http_end_request_headers(Downstream *downstream, int fin);
   int http_end_stream(Downstream *downstream);
   void start_downstream(Downstream *downstream);
   void initiate_downstream(Downstream *downstream);
@@ -140,7 +141,7 @@ public:
   int http_acked_stream_data(Downstream *downstream, uint64_t datalen);
   int http_shutdown_stream_read(int64_t stream_id);
   int http_reset_stream(int64_t stream_id, uint64_t app_error_code);
-  int http_send_stop_sending(int64_t stream_id, uint64_t app_error_code);
+  int http_stop_sending(int64_t stream_id, uint64_t app_error_code);
   int http_recv_data(Downstream *downstream, const uint8_t *data,
                      size_t datalen);
   int handshake_completed();
@@ -150,11 +151,19 @@ public:
   void idle_close();
   int send_packet(const UpstreamAddr *faddr, const sockaddr *remote_sa,
                   size_t remote_salen, const sockaddr *local_sa,
-                  size_t local_salen, const uint8_t *data, size_t datalen,
-                  size_t gso_size);
+                  size_t local_salen, const ngtcp2_pkt_info &pi,
+                  const uint8_t *data, size_t datalen, size_t gso_size);
 
   void qlog_write(const void *data, size_t datalen, bool fin);
   int open_qlog_file(const StringRef &dir, const ngtcp2_cid &scid) const;
+
+  void on_send_blocked(const UpstreamAddr *faddr,
+                       const ngtcp2_addr &remote_addr,
+                       const ngtcp2_addr &local_addr, const ngtcp2_pkt_info &pi,
+                       const uint8_t *data, size_t datalen,
+                       size_t max_udp_payload_size);
+  int send_blocked_packet();
+  void signal_write_upstream_addr(const UpstreamAddr *faddr);
 
 private:
   ClientHandler *handler_;
@@ -173,6 +182,23 @@ private:
   bool idle_close_;
   bool retry_close_;
   std::vector<uint8_t> conn_close_;
+
+  struct {
+    bool send_blocked;
+    size_t num_blocked;
+    size_t num_blocked_sent;
+    // blocked field is effective only when send_blocked is true.
+    struct {
+      const UpstreamAddr *faddr;
+      Address local_addr;
+      Address remote_addr;
+      ngtcp2_pkt_info pi;
+      const uint8_t *data;
+      size_t datalen;
+      size_t max_udp_payload_size;
+    } blocked[2];
+    std::unique_ptr<uint8_t[]> data;
+  } tx_;
 };
 
 } // namespace shrpx

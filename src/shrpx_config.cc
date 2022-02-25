@@ -2210,6 +2210,9 @@ int option_lookup_token(const char *name, size_t namelen) {
       if (util::strieq_l("no-location-rewrit", name, 18)) {
         return SHRPX_OPTID_NO_LOCATION_REWRITE;
       }
+      if (util::strieq_l("require-http-schem", name, 18)) {
+        return SHRPX_OPTID_REQUIRE_HTTP_SCHEME;
+      }
       if (util::strieq_l("tls-ticket-key-fil", name, 18)) {
         return SHRPX_OPTID_TLS_TICKET_KEY_FILE;
       }
@@ -4111,8 +4114,10 @@ int parse_config(Config *config, int optid, const StringRef &opt,
       config->quic.upstream.congestion_controller = NGTCP2_CC_ALGO_CUBIC;
     } else if (util::strieq_l("bbr", optarg)) {
       config->quic.upstream.congestion_controller = NGTCP2_CC_ALGO_BBR;
+    } else if (util::strieq_l("bbr2", optarg)) {
+      config->quic.upstream.congestion_controller = NGTCP2_CC_ALGO_BBR2;
     } else {
-      LOG(ERROR) << opt << ": must be either cubic or bbr";
+      LOG(ERROR) << opt << ": must be one of cubic, bbr, and bbr2";
       return -1;
     }
 #endif // ENABLE_HTTP3
@@ -4164,6 +4169,9 @@ int parse_config(Config *config, int optid, const StringRef &opt,
 
     return 0;
   }
+  case SHRPX_OPTID_REQUIRE_HTTP_SCHEME:
+    config->http.require_http_scheme = util::strieq_l("yes", optarg);
+    return 0;
   case SHRPX_OPTID_CONF:
     LOG(WARN) << "conf: ignored";
 
@@ -4463,7 +4471,7 @@ int configure_downstream_group(Config *config, bool http2_proxy,
     if (!g.mruby_file.empty()) {
       if (mruby::create_mruby_context(g.mruby_file) == nullptr) {
         LOG(config->ignore_per_pattern_mruby_error ? ERROR : FATAL)
-            << "backend: Could not compile mruby flie for pattern "
+            << "backend: Could not compile mruby file for pattern "
             << g.pattern;
         if (!config->ignore_per_pattern_mruby_error) {
           return -1;

@@ -59,6 +59,9 @@
 #ifdef HAVE_LIBSYSTEMD
 #  include <systemd/sd-daemon.h>
 #endif // HAVE_LIBSYSTEMD
+#ifdef HAVE_LIBBPF
+#  include <bpf/libbpf.h>
+#endif // HAVE_LIBBPF
 
 #include <cinttypes>
 #include <limits>
@@ -75,6 +78,11 @@
 #include <ev.h>
 
 #include <nghttp2/nghttp2.h>
+
+#ifdef ENABLE_HTTP3
+#  include <ngtcp2/ngtcp2.h>
+#  include <nghttp3/nghttp3.h>
+#endif // ENABLE_HTTP3
 
 #include "shrpx_config.h"
 #include "shrpx_tls.h"
@@ -2053,7 +2061,11 @@ void fill_default_config(Config *config) {
 
 namespace {
 void print_version(std::ostream &out) {
-  out << "nghttpx nghttp2/" NGHTTP2_VERSION << std::endl;
+  out << "nghttpx nghttp2/" NGHTTP2_VERSION
+#ifdef ENABLE_HTTP3
+         " ngtcp2/" NGTCP2_VERSION " nghttp3/" NGHTTP3_VERSION
+#endif // ENABLE_HTTP3
+      << std::endl;
 }
 } // namespace
 
@@ -3165,7 +3177,7 @@ HTTP:
               advertised  in alt-svc  header  field  only in  HTTP/1.1
               frontend.   This option  can be  used multiple  times to
               specify multiple alternative services.
-              Example: --altsvc="h2,443,,,ma=3600; persist=1'
+              Example: --altsvc="h2,443,,,ma=3600; persist=1"
   --http2-altsvc=<PROTOID,PORT[,HOST,[ORIGIN[,PARAMS]]]>
               Just like --altsvc option, but  this altsvc is only sent
               in HTTP/2 frontend.
@@ -3228,6 +3240,13 @@ HTTP:
               "redirect-if-not-tls" parameter in --backend option.
               Default: )"
       << config->http.redirect_https_port << R"(
+  --require-http-scheme
+              Always require http or https scheme in HTTP request.  It
+              also  requires that  https scheme  must be  used for  an
+              encrypted  connection.  Otherwise,  http scheme  must be
+              used.   This   option  is   recommended  for   a  server
+              deployment which directly faces clients and the services
+              it provides only require http or https scheme.
 
 API:
   --api-max-request-body=<SIZE>
@@ -3353,19 +3372,22 @@ HTTP/3 and QUIC:
               frontend QUIC  connections.  A qlog file  is created per
               each QUIC  connection.  The  file name is  ISO8601 basic
               format, followed by "-", server Source Connection ID and
-              ".qlog".
+              ".sqlog".
   --frontend-quic-require-token
               Require an address validation  token for a frontend QUIC
               connection.   Server sends  a token  in Retry  packet or
               NEW_TOKEN frame in the previous connection.
   --frontend-quic-congestion-controller=<CC>
               Specify a congestion controller algorithm for a frontend
-              QUIC  connection.   <CC>  should be  either  "cubic"  or
-              "bbr".
+              QUIC connection.  <CC> should  be one of "cubic", "bbr",
+              and "bbr2".
               Default: )"
       << (config->quic.upstream.congestion_controller == NGTCP2_CC_ALGO_CUBIC
               ? "cubic"
-              : "bbr")
+              : (config->quic.upstream.congestion_controller ==
+                         NGTCP2_CC_ALGO_BBR
+                     ? "bbr"
+                     : "bbr2"))
       << R"(
   --frontend-quic-secret-file=<PATH>
               Path to file that contains secure random data to be used
@@ -3725,6 +3747,7 @@ int process_options(Config *config,
     }
   }
 
+#ifdef RLIMIT_MEMLOCK
   if (config->rlimit_memlock) {
     struct rlimit lim = {static_cast<rlim_t>(config->rlimit_memlock),
                          static_cast<rlim_t>(config->rlimit_memlock)};
@@ -3734,6 +3757,7 @@ int process_options(Config *config,
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
     }
   }
+#endif // RLIMIT_MEMLOCK
 
   auto &fwdconf = config->http.forwarded;
 
@@ -3903,6 +3927,10 @@ int main(int argc, char **argv) {
   std::array<char, STRERROR_BUFSIZE> errbuf;
 
   nghttp2::tls::libssl_init();
+
+#ifdef HAVE_LIBBPF
+  libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
+#endif // HAVE_LIBBPF
 
 #ifndef NOTHREADS
   nghttp2::tls::LibsslGlobalLock lock;
@@ -4224,6 +4252,7 @@ int main(int argc, char **argv) {
          required_argument, &flag, 189},
         {SHRPX_OPT_FRONTEND_QUIC_INITIAL_RTT.c_str(), required_argument, &flag,
          190},
+        {SHRPX_OPT_REQUIRE_HTTP_SCHEME.c_str(), no_argument, &flag, 191},
         {nullptr, 0, nullptr, 0}};
 
     int option_index = 0;
@@ -5127,6 +5156,11 @@ int main(int argc, char **argv) {
         // --frontend-quic-initial-rtt
         cmdcfgs.emplace_back(SHRPX_OPT_FRONTEND_QUIC_INITIAL_RTT,
                              StringRef{optarg});
+        break;
+      case 191:
+        // --require-http-scheme
+        cmdcfgs.emplace_back(SHRPX_OPT_REQUIRE_HTTP_SCHEME,
+                             StringRef::from_lit("yes"));
         break;
       default:
         break;

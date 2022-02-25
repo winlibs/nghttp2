@@ -61,6 +61,7 @@ QUICConnectionHandler::~QUICConnectionHandler() {
 int QUICConnectionHandler::handle_packet(const UpstreamAddr *faddr,
                                          const Address &remote_addr,
                                          const Address &local_addr,
+                                         const ngtcp2_pkt_info &pi,
                                          const uint8_t *data, size_t datalen) {
   int rv;
   uint32_t version;
@@ -98,7 +99,7 @@ int QUICConnectionHandler::handle_packet(const UpstreamAddr *faddr,
     if (cwit != std::end(close_waits_)) {
       auto cw = (*cwit).second;
 
-      cw->handle_packet(faddr, remote_addr, local_addr, data, datalen);
+      cw->handle_packet(faddr, remote_addr, local_addr, pi, data, datalen);
 
       return 0;
     }
@@ -115,7 +116,7 @@ int QUICConnectionHandler::handle_packet(const UpstreamAddr *faddr,
         if (cwit != std::end(close_waits_)) {
           auto cw = (*cwit).second;
 
-          cw->handle_packet(faddr, remote_addr, local_addr, data, datalen);
+          cw->handle_packet(faddr, remote_addr, local_addr, pi, data, datalen);
 
           return 0;
         }
@@ -147,7 +148,7 @@ int QUICConnectionHandler::handle_packet(const UpstreamAddr *faddr,
                 decrypted_dcid.data(), decrypted_dcid.size());
         if (quic_lwp) {
           if (conn_handler->forward_quic_packet_to_lingering_worker_process(
-                  quic_lwp, remote_addr, local_addr, data, datalen) == 0) {
+                  quic_lwp, remote_addr, local_addr, pi, data, datalen) == 0) {
             return 0;
           }
 
@@ -310,7 +311,7 @@ int QUICConnectionHandler::handle_packet(const UpstreamAddr *faddr,
                       std::begin(decrypted_dcid) + SHRPX_QUIC_CID_PREFIXLEN,
                       worker_->get_cid_prefix())) {
         if (conn_handler->forward_quic_packet(faddr, remote_addr, local_addr,
-                                              decrypted_dcid.data(), data,
+                                              pi, decrypted_dcid.data(), data,
                                               datalen) == 0) {
           return 0;
         }
@@ -333,7 +334,8 @@ int QUICConnectionHandler::handle_packet(const UpstreamAddr *faddr,
     handler = (*it).second;
   }
 
-  if (handler->read_quic(faddr, remote_addr, local_addr, data, datalen) != 0) {
+  if (handler->read_quic(faddr, remote_addr, local_addr, pi, data, datalen) !=
+      0) {
     delete handler;
     return 0;
   }
@@ -489,8 +491,8 @@ int QUICConnectionHandler::send_retry(
   buf.resize(nwrite);
 
   quic_send_packet(faddr, &remote_addr.su.sa, remote_addr.len,
-                   &local_addr.su.sa, local_addr.len, buf.data(), buf.size(),
-                   0);
+                   &local_addr.su.sa, local_addr.len, ngtcp2_pkt_info{},
+                   buf.data(), buf.size(), 0);
 
   if (generate_quic_hashed_connection_id(idcid, remote_addr, local_addr,
                                          idcid) != 0) {
@@ -539,8 +541,8 @@ int QUICConnectionHandler::send_version_negotiation(
   }
 
   return quic_send_packet(faddr, &remote_addr.su.sa, remote_addr.len,
-                          &local_addr.su.sa, local_addr.len, buf.data(), nwrite,
-                          0);
+                          &local_addr.su.sa, local_addr.len, ngtcp2_pkt_info{},
+                          buf.data(), nwrite, 0);
 }
 
 int QUICConnectionHandler::send_stateless_reset(const UpstreamAddr *faddr,
@@ -602,8 +604,8 @@ int QUICConnectionHandler::send_stateless_reset(const UpstreamAddr *faddr,
   }
 
   return quic_send_packet(faddr, &remote_addr.su.sa, remote_addr.len,
-                          &local_addr.su.sa, local_addr.len, buf.data(), nwrite,
-                          0);
+                          &local_addr.su.sa, local_addr.len, ngtcp2_pkt_info{},
+                          buf.data(), nwrite, 0);
 }
 
 int QUICConnectionHandler::send_connection_close(
@@ -613,7 +615,8 @@ int QUICConnectionHandler::send_connection_close(
   std::array<uint8_t, NGTCP2_MAX_UDP_PAYLOAD_SIZE> buf;
 
   auto nwrite = ngtcp2_crypto_write_connection_close(
-      buf.data(), buf.size(), version, &ini_scid, &ini_dcid, error_code);
+      buf.data(), buf.size(), version, &ini_scid, &ini_dcid, error_code,
+      nullptr, 0);
   if (nwrite < 0) {
     LOG(ERROR) << "ngtcp2_crypto_write_connection_close failed";
     return -1;
@@ -628,8 +631,8 @@ int QUICConnectionHandler::send_connection_close(
   }
 
   return quic_send_packet(faddr, &remote_addr.su.sa, remote_addr.len,
-                          &local_addr.su.sa, local_addr.len, buf.data(), nwrite,
-                          0);
+                          &local_addr.su.sa, local_addr.len, ngtcp2_pkt_info{},
+                          buf.data(), nwrite, 0);
 }
 
 void QUICConnectionHandler::add_connection_id(const ngtcp2_cid &cid,
@@ -708,7 +711,8 @@ CloseWait::~CloseWait() {
 
 int CloseWait::handle_packet(const UpstreamAddr *faddr,
                              const Address &remote_addr,
-                             const Address &local_addr, const uint8_t *data,
+                             const Address &local_addr,
+                             const ngtcp2_pkt_info &pi, const uint8_t *data,
                              size_t datalen) {
   if (pkt.empty()) {
     return 0;
@@ -723,8 +727,8 @@ int CloseWait::handle_packet(const UpstreamAddr *faddr,
   }
 
   if (quic_send_packet(faddr, &remote_addr.su.sa, remote_addr.len,
-                       &local_addr.su.sa, local_addr.len, pkt.data(),
-                       pkt.size(), 0) != 0) {
+                       &local_addr.su.sa, local_addr.len, ngtcp2_pkt_info{},
+                       pkt.data(), pkt.size(), 0) != 0) {
     return -1;
   }
 

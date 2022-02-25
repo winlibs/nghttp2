@@ -95,6 +95,7 @@ struct Config {
   ssize_t max_concurrent_streams;
   size_t window_bits;
   size_t connection_window_bits;
+  size_t max_frame_size;
   // rate at which connections should be made
   size_t rate;
   ev_tstamp rate_period;
@@ -269,6 +270,7 @@ struct Sampling {
 
 struct Worker {
   MemchunkPool mcpool;
+  std::mt19937 randgen;
   Stats stats;
   Sampling request_times_smp;
   Sampling client_smp;
@@ -340,6 +342,16 @@ struct Client {
     quic::Error last_error;
     bool close_requested;
     FILE *qlog_file;
+
+    struct {
+      bool send_blocked;
+      struct {
+        Address remote_addr;
+        size_t datalen;
+        size_t max_udp_payload_size;
+      } blocked;
+      std::unique_ptr<uint8_t[]> data;
+    } tx;
   } quic;
 #endif // ENABLE_HTTP3
   ev_timer request_timeout_watcher;
@@ -463,6 +475,9 @@ struct Client {
   int write_quic();
   int write_udp(const sockaddr *addr, socklen_t addrlen, const uint8_t *data,
                 size_t datalen, size_t gso_size);
+  void on_send_blocked(const ngtcp2_addr &remote_addr, size_t datalen,
+                       size_t max_udp_payload_size);
+  int send_blocked_packet();
   void quic_close_connection();
 
   int quic_handshake_completed();

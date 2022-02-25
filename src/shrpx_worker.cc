@@ -554,7 +554,7 @@ void Worker::process_events() {
 
     quic_conn_handler_.handle_packet(
         faddr, wev.quic_pkt->remote_addr, wev.quic_pkt->local_addr,
-        wev.quic_pkt->data.data(), wev.quic_pkt->data.size());
+        wev.quic_pkt->pi, wev.quic_pkt->data.data(), wev.quic_pkt->data.size());
 
     break;
   }
@@ -833,6 +833,28 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
         close(fd);
         continue;
       }
+
+      if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &val,
+                     static_cast<socklen_t>(sizeof(val))) == -1) {
+        auto error = errno;
+        LOG(WARN) << "Failed to set IPV6_RECVTCLASS option to listener socket: "
+                  << xsi_strerror(error, errbuf.data(), errbuf.size());
+        close(fd);
+        continue;
+      }
+
+#  if defined(IPV6_MTU_DISCOVER) && defined(IP_PMTUDISC_DO)
+      int mtu_disc = IP_PMTUDISC_DO;
+      if (setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &mtu_disc,
+                     static_cast<socklen_t>(sizeof(mtu_disc))) == -1) {
+        auto error = errno;
+        LOG(WARN)
+            << "Failed to set IPV6_MTU_DISCOVER option to listener socket: "
+            << xsi_strerror(error, errbuf.data(), errbuf.size());
+        close(fd);
+        continue;
+      }
+#  endif // defined(IPV6_MTU_DISCOVER) && defined(IP_PMTUDISC_DO)
     } else {
       if (setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &val,
                      static_cast<socklen_t>(sizeof(val))) == -1) {
@@ -842,9 +864,28 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
         close(fd);
         continue;
       }
-    }
 
-    // TODO Enable ECN
+      if (setsockopt(fd, IPPROTO_IP, IP_RECVTOS, &val,
+                     static_cast<socklen_t>(sizeof(val))) == -1) {
+        auto error = errno;
+        LOG(WARN) << "Failed to set IP_RECVTOS option to listener socket: "
+                  << xsi_strerror(error, errbuf.data(), errbuf.size());
+        close(fd);
+        continue;
+      }
+
+#  if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DO)
+      int mtu_disc = IP_PMTUDISC_DO;
+      if (setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &mtu_disc,
+                     static_cast<socklen_t>(sizeof(mtu_disc))) == -1) {
+        auto error = errno;
+        LOG(WARN) << "Failed to set IP_MTU_DISCOVER option to listener socket: "
+                  << xsi_strerror(error, errbuf.data(), errbuf.size());
+        close(fd);
+        continue;
+      }
+#  endif // defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DO)
+    }
 
     if (bind(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
       auto error = errno;
@@ -858,32 +899,32 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
     auto config = get_config();
 
     auto &quic_bpf_refs = conn_handler_->get_quic_bpf_refs();
-    int err;
 
     if (should_attach_bpf()) {
       auto &bpfconf = config->quic.bpf;
 
       auto obj = bpf_object__open_file(bpfconf.prog_file.c_str(), nullptr);
-      err = libbpf_get_error(obj);
-      if (err) {
+      if (!obj) {
+        auto error = errno;
         LOG(FATAL) << "Failed to open bpf object file: "
-                   << xsi_strerror(-err, errbuf.data(), errbuf.size());
+                   << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
       }
 
-      if (bpf_object__load(obj)) {
+      rv = bpf_object__load(obj);
+      if (rv != 0) {
         LOG(FATAL) << "Failed to load bpf object file: "
-                   << xsi_strerror(errno, errbuf.data(), errbuf.size());
+                   << xsi_strerror(-rv, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
       }
 
       auto prog = bpf_object__find_program_by_name(obj, "select_reuseport");
-      err = libbpf_get_error(prog);
-      if (err) {
+      if (!prog) {
+        auto error = errno;
         LOG(FATAL) << "Failed to find sk_reuseport program: "
-                   << xsi_strerror(-err, errbuf.data(), errbuf.size());
+                   << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
       }
@@ -894,10 +935,10 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
 
       auto reuseport_array =
           bpf_object__find_map_by_name(obj, "reuseport_array");
-      err = libbpf_get_error(reuseport_array);
-      if (err) {
+      if (!reuseport_array) {
+        auto error = errno;
         LOG(FATAL) << "Failed to get reuseport_array: "
-                   << xsi_strerror(-err, errbuf.data(), errbuf.size());
+                   << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
       }
@@ -905,10 +946,10 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       ref.reuseport_array = bpf_map__fd(reuseport_array);
 
       auto cid_prefix_map = bpf_object__find_map_by_name(obj, "cid_prefix_map");
-      err = libbpf_get_error(cid_prefix_map);
-      if (err) {
+      if (!cid_prefix_map) {
+        auto error = errno;
         LOG(FATAL) << "Failed to get cid_prefix_map: "
-                   << xsi_strerror(-err, errbuf.data(), errbuf.size());
+                   << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
       }
@@ -916,10 +957,10 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       ref.cid_prefix_map = bpf_map__fd(cid_prefix_map);
 
       auto sk_info = bpf_object__find_map_by_name(obj, "sk_info");
-      err = libbpf_get_error(sk_info);
-      if (err) {
+      if (!sk_info) {
+        auto error = errno;
         LOG(FATAL) << "Failed to get sk_info: "
-                   << xsi_strerror(-err, errbuf.data(), errbuf.size());
+                   << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
       }
@@ -927,10 +968,11 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       constexpr uint32_t zero = 0;
       uint64_t num_socks = config->num_worker;
 
-      if (bpf_map_update_elem(bpf_map__fd(sk_info), &zero, &num_socks,
-                              BPF_ANY) != 0) {
+      rv =
+          bpf_map_update_elem(bpf_map__fd(sk_info), &zero, &num_socks, BPF_ANY);
+      if (rv != 0) {
         LOG(FATAL) << "Failed to update sk_info: "
-                   << xsi_strerror(errno, errbuf.data(), errbuf.size());
+                   << xsi_strerror(-rv, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
       }
@@ -941,19 +983,20 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       auto &qkms = conn_handler_->get_quic_keying_materials();
       auto &qkm = qkms->keying_materials.front();
 
-      if (bpf_map_update_elem(bpf_map__fd(sk_info), &key_high_idx,
-                              qkm.cid_encryption_key.data(), BPF_ANY) != 0) {
+      rv = bpf_map_update_elem(bpf_map__fd(sk_info), &key_high_idx,
+                               qkm.cid_encryption_key.data(), BPF_ANY);
+      if (rv != 0) {
         LOG(FATAL) << "Failed to update key_high_idx sk_info: "
-                   << xsi_strerror(errno, errbuf.data(), errbuf.size());
+                   << xsi_strerror(-rv, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
       }
 
-      if (bpf_map_update_elem(bpf_map__fd(sk_info), &key_low_idx,
-                              qkm.cid_encryption_key.data() + 8,
-                              BPF_ANY) != 0) {
+      rv = bpf_map_update_elem(bpf_map__fd(sk_info), &key_low_idx,
+                               qkm.cid_encryption_key.data() + 8, BPF_ANY);
+      if (rv != 0) {
         LOG(FATAL) << "Failed to update key_low_idx sk_info: "
-                   << xsi_strerror(errno, errbuf.data(), errbuf.size());
+                   << xsi_strerror(-rv, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
       }
@@ -973,18 +1016,20 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       const auto &ref = quic_bpf_refs[faddr.index];
       auto sk_index = compute_sk_index();
 
-      if (bpf_map_update_elem(ref.reuseport_array, &sk_index, &fd,
-                              BPF_NOEXIST) != 0) {
+      rv =
+          bpf_map_update_elem(ref.reuseport_array, &sk_index, &fd, BPF_NOEXIST);
+      if (rv != 0) {
         LOG(FATAL) << "Failed to update reuseport_array: "
-                   << xsi_strerror(errno, errbuf.data(), errbuf.size());
+                   << xsi_strerror(-rv, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
       }
 
-      if (bpf_map_update_elem(ref.cid_prefix_map, cid_prefix_.data(), &sk_index,
-                              BPF_NOEXIST) != 0) {
+      rv = bpf_map_update_elem(ref.cid_prefix_map, cid_prefix_.data(),
+                               &sk_index, BPF_NOEXIST);
+      if (rv != 0) {
         LOG(FATAL) << "Failed to update cid_prefix_map: "
-                   << xsi_strerror(errno, errbuf.data(), errbuf.size());
+                   << xsi_strerror(-rv, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
       }
