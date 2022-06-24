@@ -51,8 +51,13 @@
 #include <openssl/err.h>
 
 #ifdef ENABLE_HTTP3
-#  include <ngtcp2/ngtcp2.h>
-#endif // ENABLE_HTTP3
+#  ifdef HAVE_LIBNGTCP2_CRYPTO_OPENSSL
+#    include <ngtcp2/ngtcp2_crypto_openssl.h>
+#  endif // HAVE_LIBNGTCP2_CRYPTO_OPENSSL
+#  ifdef HAVE_LIBNGTCP2_CRYPTO_BORINGSSL
+#    include <ngtcp2/ngtcp2_crypto_boringssl.h>
+#  endif // HAVE_LIBNGTCP2_CRYPTO_BORINGSSL
+#endif   // ENABLE_HTTP3
 
 #include "url-parser/url_parser.h"
 
@@ -128,7 +133,8 @@ Config::Config()
       unix_addr{},
       rps(0.),
       no_udp_gso(false),
-      max_udp_payload_size(0) {}
+      max_udp_payload_size(0),
+      ktls(false) {}
 
 Config::~Config() {
   if (addrs) {
@@ -499,6 +505,8 @@ Client::Client(uint32_t id, Worker *worker, size_t req_todo)
   if (config.is_quic()) {
     quic.tx.data = std::make_unique<uint8_t[]>(64_k);
   }
+
+  ngtcp2_connection_close_error_default(&quic.last_error);
 #endif // ENABLE_HTTP3
 }
 
@@ -562,7 +570,6 @@ int Client::make_socket(addrinfo *addr) {
         ssl = SSL_new(worker->ssl_ctx);
       }
 
-      SSL_set_fd(ssl, fd);
       SSL_set_connect_state(ssl);
     }
   }
@@ -722,12 +729,17 @@ void Client::disconnect() {
   ev_io_stop(worker->loop, &wev);
   ev_io_stop(worker->loop, &rev);
   if (ssl) {
-    SSL_set_shutdown(ssl, SSL_get_shutdown(ssl) | SSL_RECEIVED_SHUTDOWN);
-    ERR_clear_error();
-
-    if (SSL_shutdown(ssl) != 1) {
+    if (config.is_quic()) {
       SSL_free(ssl);
       ssl = nullptr;
+    } else {
+      SSL_set_shutdown(ssl, SSL_get_shutdown(ssl) | SSL_RECEIVED_SHUTDOWN);
+      ERR_clear_error();
+
+      if (SSL_shutdown(ssl) != 1) {
+        SSL_free(ssl);
+        ssl = nullptr;
+      }
     }
   }
   if (fd != -1) {
@@ -1308,6 +1320,8 @@ int Client::connected() {
   ev_io_stop(worker->loop, &wev);
 
   if (ssl) {
+    SSL_set_fd(ssl, fd);
+
     readfn = &Client::tls_handshake;
     writefn = &Client::tls_handshake;
 
@@ -1452,7 +1466,7 @@ int Client::write_udp(const sockaddr *addr, socklen_t addrlen,
 
   auto nwrite = sendmsg(fd, &msg, 0);
   if (nwrite < 0) {
-    if (nwrite == EAGAIN || nwrite == EWOULDBLOCK) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
       return 1;
     }
 
@@ -2278,6 +2292,7 @@ Options:
               Disable UDP GSO.
   --max-udp-payload-size=<SIZE>
               Specify the maximum outgoing UDP datagram payload size.
+  --ktls      Enable ktls.
   -v, --verbose
               Output debug information.
   --version   Display version information and exit.
@@ -2345,6 +2360,7 @@ int main(int argc, char **argv) {
         {"no-udp-gso", no_argument, &flag, 15},
         {"qlog-file-base", required_argument, &flag, 16},
         {"max-udp-payload-size", required_argument, &flag, 17},
+        {"ktls", no_argument, &flag, 18},
         {nullptr, 0, nullptr, 0}};
     int option_index = 0;
     auto c = getopt_long(argc, argv,
@@ -2645,6 +2661,10 @@ int main(int argc, char **argv) {
         config.max_udp_payload_size = n;
         break;
       }
+      case 18:
+        // --ktls
+        config.ktls = true;
+        break;
       }
       break;
     default:
@@ -2856,15 +2876,33 @@ int main(int argc, char **argv) {
                   SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION |
                   SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION;
 
+#ifdef SSL_OP_ENABLE_KTLS
+  if (config.ktls) {
+    ssl_opts |= SSL_OP_ENABLE_KTLS;
+  }
+#endif // SSL_OP_ENABLE_KTLS
+
   SSL_CTX_set_options(ssl_ctx, ssl_opts);
   SSL_CTX_set_mode(ssl_ctx, SSL_MODE_AUTO_RETRY);
   SSL_CTX_set_mode(ssl_ctx, SSL_MODE_RELEASE_BUFFERS);
 
   if (config.is_quic()) {
 #ifdef ENABLE_HTTP3
-    SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_3_VERSION);
-    SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_3_VERSION);
-#endif // ENABLE_HTTP3
+#  ifdef HAVE_LIBNGTCP2_CRYPTO_OPENSSL
+    if (ngtcp2_crypto_openssl_configure_client_context(ssl_ctx) != 0) {
+      std::cerr << "ngtcp2_crypto_openssl_configure_client_context failed"
+                << std::endl;
+      exit(EXIT_FAILURE);
+    }
+#  endif // HAVE_LIBNGTCP2_CRYPTO_OPENSSL
+#  ifdef HAVE_LIBNGTCP2_CRYPTO_BORINGSSL
+    if (ngtcp2_crypto_boringssl_configure_client_context(ssl_ctx) != 0) {
+      std::cerr << "ngtcp2_crypto_boringssl_configure_client_context failed"
+                << std::endl;
+      exit(EXIT_FAILURE);
+    }
+#  endif // HAVE_LIBNGTCP2_CRYPTO_BORINGSSL
+#endif   // ENABLE_HTTP3
   } else if (nghttp2::tls::ssl_ctx_set_proto_versions(
                  ssl_ctx, nghttp2::tls::NGHTTP2_TLS_MIN_VERSION,
                  nghttp2::tls::NGHTTP2_TLS_MAX_VERSION) != 0) {

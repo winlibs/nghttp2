@@ -122,7 +122,9 @@ Config::Config()
       hexdump(false),
       no_push(false),
       expect_continue(false),
-      verify_peer(true) {
+      verify_peer(true),
+      ktls(false),
+      no_rfc7540_pri(false) {
   nghttp2_option_new(&http2_option);
   nghttp2_option_set_peer_max_concurrent_streams(http2_option,
                                                  peer_max_concurrent_streams);
@@ -676,7 +678,6 @@ int HttpClient::initiate_connection() {
         return -1;
       }
 
-      SSL_set_fd(ssl, fd);
       SSL_set_connect_state(ssl);
 
       // If the user overrode the :authority or host header, use that
@@ -877,6 +878,8 @@ int HttpClient::connected() {
   ev_timer_stop(loop, &wt);
 
   if (ssl) {
+    SSL_set_fd(ssl, fd);
+
     readfn = &HttpClient::tls_handshake;
     writefn = &HttpClient::tls_handshake;
 
@@ -930,6 +933,12 @@ size_t populate_settings(nghttp2_settings_entry *iv) {
   if (config.no_push) {
     iv[niv].settings_id = NGHTTP2_SETTINGS_ENABLE_PUSH;
     iv[niv].value = 0;
+    ++niv;
+  }
+
+  if (config.no_rfc7540_pri) {
+    iv[niv].settings_id = NGHTTP2_SETTINGS_NO_RFC7540_PRIORITIES;
+    iv[niv].value = 1;
     ++niv;
   }
 
@@ -2280,6 +2289,12 @@ int communicate(
                     SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION |
                     SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION;
 
+#ifdef SSL_OP_ENABLE_KTLS
+    if (config.ktls) {
+      ssl_opts |= SSL_OP_ENABLE_KTLS;
+    }
+#endif // SSL_OP_ENABLE_KTLS
+
     SSL_CTX_set_options(ssl_ctx, ssl_opts);
     SSL_CTX_set_mode(ssl_ctx, SSL_MODE_AUTO_RETRY);
     SSL_CTX_set_mode(ssl_ctx, SSL_MODE_RELEASE_BUFFERS);
@@ -2748,6 +2763,9 @@ Options:
   -y, --no-verify-peer
               Suppress  warning  on  server  certificate  verification
               failure.
+  --ktls      Enable ktls.
+  --no-rfc7540-pri
+              Disable RFC7540 priorities.
   --version   Display version information and exit.
   -h, --help  Display this help and exit.
 
@@ -2803,6 +2821,8 @@ int main(int argc, char **argv) {
         {"max-concurrent-streams", required_argument, &flag, 12},
         {"expect-continue", no_argument, &flag, 13},
         {"encoder-header-table-size", required_argument, &flag, 14},
+        {"ktls", no_argument, &flag, 15},
+        {"no-rfc7540-pri", no_argument, &flag, 16},
         {nullptr, 0, nullptr, 0}};
     int option_index = 0;
     int c =
@@ -3030,6 +3050,14 @@ int main(int argc, char **argv) {
         config.encoder_header_table_size = n;
         break;
       }
+      case 15:
+        // ktls option
+        config.ktls = true;
+        break;
+      case 16:
+        // no-rfc7540-pri option
+        config.no_rfc7540_pri = true;
+        break;
       }
       break;
     default:

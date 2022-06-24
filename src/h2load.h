@@ -136,6 +136,8 @@ struct Config {
   bool no_udp_gso;
   // The maximum UDP datagram payload size to send.
   size_t max_udp_payload_size;
+  // Enable ktls.
+  bool ktls;
 
   Config();
   ~Config();
@@ -337,19 +339,23 @@ struct Client {
   SSL *ssl;
 #ifdef ENABLE_HTTP3
   struct {
+    ngtcp2_crypto_conn_ref conn_ref;
     ev_timer pkt_timer;
     ngtcp2_conn *conn;
-    quic::Error last_error;
+    ngtcp2_connection_close_error last_error;
     bool close_requested;
     FILE *qlog_file;
 
     struct {
       bool send_blocked;
+      size_t num_blocked;
+      size_t num_blocked_sent;
       struct {
         Address remote_addr;
+        const uint8_t *data;
         size_t datalen;
-        size_t max_udp_payload_size;
-      } blocked;
+        size_t gso_size;
+      } blocked[2];
       std::unique_ptr<uint8_t[]> data;
     } tx;
   } quic;
@@ -475,8 +481,8 @@ struct Client {
   int write_quic();
   int write_udp(const sockaddr *addr, socklen_t addrlen, const uint8_t *data,
                 size_t datalen, size_t gso_size);
-  void on_send_blocked(const ngtcp2_addr &remote_addr, size_t datalen,
-                       size_t max_udp_payload_size);
+  void on_send_blocked(const ngtcp2_addr &remote_addr, const uint8_t *data,
+                       size_t datalen, size_t gso_size);
   int send_blocked_packet();
   void quic_close_connection();
 
@@ -489,17 +495,12 @@ struct Client {
   int quic_stream_stop_sending(int64_t stream_id, uint64_t app_error_code);
   int quic_extend_max_local_streams();
 
-  int quic_on_rx_secret(ngtcp2_crypto_level level, const uint8_t *secret,
-                        size_t secretlen);
-  int quic_on_tx_secret(ngtcp2_crypto_level level, const uint8_t *secret,
-                        size_t secretlen);
-  void quic_set_tls_alert(uint8_t alert);
-
-  void quic_write_client_handshake(ngtcp2_crypto_level level,
-                                   const uint8_t *data, size_t datalen);
+  int quic_write_client_handshake(ngtcp2_crypto_level level,
+                                  const uint8_t *data, size_t datalen);
   int quic_pkt_timeout();
   void quic_restart_pkt_timer();
   void quic_write_qlog(const void *data, size_t datalen);
+  int quic_make_http3_session();
 #endif // ENABLE_HTTP3
 };
 

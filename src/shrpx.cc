@@ -1724,17 +1724,16 @@ int event_loop() {
   }
 #endif // ENABLE_HTTP3
 
-  auto pid = fork_worker_process(
-      ipc_fd
+  auto pid = fork_worker_process(ipc_fd
 #ifdef ENABLE_HTTP3
-      ,
-      quic_ipc_fd
+                                 ,
+                                 quic_ipc_fd
 #endif // ENABLE_HTTP3
-      ,
-      {}
+                                 ,
+                                 {}
 #ifdef ENABLE_HTTP3
-      ,
-      cid_prefixes, quic_lwps
+                                 ,
+                                 cid_prefixes, quic_lwps
 #endif // ENABLE_HTTP3
   );
 
@@ -1912,6 +1911,10 @@ void fill_default_config(Config *config) {
     nghttp2_option_set_no_recv_client_magic(upstreamconf.option, 1);
     nghttp2_option_set_max_deflate_dynamic_table_size(
         upstreamconf.option, upstreamconf.encoder_dynamic_table_size);
+    nghttp2_option_set_server_fallback_rfc7540_priorities(upstreamconf.option,
+                                                          1);
+    nghttp2_option_set_builtin_recv_extension_type(upstreamconf.option,
+                                                   NGHTTP2_PRIORITY_UPDATE);
 
     // For API endpoint, we enable automatic window update.  This is
     // because we are a sink.
@@ -2249,7 +2252,18 @@ Connections:
               If a request scheme is "https", then Secure attribute is
               set.  Otherwise, it  is not set.  If  <SECURE> is "yes",
               the  Secure attribute  is  always set.   If <SECURE>  is
-              "no", the Secure attribute is always omitted.
+              "no",   the   Secure   attribute  is   always   omitted.
+              "affinity-cookie-stickiness=<STICKINESS>"       controls
+              stickiness  of   this  affinity.   If   <STICKINESS>  is
+              "loose", removing or adding a backend server might break
+              the affinity  and the  request might  be forwarded  to a
+              different backend server.   If <STICKINESS> is "strict",
+              removing the designated  backend server breaks affinity,
+              but adding  new backend server does  not cause breakage.
+              If  the designated  backend server  becomes unavailable,
+              new backend server is chosen  as if the request does not
+              have  an  affinity  cookie.   <STICKINESS>  defaults  to
+              "loose".
 
               By default, name resolution of backend host name is done
               at  start  up,  or reloading  configuration.   If  "dns"
@@ -2911,6 +2925,8 @@ SSL/TLS:
               accepts.
               Default: )"
       << util::utos_unit(config->tls.max_early_data) << R"(
+  --tls-ktls  Enable   ktls.    For   server,  ktls   is   enable   if
+              --tls-session-cache-memcached is not configured.
 
 HTTP/2:
   -c, --frontend-http2-max-concurrent-streams=<N>
@@ -4253,6 +4269,7 @@ int main(int argc, char **argv) {
         {SHRPX_OPT_FRONTEND_QUIC_INITIAL_RTT.c_str(), required_argument, &flag,
          190},
         {SHRPX_OPT_REQUIRE_HTTP_SCHEME.c_str(), no_argument, &flag, 191},
+        {SHRPX_OPT_TLS_KTLS.c_str(), no_argument, &flag, 192},
         {nullptr, 0, nullptr, 0}};
 
     int option_index = 0;
@@ -5161,6 +5178,10 @@ int main(int argc, char **argv) {
         // --require-http-scheme
         cmdcfgs.emplace_back(SHRPX_OPT_REQUIRE_HTTP_SCHEME,
                              StringRef::from_lit("yes"));
+        break;
+      case 192:
+        // --tls-ktls
+        cmdcfgs.emplace_back(SHRPX_OPT_TLS_KTLS, StringRef::from_lit("yes"));
         break;
       default:
         break;

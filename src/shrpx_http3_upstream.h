@@ -97,20 +97,9 @@ public:
 
   int write_streams();
 
-  int on_rx_secret(ngtcp2_crypto_level level, const uint8_t *secret,
-                   size_t secretlen);
-  int on_tx_secret(ngtcp2_crypto_level level, const uint8_t *secret,
-                   size_t secretlen);
-
-  int add_crypto_data(ngtcp2_crypto_level level, const uint8_t *data,
-                      size_t datalen);
-
-  void set_tls_alert(uint8_t alert);
-
   int handle_error();
 
   int handle_expiry();
-  void reset_idle_timer();
   void reset_timer();
 
   int setup_httpconn();
@@ -148,7 +137,6 @@ public:
   int check_shutdown();
   int start_graceful_shutdown();
   int submit_goaway();
-  void idle_close();
   int send_packet(const UpstreamAddr *faddr, const sockaddr *remote_sa,
                   size_t remote_salen, const sockaddr *local_sa,
                   size_t local_salen, const ngtcp2_pkt_info &pi,
@@ -160,26 +148,23 @@ public:
   void on_send_blocked(const UpstreamAddr *faddr,
                        const ngtcp2_addr &remote_addr,
                        const ngtcp2_addr &local_addr, const ngtcp2_pkt_info &pi,
-                       const uint8_t *data, size_t datalen,
-                       size_t max_udp_payload_size);
+                       const uint8_t *data, size_t datalen, size_t gso_size);
   int send_blocked_packet();
   void signal_write_upstream_addr(const UpstreamAddr *faddr);
+
+  ngtcp2_conn *get_conn() const;
 
 private:
   ClientHandler *handler_;
   ev_timer timer_;
-  ev_timer idle_timer_;
   ev_timer shutdown_timer_;
   ev_prepare prep_;
-  size_t max_udp_payload_size_;
   int qlog_fd_;
   ngtcp2_cid hashed_scid_;
   ngtcp2_conn *conn_;
-  quic::Error last_error_;
-  uint8_t tls_alert_;
+  ngtcp2_connection_close_error last_error_;
   nghttp3_conn *httpconn_;
   DownstreamQueue downstream_queue_;
-  bool idle_close_;
   bool retry_close_;
   std::vector<uint8_t> conn_close_;
 
@@ -195,7 +180,7 @@ private:
       ngtcp2_pkt_info pi;
       const uint8_t *data;
       size_t datalen;
-      size_t max_udp_payload_size;
+      size_t gso_size;
     } blocked[2];
     std::unique_ptr<uint8_t[]> data;
   } tx_;
