@@ -24,13 +24,13 @@
 
 cmake_minimum_required(VERSION 3.0)
 # XXX using 1.8.90 instead of 1.9.0-DEV
-project(nghttp2 VERSION 1.48.0)
+project(nghttp2 VERSION 1.49.0)
 
 # See versioning rule:
 #  https://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
-set(LT_CURRENT  36)
+set(LT_CURRENT  37)
 set(LT_REVISION 0)
-set(LT_AGE      22)
+set(LT_AGE      23)
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 include(Version)
@@ -201,6 +201,9 @@ if(OPENSSL_FOUND)
   cmake_push_check_state()
   set(CMAKE_REQUIRED_INCLUDES   "${OPENSSL_INCLUDE_DIR}")
   set(CMAKE_REQUIRED_LIBRARIES  "${OPENSSL_LIBRARIES}")
+  if(WIN32)
+    set(CMAKE_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES}" "ws2_32" "bcrypt")
+  endif()
   check_symbol_exists(SSL_is_quic "openssl/ssl.h" HAVE_SSL_IS_QUIC)
   if(NOT HAVE_SSL_IS_QUIC)
     message(WARNING "OpenSSL in ${OPENSSL_LIBRARIES} dose not have SSL_is_quic.  HTTP/3 support cannot be enabled")
@@ -512,7 +515,9 @@ add_subdirectory(python)
 add_subdirectory(tests)
 #add_subdirectory(tests/testdata)
 add_subdirectory(integration-tests)
-add_subdirectory(doc)
+if(ENABLE_DOC)
+  add_subdirectory(doc)
+endif()
 add_subdirectory(contrib)
 add_subdirectory(script)
 add_subdirectory(bpf)

@@ -756,6 +756,7 @@ EXTRA_DIST = CMakeLists.txt
 @HAVE_CUNIT_TRUE@	-I${top_srcdir}/lib \
 @HAVE_CUNIT_TRUE@	-I${top_srcdir}/lib/includes \
 @HAVE_CUNIT_TRUE@	-I${top_builddir}/lib/includes \
+@HAVE_CUNIT_TRUE@	-DBUILDING_NGHTTP2 \
 @HAVE_CUNIT_TRUE@	@CUNIT_CFLAGS@ @DEFS@
 
 all: all-recursive

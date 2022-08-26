@@ -32,6 +32,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/uio.h>
+#include <unistd.h>
 #if defined(__linux__)
 #include <sys/prctl.h>
 #elif defined(__APPLE__)
@@ -41,10 +45,6 @@
 #elif defined(__sun)
 #include <priv.h>
 #endif
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/uio.h>
-#include <unistd.h>
 
 #include <openssl/opensslconf.h>
 #include <openssl/opensslv.h>
@@ -1073,7 +1073,7 @@ static int load_key_stub(struct expbuf_t *buf)
         const EC_POINT *ec_pubkey;
         EC_KEY *ec_key;
 
-        ec_key = EVP_PKEY_get0_EC_KEY(pkey);
+        ec_key = (EC_KEY *)EVP_PKEY_get0_EC_KEY(pkey);
         type = NEVERBLEED_TYPE_ECDSA;
         key_index = daemon_set_ecdsa(ec_key);
         ec_group = EC_KEY_get0_group(ec_key);
