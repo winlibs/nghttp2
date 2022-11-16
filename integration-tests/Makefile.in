@@ -111,6 +111,7 @@ POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
 target_triplet = @target@
+@ENABLE_HTTP3_TRUE@am__append_1 = quic
 subdir = integration-tests
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/m4/ax_boost_asio.m4 \
@@ -371,6 +372,7 @@ EXTRA_DIST = \
 	req-return.rb \
 	resp-return.rb
 
+GO_TEST_TAGS = $(am__append_1)
 all: all-am
 
 .SUFFIXES:
@@ -571,7 +573,7 @@ uninstall-am:
 
 it:
 	for i in $(GO_FILES); do [ -e $(builddir)/$$i ] || cp $(srcdir)/$$i $(builddir); done
-	sh setenv go test -v
+	sh setenv go test -v --tags=${GO_TEST_TAGS}
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.
