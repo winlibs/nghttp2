@@ -24,12 +24,12 @@
 
 cmake_minimum_required(VERSION 3.0)
 # XXX using 1.8.90 instead of 1.9.0-DEV
-project(nghttp2 VERSION 1.57.0)
+project(nghttp2 VERSION 1.58.0)
 
 # See versioning rule:
 #  https://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
 set(LT_CURRENT  39)
-set(LT_REVISION 0)
+set(LT_REVISION 1)
 set(LT_AGE      25)
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
@@ -343,74 +343,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "MSVC")
   endif()
 else()
   if(ENABLE_WERROR)
-    extract_valid_c_flags(WARNCFLAGS    -Werror)
-    extract_valid_c_flags(WARNCXXFLAGS  -Werror)
+    set(WARNCFLAGS   "-Werror")
+    set(WARNCXXFLAGS "-Werror")
   endif()
 
-  # For C compiler
-  extract_valid_c_flags(WARNCFLAGS
-    -Wall
-    -Wextra
-    -Wmissing-prototypes
-    -Wstrict-prototypes
-    -Wmissing-declarations
-    -Wpointer-arith
-    -Wdeclaration-after-statement
-    -Wformat-security
-    -Wwrite-strings
-    -Wshadow
-    -Winline
-    -Wnested-externs
-    -Wfloat-equal
-    -Wundef
-    -Wendif-labels
-    -Wempty-body
-    -Wcast-align
-    -Wclobbered
-    -Wvla
-    -Wpragmas
-    -Wunreachable-code
-    -Waddress
-    -Wattributes
-    -Wdiv-by-zero
-    -Wshorten-64-to-32
-
-    -Wconversion
-    -Wextended-offsetof
-    -Wformat-nonliteral
-    -Wlanguage-extension-token
-    -Wmissing-field-initializers
-    -Wmissing-noreturn
-    -Wmissing-variable-declarations
-    # Not used because we cannot change public structs
-    # -Wpadded
-    -Wsign-conversion
-    # Not used because this basically disallows default case
-    # -Wswitch-enum
-    -Wunreachable-code-break
-    -Wunused-macros
-    -Wunused-parameter
-    -Wredundant-decls
-    # Only work with Clang for the moment
-    -Wheader-guard
-    # This is required because we pass format string as "const char*.
-    -Wno-format-nonliteral
-  )
-
-  extract_valid_cxx_flags(WARNCXXFLAGS
-    # For C++ compiler
-    -Wall
-    -Wformat-security
-  )
-endif()
-
-if(ENABLE_STATIC_CRT)
-  foreach(lang C CXX)
-    foreach(suffix "" _DEBUG _MINSIZEREL _RELEASE _RELWITHDEBINFO)
-      set(var "CMAKE_${lang}_FLAGS${suffix}")
-      string(REPLACE "/MD" "/MT" ${var} "${${var}}")
-    endforeach()
-  endforeach()
+  include(PickyWarningsC)
+  include(PickyWarningsCXX)
 endif()
 
 if(ENABLE_DEBUG)
@@ -506,6 +444,7 @@ message(STATUS "summary of build options:
       CXXFLAGS:       ${CMAKE_CXX_FLAGS_${_build_type}} ${CMAKE_CXX_FLAGS}
       WARNCFLAGS:     ${WARNCFLAGS}
       CXX1XCXXFLAGS:  ${CXX1XCXXFLAGS}
+      WARNCXXFLAGS:   ${WARNCXXFLAGS}
     Python:
       Python:          ${Python3_EXECUTABLE}
       Python3_VERSION: ${Python3_VERSION}
