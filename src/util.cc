@@ -24,9 +24,6 @@
  */
 #include "util.h"
 
-#ifdef HAVE_TIME_H
-#  include <time.h>
-#endif // HAVE_TIME_H
 #include <sys/types.h>
 #ifdef HAVE_SYS_SOCKET_H
 #  include <sys/socket.h>
@@ -59,6 +56,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <iostream>
 #include <fstream>
 #include <iomanip>
@@ -619,7 +617,7 @@ void show_candidates(const char *unkopt, const option *options) {
     if (istarts_with(options[i].name, options[i].name + optnamelen, unkopt,
                      unkopt + unkoptlen)) {
       if (optnamelen == static_cast<size_t>(unkoptlen)) {
-        // Exact match, then we don't show any condidates.
+        // Exact match, then we don't show any candidates.
         return;
       }
       ++prefix_match;
@@ -1530,16 +1528,6 @@ uint32_t hash32(const StringRef &s) {
 
   return h;
 }
-
-#if !OPENSSL_1_1_API
-namespace {
-EVP_MD_CTX *EVP_MD_CTX_new(void) { return EVP_MD_CTX_create(); }
-} // namespace
-
-namespace {
-void EVP_MD_CTX_free(EVP_MD_CTX *ctx) { EVP_MD_CTX_destroy(ctx); }
-} // namespace
-#endif // !OPENSSL_1_1_API
 
 namespace {
 int message_digest(uint8_t *res, const EVP_MD *meth, const StringRef &s) {

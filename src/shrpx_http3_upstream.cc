@@ -46,6 +46,7 @@
 #endif // HAVE_MRUBY
 #include "http3.h"
 #include "util.h"
+#include "ssl_compat.h"
 
 namespace shrpx {
 
@@ -421,31 +422,13 @@ int stream_reset(ngtcp2_conn *conn, int64_t stream_id, uint64_t final_size,
                  void *stream_user_data) {
   auto upstream = static_cast<Http3Upstream *>(user_data);
 
-  if (upstream->stream_reset(stream_id) != 0) {
+  if (upstream->http_shutdown_stream_read(stream_id) != 0) {
     return NGTCP2_ERR_CALLBACK_FAILURE;
   }
 
   return 0;
 }
 } // namespace
-
-int Http3Upstream::stream_reset(int64_t stream_id) {
-  if (http_shutdown_stream_read(stream_id) != 0) {
-    return -1;
-  }
-
-  if (ngtcp2_is_bidi_stream(stream_id)) {
-    auto rv = ngtcp2_conn_shutdown_stream_write(conn_, 0, stream_id,
-                                                NGHTTP3_H3_NO_ERROR);
-    if (rv != 0) {
-      ULOG(ERROR, this) << "ngtcp2_conn_shutdown_stream_write: "
-                        << ngtcp2_strerror(rv);
-      return -1;
-    }
-  }
-
-  return 0;
-}
 
 int Http3Upstream::http_shutdown_stream_read(int64_t stream_id) {
   if (!httpconn_) {
@@ -671,7 +654,7 @@ int Http3Upstream::init(const UpstreamAddr *faddr, const Address &remote_addr,
   params.max_idle_timeout = static_cast<ngtcp2_tstamp>(
       quicconf.upstream.timeout.idle * NGTCP2_SECONDS);
 
-#ifdef OPENSSL_IS_BORINGSSL
+#ifdef NGHTTP2_OPENSSL_IS_BORINGSSL
   if (quicconf.upstream.early_data) {
     ngtcp2_transport_params early_data_params;
 
@@ -707,7 +690,7 @@ int Http3Upstream::init(const UpstreamAddr *faddr, const Address &remote_addr,
       return -1;
     }
   }
-#endif // OPENSSL_IS_BORINGSSL
+#endif // NGHTTP2_OPENSSL_IS_BORINGSSL
 
   if (odcid) {
     params.original_dcid = *odcid;
@@ -1425,6 +1408,23 @@ int Http3Upstream::on_downstream_header_complete(Downstream *downstream) {
 
   if (LOG_ENABLED(INFO)) {
     log_response_headers(downstream, nva);
+  }
+
+  auto priority = resp.fs.header(http2::HD_PRIORITY);
+  if (priority) {
+    nghttp3_pri pri;
+
+    if (nghttp3_conn_get_stream_priority(httpconn_, &pri,
+                                         downstream->get_stream_id()) == 0 &&
+        nghttp3_pri_parse_priority(&pri, priority->value.byte(),
+                                   priority->value.size()) == 0) {
+      rv = nghttp3_conn_set_server_stream_priority(
+          httpconn_, downstream->get_stream_id(), &pri);
+      if (rv != 0) {
+        ULOG(ERROR, this) << "nghttp3_conn_set_server_stream_priority: "
+                          << nghttp3_strerror(rv);
+      }
+    }
   }
 
   nghttp3_data_reader data_read;
