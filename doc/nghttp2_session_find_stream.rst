@@ -17,5 +17,5 @@ Synopsis
     `nghttp2_session_get_root_stream()`) if 0 is given in *stream_id*.
     
     Unless *stream_id* == 0, the returned pointer is valid until next
-    call of `nghttp2_session_send()`, `nghttp2_session_mem_send()`,
-    `nghttp2_session_recv()`, and `nghttp2_session_mem_recv()`.
+    call of `nghttp2_session_send()`, `nghttp2_session_mem_send2()`,
+    `nghttp2_session_recv()`, and `nghttp2_session_mem_recv2()`.

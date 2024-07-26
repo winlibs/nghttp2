@@ -74,6 +74,19 @@ void QUICListener::on_read() {
       return;
     }
 
+    // Packets less than 22 bytes never be a valid QUIC packet.
+    if (nread < 22) {
+      ++pktcnt;
+
+      continue;
+    }
+
+    if (util::quic_prohibited_port(util::get_port(&su))) {
+      ++pktcnt;
+
+      continue;
+    }
+
     Address local_addr{};
     if (util::msghdr_get_local_addr(local_addr, &msg, su.storage.ss_family) !=
         0) {
@@ -93,10 +106,10 @@ void QUICListener::on_read() {
       gso_size = static_cast<size_t>(nread);
     }
 
-    auto data = buf.data();
+    auto data = std::span{std::begin(buf), static_cast<size_t>(nread)};
 
     for (;;) {
-      auto datalen = std::min(static_cast<size_t>(nread), gso_size);
+      auto datalen = std::min(data.size(), gso_size);
 
       ++pktcnt;
 
@@ -108,7 +121,8 @@ void QUICListener::on_read() {
                   << " bytes";
       }
 
-      if (datalen == 0) {
+      // Packets less than 22 bytes never be a valid QUIC packet.
+      if (datalen < 22) {
         break;
       }
 
@@ -117,14 +131,12 @@ void QUICListener::on_read() {
       remote_addr.len = msg.msg_namelen;
 
       quic_conn_handler->handle_packet(faddr_, remote_addr, local_addr, pi,
-                                       data, datalen);
+                                       {std::begin(data), datalen});
 
-      nread -= datalen;
-      if (nread == 0) {
+      data = data.subspan(datalen);
+      if (data.empty()) {
         break;
       }
-
-      data += datalen;
     }
   }
 }

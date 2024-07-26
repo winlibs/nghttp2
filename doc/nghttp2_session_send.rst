@@ -15,8 +15,8 @@ Synopsis
     This function retrieves the highest prioritized frame from the
     outbound queue and sends it to the remote peer.  It does this as
     many times as possible until the user callback
-    :type:`nghttp2_send_callback` returns
-    :macro:`nghttp2_error.NGHTTP2_ERR_WOULDBLOCK`, the outbound queue
+    :type:`nghttp2_send_callback2` returns
+    :enum:`nghttp2_error.NGHTTP2_ERR_WOULDBLOCK`, the outbound queue
     becomes empty or flow control is triggered (remote window size
     becomes depleted or maximum number of concurrent streams is
     reached).  This function calls several callback functions which are
@@ -39,13 +39,13 @@ Synopsis
     
     6. :type:`nghttp2_before_frame_send_callback` is invoked.
     
-    7. If :macro:`nghttp2_error.NGHTTP2_ERR_CANCEL` is returned from
+    7. If :enum:`nghttp2_error.NGHTTP2_ERR_CANCEL` is returned from
        :type:`nghttp2_before_frame_send_callback`, the current frame
        transmission is canceled, and
        :type:`nghttp2_on_frame_not_send_callback` is invoked.  Abort
        the following steps.
     
-    8. :type:`nghttp2_send_callback` is invoked one or more times to
+    8. :type:`nghttp2_send_callback2` is invoked one or more times to
        send the frame.
     
     9. :type:`nghttp2_on_frame_send_callback` is invoked.
@@ -57,7 +57,7 @@ Synopsis
     This function returns 0 if it succeeds, or one of the following
     negative error codes:
     
-    :macro:`nghttp2_error.NGHTTP2_ERR_NOMEM`
+    :enum:`nghttp2_error.NGHTTP2_ERR_NOMEM`
         Out of memory.
-    :macro:`nghttp2_error.NGHTTP2_ERR_CALLBACK_FAILURE`
+    :enum:`nghttp2_error.NGHTTP2_ERR_CALLBACK_FAILURE`
         The callback function failed.

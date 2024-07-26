@@ -11,4 +11,4 @@ Synopsis
 
     
     Sets callback function invoked by `nghttp2_session_recv()` and
-    `nghttp2_session_mem_recv()` when a frame is received.
+    `nghttp2_session_mem_recv2()` when a frame is received.

@@ -278,15 +278,14 @@ int ConnectionHandler::create_single_worker() {
 #endif // ENABLE_HTTP3 && HAVE_LIBBPF
 
 #ifdef ENABLE_HTTP3
-  assert(cid_prefixes_.size() == 1);
-  const auto &cid_prefix = cid_prefixes_[0];
+  assert(worker_ids_.size() == 1);
+  const auto &wid = worker_ids_[0];
 #endif // ENABLE_HTTP3
 
   single_worker_ = std::make_unique<Worker>(
       loop_, sv_ssl_ctx, cl_ssl_ctx, session_cache_ssl_ctx, cert_tree_.get(),
 #ifdef ENABLE_HTTP3
-      quic_sv_ssl_ctx, quic_cert_tree_.get(), cid_prefix.data(),
-      cid_prefix.size(),
+      quic_sv_ssl_ctx, quic_cert_tree_.get(), wid,
 #  ifdef HAVE_LIBBPF
       /* index = */ 0,
 #  endif // HAVE_LIBBPF
@@ -376,21 +375,20 @@ int ConnectionHandler::create_worker_thread(size_t num) {
   }
 
 #  ifdef ENABLE_HTTP3
-  assert(cid_prefixes_.size() == num);
+  assert(worker_ids_.size() == num);
 #  endif // ENABLE_HTTP3
 
   for (size_t i = 0; i < num; ++i) {
     auto loop = ev_loop_new(config->ev_loop_flags);
 
 #  ifdef ENABLE_HTTP3
-    const auto &cid_prefix = cid_prefixes_[i];
+    const auto &wid = worker_ids_[i];
 #  endif // ENABLE_HTTP3
 
     auto worker = std::make_unique<Worker>(
         loop, sv_ssl_ctx, cl_ssl_ctx, session_cache_ssl_ctx, cert_tree_.get(),
 #  ifdef ENABLE_HTTP3
-        quic_sv_ssl_ctx, quic_cert_tree_.get(), cid_prefix.data(),
-        cid_prefix.size(),
+        quic_sv_ssl_ctx, quic_cert_tree_.get(), wid,
 #    ifdef HAVE_LIBBPF
         i,
 #    endif // HAVE_LIBBPF
@@ -649,7 +647,7 @@ int ConnectionHandler::start_ocsp_update(const char *cert_file) {
 
   char *const argv[] = {
       const_cast<char *>(
-          get_config()->tls.ocsp.fetch_ocsp_response_file.c_str()),
+          get_config()->tls.ocsp.fetch_ocsp_response_file.data()),
       const_cast<char *>(cert_file), nullptr};
 
   Process proc;
@@ -739,40 +737,29 @@ void ConnectionHandler::handle_ocsp_complete() {
     // that case we get nullptr.
     auto quic_ssl_ctx = quic_all_ssl_ctx_[ocsp_.next];
     if (quic_ssl_ctx) {
-#  ifndef NGHTTP2_OPENSSL_IS_BORINGSSL
       auto quic_tls_ctx_data = static_cast<tls::TLSContextData *>(
           SSL_CTX_get_app_data(quic_ssl_ctx));
-#    ifdef HAVE_ATOMIC_STD_SHARED_PTR
-      std::atomic_store_explicit(
-          &quic_tls_ctx_data->ocsp_data,
+#  ifdef HAVE_ATOMIC_STD_SHARED_PTR
+      quic_tls_ctx_data->ocsp_data.store(
           std::make_shared<std::vector<uint8_t>>(ocsp_.resp),
           std::memory_order_release);
-#    else  // !HAVE_ATOMIC_STD_SHARED_PTR
+#  else  // !HAVE_ATOMIC_STD_SHARED_PTR
       std::lock_guard<std::mutex> g(quic_tls_ctx_data->mu);
       quic_tls_ctx_data->ocsp_data =
           std::make_shared<std::vector<uint8_t>>(ocsp_.resp);
-#    endif // !HAVE_ATOMIC_STD_SHARED_PTR
-#  else    // NGHTTP2_OPENSSL_IS_BORINGSSL
-      SSL_CTX_set_ocsp_response(quic_ssl_ctx, ocsp_.resp.data(),
-                                ocsp_.resp.size());
-#  endif   // NGHTTP2_OPENSSL_IS_BORINGSSL
+#  endif // !HAVE_ATOMIC_STD_SHARED_PTR
     }
 #endif // ENABLE_HTTP3
 
-#ifndef NGHTTP2_OPENSSL_IS_BORINGSSL
-#  ifdef HAVE_ATOMIC_STD_SHARED_PTR
-    std::atomic_store_explicit(
-        &tls_ctx_data->ocsp_data,
+#ifdef HAVE_ATOMIC_STD_SHARED_PTR
+    tls_ctx_data->ocsp_data.store(
         std::make_shared<std::vector<uint8_t>>(std::move(ocsp_.resp)),
         std::memory_order_release);
-#  else  // !HAVE_ATOMIC_STD_SHARED_PTR
+#else  // !HAVE_ATOMIC_STD_SHARED_PTR
     std::lock_guard<std::mutex> g(tls_ctx_data->mu);
     tls_ctx_data->ocsp_data =
         std::make_shared<std::vector<uint8_t>>(std::move(ocsp_.resp));
-#  endif // !HAVE_ATOMIC_STD_SHARED_PTR
-#else    // NGHTTP2_OPENSSL_IS_BORINGSSL
-    SSL_CTX_set_ocsp_response(ssl_ctx, ocsp_.resp.data(), ocsp_.resp.size());
-#endif   // NGHTTP2_OPENSSL_IS_BORINGSSL
+#endif // !HAVE_ATOMIC_STD_SHARED_PTR
   }
 
   ++ocsp_.next;
@@ -1015,29 +1002,27 @@ void ConnectionHandler::set_enable_acceptor_on_ocsp_completion(bool f) {
 }
 
 #ifdef ENABLE_HTTP3
-int ConnectionHandler::forward_quic_packet(
-    const UpstreamAddr *faddr, const Address &remote_addr,
-    const Address &local_addr, const ngtcp2_pkt_info &pi,
-    const uint8_t *cid_prefix, const uint8_t *data, size_t datalen) {
+int ConnectionHandler::forward_quic_packet(const UpstreamAddr *faddr,
+                                           const Address &remote_addr,
+                                           const Address &local_addr,
+                                           const ngtcp2_pkt_info &pi,
+                                           const WorkerID &wid,
+                                           std::span<const uint8_t> data) {
   assert(!get_config()->single_thread);
 
-  for (auto &worker : workers_) {
-    if (!std::equal(cid_prefix, cid_prefix + SHRPX_QUIC_CID_PREFIXLEN,
-                    worker->get_cid_prefix())) {
-      continue;
-    }
-
-    WorkerEvent wev{};
-    wev.type = WorkerEventType::QUIC_PKT_FORWARD;
-    wev.quic_pkt = std::make_unique<QUICPacket>(faddr->index, remote_addr,
-                                                local_addr, pi, data, datalen);
-
-    worker->send(std::move(wev));
-
-    return 0;
+  auto worker = find_worker(wid);
+  if (worker == nullptr) {
+    return -1;
   }
 
-  return -1;
+  WorkerEvent wev{};
+  wev.type = WorkerEventType::QUIC_PKT_FORWARD;
+  wev.quic_pkt = std::make_unique<QUICPacket>(faddr->index, remote_addr,
+                                              local_addr, pi, data);
+
+  worker->send(std::move(wev));
+
+  return 0;
 }
 
 void ConnectionHandler::set_quic_keying_materials(
@@ -1050,22 +1035,40 @@ ConnectionHandler::get_quic_keying_materials() const {
   return quic_keying_materials_;
 }
 
-void ConnectionHandler::set_cid_prefixes(
-    const std::vector<std::array<uint8_t, SHRPX_QUIC_CID_PREFIXLEN>>
-        &cid_prefixes) {
-  cid_prefixes_ = cid_prefixes;
+void ConnectionHandler::set_worker_ids(std::vector<WorkerID> worker_ids) {
+  worker_ids_ = std::move(worker_ids);
+}
+
+namespace {
+ssize_t find_worker_index(const std::vector<WorkerID> &worker_ids,
+                          const WorkerID &wid) {
+  assert(!worker_ids.empty());
+
+  if (wid.server != worker_ids[0].server ||
+      wid.worker_process != worker_ids[0].worker_process ||
+      wid.thread >= worker_ids.size()) {
+    return -1;
+  }
+
+  return wid.thread;
+}
+} // namespace
+
+Worker *ConnectionHandler::find_worker(const WorkerID &wid) const {
+  auto idx = find_worker_index(worker_ids_, wid);
+  if (idx == -1) {
+    return nullptr;
+  }
+
+  return workers_[idx].get();
 }
 
 QUICLingeringWorkerProcess *
-ConnectionHandler::match_quic_lingering_worker_process_cid_prefix(
-    const uint8_t *dcid, size_t dcidlen) {
-  assert(dcidlen >= SHRPX_QUIC_CID_PREFIXLEN);
-
+ConnectionHandler::match_quic_lingering_worker_process_worker_id(
+    const WorkerID &wid) {
   for (auto &lwps : quic_lingering_worker_processes_) {
-    for (auto &cid_prefix : lwps.cid_prefixes) {
-      if (std::equal(std::begin(cid_prefix), std::end(cid_prefix), dcid)) {
-        return &lwps;
-      }
+    if (find_worker_index(lwps.worker_ids, wid) != -1) {
+      return &lwps;
     }
   }
 
@@ -1101,8 +1104,8 @@ void ConnectionHandler::set_quic_lingering_worker_processes(
 
 int ConnectionHandler::forward_quic_packet_to_lingering_worker_process(
     QUICLingeringWorkerProcess *quic_lwp, const Address &remote_addr,
-    const Address &local_addr, const ngtcp2_pkt_info &pi, const uint8_t *data,
-    size_t datalen) {
+    const Address &local_addr, const ngtcp2_pkt_info &pi,
+    std::span<const uint8_t> data) {
   std::array<uint8_t, 512> header;
 
   assert(header.size() >= 1 + 1 + 1 + 1 + sizeof(sockaddr_storage) * 2);
@@ -1126,8 +1129,8 @@ int ConnectionHandler::forward_quic_packet_to_lingering_worker_process(
           .iov_len = static_cast<size_t>(p - header.data()),
       },
       {
-          .iov_base = const_cast<uint8_t *>(data),
-          .iov_len = datalen,
+          .iov_base = const_cast<uint8_t *>(data.data()),
+          .iov_len = data.size(),
       },
   };
 
@@ -1276,41 +1279,36 @@ int ConnectionHandler::quic_ipc_read() {
 
     // Ignore return value
     quic_conn_handler->handle_packet(faddr, pkt->remote_addr, pkt->local_addr,
-                                     pkt->pi, pkt->data.data(),
-                                     pkt->data.size());
+                                     pkt->pi, pkt->data);
 
     return 0;
   }
 
   auto &qkm = quic_keying_materials_->keying_materials.front();
 
-  std::array<uint8_t, SHRPX_QUIC_DECRYPTED_DCIDLEN> decrypted_dcid;
+  ConnectionID decrypted_dcid;
 
-  if (decrypt_quic_connection_id(decrypted_dcid.data(),
-                                 vc.dcid + SHRPX_QUIC_CID_PREFIX_OFFSET,
-                                 qkm.cid_encryption_key.data()) != 0) {
+  if (decrypt_quic_connection_id(decrypted_dcid,
+                                 vc.dcid + SHRPX_QUIC_CID_WORKER_ID_OFFSET,
+                                 qkm.cid_decryption_ctx) != 0) {
     return -1;
   }
 
-  for (auto &worker : workers_) {
-    if (!std::equal(std::begin(decrypted_dcid),
-                    std::begin(decrypted_dcid) + SHRPX_QUIC_CID_PREFIXLEN,
-                    worker->get_cid_prefix())) {
-      continue;
+  auto worker = find_worker(decrypted_dcid.worker);
+  if (worker == nullptr) {
+    if (LOG_ENABLED(INFO)) {
+      LOG(INFO) << "No worker to match Worker ID";
     }
-
-    WorkerEvent wev{
-        .type = WorkerEventType::QUIC_PKT_FORWARD,
-        .quic_pkt = std::move(pkt),
-    };
-    worker->send(std::move(wev));
 
     return 0;
   }
 
-  if (LOG_ENABLED(INFO)) {
-    LOG(INFO) << "No worker to match CID prefix";
-  }
+  WorkerEvent wev{
+      .type = WorkerEventType::QUIC_PKT_FORWARD,
+      .quic_pkt = std::move(pkt),
+  };
+
+  worker->send(std::move(wev));
 
   return 0;
 }

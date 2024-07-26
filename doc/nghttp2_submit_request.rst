@@ -10,10 +10,14 @@ Synopsis
 .. function:: int32_t nghttp2_submit_request( nghttp2_session *session, const nghttp2_priority_spec *pri_spec, const nghttp2_nv *nva, size_t nvlen, const nghttp2_data_provider *data_prd, void *stream_user_data)
 
     
+    .. warning::
+    
+      Deprecated.  Use `nghttp2_submit_request2()` instead.
+    
     Submits HEADERS frame and optionally one or more DATA frames.
     
-    The *pri_spec* is priority specification of this request.  ``NULL``
-    means the default priority (see
+    The *pri_spec* is a deprecated priority specification of this
+    request.  ``NULL`` means the default priority (see
     `nghttp2_priority_spec_default_init()`).  To specify the priority,
     use `nghttp2_priority_spec_init()`.  If *pri_spec* is not ``NULL``,
     this function will copy its data members.
@@ -26,7 +30,7 @@ Synopsis
     :macro:`NGHTTP2_MAX_WEIGHT`.
     
     If
-    :macro:`nghttp2_settings_id.NGHTTP2_SETTINGS_NO_RFC7540_PRIORITIES`
+    :enum:`nghttp2_settings_id.NGHTTP2_SETTINGS_NO_RFC7540_PRIORITIES`
     of value of 1 is received by a remote endpoint, *pri_spec* is
     ignored, and treated as if ``NULL`` is specified.
     
@@ -39,10 +43,10 @@ Synopsis
     This function creates copies of all name/value pairs in *nva*.  It
     also lower-cases all names in *nva*.  The order of elements in
     *nva* is preserved.  For header fields with
-    :macro:`nghttp2_nv_flag.NGHTTP2_NV_FLAG_NO_COPY_NAME` and
-    :macro:`nghttp2_nv_flag.NGHTTP2_NV_FLAG_NO_COPY_VALUE` are set,
+    :enum:`nghttp2_nv_flag.NGHTTP2_NV_FLAG_NO_COPY_NAME` and
+    :enum:`nghttp2_nv_flag.NGHTTP2_NV_FLAG_NO_COPY_VALUE` are set,
     header field name and value are not copied respectively.  With
-    :macro:`nghttp2_nv_flag.NGHTTP2_NV_FLAG_NO_COPY_NAME`, application
+    :enum:`nghttp2_nv_flag.NGHTTP2_NV_FLAG_NO_COPY_NAME`, application
     is responsible to pass header field name in lowercase.  The
     application should maintain the references to them until
     :type:`nghttp2_on_frame_send_callback` or
@@ -66,15 +70,15 @@ Synopsis
     This function returns assigned stream ID if it succeeds, or one of
     the following negative error codes:
     
-    :macro:`nghttp2_error.NGHTTP2_ERR_NOMEM`
+    :enum:`nghttp2_error.NGHTTP2_ERR_NOMEM`
         Out of memory.
-    :macro:`nghttp2_error.NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE`
+    :enum:`nghttp2_error.NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE`
         No stream ID is available because maximum stream ID was
         reached.
-    :macro:`nghttp2_error.NGHTTP2_ERR_INVALID_ARGUMENT`
+    :enum:`nghttp2_error.NGHTTP2_ERR_INVALID_ARGUMENT`
         Trying to depend on itself (new stream ID equals
         ``pri_spec->stream_id``).
-    :macro:`nghttp2_error.NGHTTP2_ERR_PROTO`
+    :enum:`nghttp2_error.NGHTTP2_ERR_PROTO`
         The *session* is server session.
     
     .. warning::

@@ -10,6 +10,10 @@ Synopsis
 .. function:: ssize_t nghttp2_session_mem_send(nghttp2_session *session, const uint8_t **data_ptr)
 
     
+    .. warning::
+    
+      Deprecated.  Use `nghttp2_session_mem_send2()` instead.
+    
     Returns the serialized data to send.
     
     This function behaves like `nghttp2_session_send()` except that it
@@ -34,7 +38,7 @@ Synopsis
     *\*data_ptr* if it succeeds, or one of the following negative error
     codes:
     
-    :macro:`nghttp2_error.NGHTTP2_ERR_NOMEM`
+    :enum:`nghttp2_error.NGHTTP2_ERR_NOMEM`
         Out of memory.
     
     .. note::

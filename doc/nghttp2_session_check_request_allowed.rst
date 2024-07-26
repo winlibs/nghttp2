@@ -17,7 +17,8 @@ Synopsis
     reasons are: session is server; stream ID has been spent; GOAWAY
     has been sent or received.
     
-    The application can call `nghttp2_submit_request()` without
-    consulting this function.  In that case, `nghttp2_submit_request()`
-    may return error.  Or, request is failed to sent, and
-    :type:`nghttp2_on_stream_close_callback` is called.
+    The application can call `nghttp2_submit_request2()` without
+    consulting this function.  In that case,
+    `nghttp2_submit_request2()` may return error.  Or, request is
+    failed to sent, and :type:`nghttp2_on_stream_close_callback` is
+    called.

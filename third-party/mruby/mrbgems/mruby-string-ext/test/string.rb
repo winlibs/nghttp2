@@ -1,4 +1,3 @@
-# coding: utf-8
 ##
 # String(Ext) Test
 
@@ -712,4 +711,29 @@ assert('String#delete_suffix') do
   assert_equal "hello", "hello".delete_suffix("he")
   assert_equal "he", "hello".delete_suffix!("llo")
   assert_nil "hello".delete_suffix!("he")
+end
+
+assert('String#+@') do
+  a = +"abc"
+  assert_false(a.frozen?)
+  a = +(a.freeze)
+  assert_false(a.frozen?)
+end
+
+assert('String#-@') do
+  a = -"abc"
+  assert_true(a.frozen?)
+  a = -(a.freeze)
+  assert_true(a.frozen?)
+end
+
+assert('String#valid_encoding?') do
+  assert_true "hello".valid_encoding?
+  if UTF8STRING
+    assert_true "あ".valid_encoding?
+    assert_false "\xfe".valid_encoding?
+    assert_false "あ\xfe".valid_encoding?
+  else
+    assert_true "\xfe".valid_encoding?
+  end
 end

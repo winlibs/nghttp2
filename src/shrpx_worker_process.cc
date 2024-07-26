@@ -74,11 +74,11 @@ void drop_privileges(
   if (getuid() == 0 && config->uid != 0) {
 #ifdef HAVE_NEVERBLEED
     if (nb) {
-      neverbleed_setuidgid(nb, config->user.c_str(), 1);
+      neverbleed_setuidgid(nb, config->user.data(), 1);
     }
 #endif // HAVE_NEVERBLEED
 
-    if (initgroups(config->user.c_str(), config->gid) != 0) {
+    if (initgroups(config->user.data(), config->gid) != 0) {
       auto error = errno;
       LOG(FATAL) << "Could not change supplementary groups: "
                  << xsi_strerror(error, errbuf.data(), errbuf.size());
@@ -576,18 +576,36 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
   }
 
   for (auto &qkm : qkms->keying_materials) {
-    if (generate_quic_connection_id_encryption_key(
-            qkm.cid_encryption_key.data(), qkm.cid_encryption_key.size(),
-            qkm.secret.data(), qkm.secret.size(), qkm.salt.data(),
-            qkm.salt.size()) != 0) {
+    if (generate_quic_connection_id_encryption_key(qkm.cid_encryption_key,
+                                                   qkm.secret, qkm.salt) != 0) {
       LOG(ERROR) << "Failed to generate QUIC Connection ID encryption key";
       return -1;
     }
+
+    qkm.cid_encryption_ctx = EVP_CIPHER_CTX_new();
+    if (!EVP_EncryptInit_ex(qkm.cid_encryption_ctx, EVP_aes_128_ecb(), nullptr,
+                            qkm.cid_encryption_key.data(), nullptr)) {
+      LOG(ERROR)
+          << "Failed to initialize QUIC Connection ID encryption context";
+      return -1;
+    }
+
+    EVP_CIPHER_CTX_set_padding(qkm.cid_encryption_ctx, 0);
+
+    qkm.cid_decryption_ctx = EVP_CIPHER_CTX_new();
+    if (!EVP_DecryptInit_ex(qkm.cid_decryption_ctx, EVP_aes_128_ecb(), nullptr,
+                            qkm.cid_encryption_key.data(), nullptr)) {
+      LOG(ERROR)
+          << "Failed to initialize QUIC Connection ID decryption context";
+      return -1;
+    }
+
+    EVP_CIPHER_CTX_set_padding(qkm.cid_decryption_ctx, 0);
   }
 
   conn_handler->set_quic_keying_materials(std::move(qkms));
 
-  conn_handler->set_cid_prefixes(wpconf->cid_prefixes);
+  conn_handler->set_worker_ids(wpconf->worker_ids);
   conn_handler->set_quic_lingering_worker_processes(
       wpconf->quic_lingering_worker_processes);
 #endif // ENABLE_HTTP3

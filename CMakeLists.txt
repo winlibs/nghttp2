@@ -22,15 +22,15 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.14)
 # XXX using 1.8.90 instead of 1.9.0-DEV
-project(nghttp2 VERSION 1.59.0)
+project(nghttp2 VERSION 1.62.1)
 
 # See versioning rule:
 #  https://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
-set(LT_CURRENT  40)
-set(LT_REVISION 0)
-set(LT_AGE      26)
+set(LT_CURRENT  42)
+set(LT_REVISION 1)
+set(LT_AGE      28)
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 include(Version)
@@ -51,6 +51,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 include(GNUInstallDirs)
+include(CMakeDependentOption)
 
 # For documentation
 find_package(Python3 COMPONENTS Interpreter)
@@ -60,6 +61,8 @@ if(NOT ENABLE_LIB_ONLY)
   find_package(Libev 4.11)
   find_package(Libcares 1.7.5)
   find_package(ZLIB 1.2.3)
+  find_package(Libbrotlienc 1.0.9)
+  find_package(Libbrotlidec 1.0.9)
 endif()
 
 find_package(OpenSSL 1.1.1)
@@ -121,7 +124,7 @@ else()
 endif()
 
 include(ExtractValidFlags)
-foreach(_cxx1x_flag -std=c++14)
+foreach(_cxx1x_flag -std=c++20)
   extract_valid_cxx_flags(_cxx1x_flag_supported ${_cxx1x_flag})
   if(_cxx1x_flag_supported)
     set(CXX1XCXXFLAGS ${_cxx1x_flag})
@@ -165,12 +168,8 @@ endif()
 # XXX shouldn't ${CMAKE_DL_LIBS} be appended to OPENSSL_LIBRARIES instead of
 # APP_LIBRARIES if it is really specific to OpenSSL?
 
-find_package(CUnit 2.1)
 enable_testing()
-set(HAVE_CUNIT      ${CUNIT_FOUND})
-if(HAVE_CUNIT)
-  add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND})
-endif()
+add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND})
 
 # openssl (for src)
 include(CheckSymbolExists)
@@ -183,9 +182,11 @@ if(OPENSSL_FOUND)
   if(WIN32)
     set(CMAKE_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES}" "ws2_32" "bcrypt")
   endif()
-  check_symbol_exists(SSL_provide_quic_data "openssl/ssl.h" HAVE_SSL_PROVIDE_QUIC_DATA)
-  if(NOT HAVE_SSL_PROVIDE_QUIC_DATA)
-    message(WARNING "OpenSSL in ${OPENSSL_LIBRARIES} does not have SSL_provide_quic_data.  HTTP/3 support cannot be enabled")
+  if(ENABLE_HTTP3)
+    check_symbol_exists(SSL_provide_quic_data "openssl/ssl.h" HAVE_SSL_PROVIDE_QUIC_DATA)
+    if(NOT HAVE_SSL_PROVIDE_QUIC_DATA)
+        message(WARNING "OpenSSL in ${OPENSSL_LIBRARIES} does not have SSL_provide_quic_data.  HTTP/3 support cannot be enabled")
+    endif()
   endif()
   cmake_pop_check_state()
 else()
@@ -221,6 +222,13 @@ else()
 endif()
 # jemalloc
 set(HAVE_JEMALLOC   ${JEMALLOC_FOUND})
+
+# libbrotli (for src)
+set(HAVE_LIBBROTLIENC ${LIBBROTLIENC_FOUND})
+set(HAVE_LIBBROTLIDEC ${LIBBROTLIDEC_FOUND})
+if(LIBBROTLIENC_FOUND AND LIBBROTLIDEC_FOUND)
+  set(HAVE_LIBBROTLI 1)
+endif()
 
 # libbpf (for bpf)
 set(HAVE_LIBBPF ${LIBBPF_FOUND})
@@ -427,9 +435,11 @@ add_subdirectory(lib)
 add_subdirectory(third-party)
 add_subdirectory(src)
 add_subdirectory(examples)
-add_subdirectory(tests)
-#add_subdirectory(tests/testdata)
-add_subdirectory(integration-tests)
+if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
+  add_subdirectory(tests)
+  #add_subdirectory(tests/testdata)
+  add_subdirectory(integration-tests)
+endif()
 if(ENABLE_DOC)
   add_subdirectory(doc)
 endif()
@@ -458,8 +468,8 @@ message(STATUS "summary of build options:
       Python:          ${Python3_EXECUTABLE}
       Python3_VERSION: ${Python3_VERSION}
     Test:
-      CUnit:          ${HAVE_CUNIT} (LIBS='${CUNIT_LIBRARIES}')
       Failmalloc:     ${ENABLE_FAILMALLOC}
+      Build Test:     ${BUILD_TESTING}
     Libs:
       OpenSSL:        ${HAVE_OPENSSL} (LIBS='${OPENSSL_LIBRARIES}')
       Libxml2:        ${HAVE_LIBXML2} (LIBS='${LIBXML2_LIBRARIES}')
@@ -474,6 +484,8 @@ message(STATUS "summary of build options:
       Jemalloc:       ${HAVE_JEMALLOC} (LIBS='${JEMALLOC_LIBRARIES}')
       Zlib:           ${HAVE_ZLIB} (LIBS='${ZLIB_LIBRARIES}')
       Systemd:        ${HAVE_SYSTEMD} (LIBS='${SYSTEMD_LIBRARIES}')
+      Libbrotlienc:   ${HAVE_LIBBROTLIENC} (LIBS='${LIBBROTLIENC_LIBRARIES}')
+      Libbrotlidec:   ${HAVE_LIBBROTLIDEC} (LIBS='${LIBBROTLIDEC_LIBRARIES}')
     Third-party:
       http-parser:    ${ENABLE_THIRD_PARTY}
       MRuby:          ${HAVE_MRUBY}

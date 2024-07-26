@@ -27,94 +27,116 @@
 #include <cstring>
 #include <iostream>
 
-#include <CUnit/CUnit.h>
+#include "munitxx.h"
 
 #include <nghttp2/nghttp2.h>
 
 #include "base64.h"
 
+using namespace std::literals;
+
 namespace nghttp2 {
+
+namespace {
+const MunitTest tests[]{
+    munit_void_test(test_base64_encode),
+    munit_void_test(test_base64_decode),
+    munit_test_end(),
+};
+} // namespace
+
+const MunitSuite base64_suite{
+    "/base64", tests, NULL, 1, MUNIT_SUITE_OPTION_NONE,
+};
 
 void test_base64_encode(void) {
   {
     std::string in = "\xff";
     auto out = base64::encode(std::begin(in), std::end(in));
-    CU_ASSERT("/w==" == out);
+    assert_stdstring_equal("/w==", out);
   }
   {
     std::string in = "\xff\xfe";
     auto out = base64::encode(std::begin(in), std::end(in));
-    CU_ASSERT("//4=" == out);
+    assert_stdstring_equal("//4=", out);
   }
   {
     std::string in = "\xff\xfe\xfd";
     auto out = base64::encode(std::begin(in), std::end(in));
-    CU_ASSERT("//79" == out);
+    assert_stdstring_equal("//79", out);
   }
   {
     std::string in = "\xff\xfe\xfd\xfc";
     auto out = base64::encode(std::begin(in), std::end(in));
-    CU_ASSERT("//79/A==" == out);
+    assert_stdstring_equal("//79/A==", out);
   }
 }
 
 void test_base64_decode(void) {
   BlockAllocator balloc(4096, 4096);
   {
-    std::string in = "/w==";
+    auto in = "/w=="sv;
     auto out = base64::decode(std::begin(in), std::end(in));
-    CU_ASSERT("\xff" == out);
-    CU_ASSERT("\xff" == base64::decode(balloc, std::begin(in), std::end(in)));
+    assert_stdsv_equal("\xff"sv, out);
+    assert_stdsv_equal("\xff"sv, StringRef{base64::decode(
+                                     balloc, std::begin(in), std::end(in))});
   }
   {
-    std::string in = "//4=";
+    auto in = "//4="sv;
     auto out = base64::decode(std::begin(in), std::end(in));
-    CU_ASSERT("\xff\xfe" == out);
-    CU_ASSERT("\xff\xfe" ==
-              base64::decode(balloc, std::begin(in), std::end(in)));
+    assert_stdsv_equal("\xff\xfe"sv, out);
+    assert_stdsv_equal(
+        "\xff\xfe"sv,
+        StringRef{base64::decode(balloc, std::begin(in), std::end(in))});
   }
   {
-    std::string in = "//79";
+    auto in = "//79"sv;
     auto out = base64::decode(std::begin(in), std::end(in));
-    CU_ASSERT("\xff\xfe\xfd" == out);
-    CU_ASSERT("\xff\xfe\xfd" ==
-              base64::decode(balloc, std::begin(in), std::end(in)));
+    assert_stdsv_equal("\xff\xfe\xfd"sv, out);
+    assert_stdsv_equal(
+        "\xff\xfe\xfd"sv,
+        StringRef{base64::decode(balloc, std::begin(in), std::end(in))});
   }
   {
-    std::string in = "//79/A==";
+    auto in = "//79/A=="sv;
     auto out = base64::decode(std::begin(in), std::end(in));
-    CU_ASSERT("\xff\xfe\xfd\xfc" == out);
-    CU_ASSERT("\xff\xfe\xfd\xfc" ==
-              base64::decode(balloc, std::begin(in), std::end(in)));
+    assert_stdsv_equal("\xff\xfe\xfd\xfc"sv, out);
+    assert_stdsv_equal(
+        "\xff\xfe\xfd\xfc"sv,
+        StringRef{base64::decode(balloc, std::begin(in), std::end(in))});
   }
   {
     // we check the number of valid input must be multiples of 4
-    std::string in = "//79=";
+    auto in = "//79="sv;
     auto out = base64::decode(std::begin(in), std::end(in));
-    CU_ASSERT("" == out);
-    CU_ASSERT("" == base64::decode(balloc, std::begin(in), std::end(in)));
+    assert_stdsv_equal(""sv, out);
+    assert_stdsv_equal(
+        ""sv, StringRef{base64::decode(balloc, std::begin(in), std::end(in))});
   }
   {
     // ending invalid character at the boundary of multiples of 4 is
     // bad
-    std::string in = "bmdodHRw\n";
+    auto in = "bmdodHRw\n"sv;
     auto out = base64::decode(std::begin(in), std::end(in));
-    CU_ASSERT("" == out);
-    CU_ASSERT("" == base64::decode(balloc, std::begin(in), std::end(in)));
+    assert_stdsv_equal("", out);
+    assert_stdsv_equal(
+        ""sv, StringRef{base64::decode(balloc, std::begin(in), std::end(in))});
   }
   {
     // after seeing '=', subsequent input must be also '='.
-    std::string in = "//79/A=A";
+    auto in = "//79/A=A"sv;
     auto out = base64::decode(std::begin(in), std::end(in));
-    CU_ASSERT("" == out);
-    CU_ASSERT("" == base64::decode(balloc, std::begin(in), std::end(in)));
+    assert_stdsv_equal(""sv, out);
+    assert_stdsv_equal(
+        ""sv, StringRef{base64::decode(balloc, std::begin(in), std::end(in))});
   }
   {
     // additional '=' at the end is bad
-    std::string in = "//79/A======";
+    auto in = "//79/A======"sv;
     auto out = base64::decode(std::begin(in), std::end(in));
-    CU_ASSERT("" == out);
-    CU_ASSERT("" == base64::decode(balloc, std::begin(in), std::end(in)));
+    assert_stdsv_equal(""sv, out);
+    assert_stdsv_equal(
+        ""sv, StringRef{base64::decode(balloc, std::begin(in), std::end(in))});
   }
 }
 

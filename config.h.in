@@ -15,20 +15,9 @@
 /* Define to 1 if you have the <arpa/inet.h> header file. */
 #undef HAVE_ARPA_INET_H
 
-/* Define to 1 if you have the std::atomic_* overloads for std::shared_ptr. */
+/* Define to 1 if you have the std::atomic<std::shared_ptr<T>> is supported.
+   */
 #undef HAVE_ATOMIC_STD_SHARED_PTR
-
-/* define if the Boost library is available */
-#undef HAVE_BOOST
-
-/* define if the Boost::ASIO library is available */
-#undef HAVE_BOOST_ASIO
-
-/* define if the Boost::System library is available */
-#undef HAVE_BOOST_SYSTEM
-
-/* define if the Boost::Thread library is available */
-#undef HAVE_BOOST_THREAD
 
 /* Define to 1 if you have enum bpf_stats_type in linux/bpf.h. */
 #undef HAVE_BPF_STATS_TYPE
@@ -36,8 +25,15 @@
 /* Define to 1 if your system has a working `chown' function. */
 #undef HAVE_CHOWN
 
-/* define if the compiler supports basic C++14 syntax */
-#undef HAVE_CXX14
+/* Define to 1 if you have the `clock_gettime' function. */
+#undef HAVE_CLOCK_GETTIME
+
+/* define if the compiler supports basic C++20 syntax */
+#undef HAVE_CXX20
+
+/* Define to 1 if you have the declaration of `CLOCK_MONOTONIC', and to 0 if
+   you don't. */
+#undef HAVE_DECL_CLOCK_MONOTONIC
 
 /* Define to 1 if you have the declaration of `initgroups', and to 0 if you
    don't. */
@@ -65,6 +61,9 @@
 /* Define to 1 if you have the `getpwnam' function. */
 #undef HAVE_GETPWNAM
 
+/* Define to 1 if you have `GetTickCount64` function. */
+#undef HAVE_GETTICKCOUNT64
+
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
 
@@ -74,11 +73,17 @@
 /* Define to 1 if you have `libbpf` library. */
 #undef HAVE_LIBBPF
 
+/* Define to 1 if you have `libbrotlienc` and `libbrotlidec` libraries. */
+#undef HAVE_LIBBROTLI
+
+/* Define to 1 if you have `libev` library. */
+#undef HAVE_LIBEV
+
 /* Define to 1 if you have `libngtcp2_crypto_boringssl` library. */
 #undef HAVE_LIBNGTCP2_CRYPTO_BORINGSSL
 
-/* Define to 1 if you have `libngtcp2_crypto_openssl` library. */
-#undef HAVE_LIBNGTCP2_CRYPTO_OPENSSL
+/* Define to 1 if you have `libngtcp2_crypto_quictls` library. */
+#undef HAVE_LIBNGTCP2_CRYPTO_QUICTLS
 
 /* Define to 1 if you have `libsystemd` library. */
 #undef HAVE_LIBSYSTEMD
@@ -116,6 +121,9 @@
 /* Define to 1 if you have the <netinet/in.h> header file. */
 #undef HAVE_NETINET_IN_H
 
+/* Define to 1 if you have the <netinet/ip.h> header file. */
+#undef HAVE_NETINET_IP_H
+
 /* Define to 1 if you have `neverbleed` library. */
 #undef HAVE_NEVERBLEED
 
@@ -124,9 +132,6 @@
 
 /* Define to 1 if you have the <pwd.h> header file. */
 #undef HAVE_PWD_H
-
-/* If available, contains the Python version number currently in use. */
-#undef HAVE_PYTHON
 
 /* Define to 1 if struct sockaddr_in6 has sin6_len member. */
 #undef HAVE_SOCKADDR_IN6_SIN6_LEN
@@ -212,9 +217,6 @@
 /* Define to 1 if you have the `timegm' function. */
 #undef HAVE_TIMEGM
 
-/* Define to 1 if you have the <time.h> header file. */
-#undef HAVE_TIME_H
-
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
 
@@ -226,6 +228,9 @@
 
 /* Define to 1 if you have the <wchar.h> header file. */
 #undef HAVE_WCHAR_H
+
+/* Define to 1 if you have the <windows.h> header file. */
+#undef HAVE_WINDOWS_H
 
 /* Define to 1 if `fork' works. */
 #undef HAVE_WORKING_FORK
@@ -268,12 +273,6 @@
 
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
-
-/* The size of `int *', as computed by sizeof. */
-#undef SIZEOF_INT_P
-
-/* The size of `time_t', as computed by sizeof. */
-#undef SIZEOF_TIME_T
 
 /* Define to 1 if all of the C90 standard headers exist (not just the ones
    required in a freestanding environment). This macro is provided for
