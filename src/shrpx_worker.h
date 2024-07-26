@@ -265,12 +265,12 @@ struct WorkerStat {
 struct QUICPacket {
   QUICPacket(size_t upstream_addr_index, const Address &remote_addr,
              const Address &local_addr, const ngtcp2_pkt_info &pi,
-             const uint8_t *data, size_t datalen)
+             std::span<const uint8_t> data)
       : upstream_addr_index{upstream_addr_index},
         remote_addr{remote_addr},
         local_addr{local_addr},
         pi{pi},
-        data{data, data + datalen} {}
+        data{std::begin(data), std::end(data)} {}
   QUICPacket() : upstream_addr_index{}, remote_addr{}, local_addr{}, pi{} {}
   size_t upstream_addr_index;
   Address remote_addr;
@@ -312,7 +312,7 @@ public:
          tls::CertLookupTree *cert_tree,
 #ifdef ENABLE_HTTP3
          SSL_CTX *quic_sv_ssl_ctx, tls::CertLookupTree *quic_cert_tree,
-         const uint8_t *cid_prefix, size_t cid_prefixlen,
+         WorkerID wid,
 #  ifdef HAVE_LIBBPF
          size_t index,
 #  endif // HAVE_LIBBPF
@@ -377,7 +377,7 @@ public:
 
   int setup_quic_server_socket();
 
-  const uint8_t *get_cid_prefix() const;
+  const WorkerID &get_worker_id() const;
 
 #  ifdef HAVE_LIBBPF
   bool should_attach_bpf() const;
@@ -414,7 +414,7 @@ private:
   DNSTracker dns_tracker_;
 
 #ifdef ENABLE_HTTP3
-  std::array<uint8_t, SHRPX_QUIC_CID_PREFIXLEN> cid_prefix_;
+  WorkerID worker_id_;
   std::vector<UpstreamAddr> quic_upstream_addrs_;
   std::vector<std::unique_ptr<QUICListener>> quic_listeners_;
 #endif // ENABLE_HTTP3
@@ -439,10 +439,12 @@ private:
   QUICConnectionHandler quic_conn_handler_;
 #endif // ENABLE_HTTP3
 
-#ifndef HAVE_ATOMIC_STD_SHARED_PTR
+#ifdef HAVE_ATOMIC_STD_SHARED_PTR
+  std::atomic<std::shared_ptr<TicketKeys>> ticket_keys_;
+#else  // !HAVE_ATOMIC_STD_SHARED_PTR
   std::mutex ticket_keys_m_;
-#endif // !HAVE_ATOMIC_STD_SHARED_PTR
   std::shared_ptr<TicketKeys> ticket_keys_;
+#endif // !HAVE_ATOMIC_STD_SHARED_PTR
   std::vector<std::shared_ptr<DownstreamAddrGroup>> downstream_addr_groups_;
   // Worker level blocker for downstream connection.  For example,
   // this is used when file descriptor is exhausted.
@@ -467,13 +469,6 @@ size_t match_downstream_addr_group(
 // the actual address used to connect to backend, and it could be
 // nullptr.  This function may schedule live check.
 void downstream_failure(DownstreamAddr *addr, const Address *raddr);
-
-#ifdef ENABLE_HTTP3
-// Creates unpredictable SHRPX_QUIC_CID_PREFIXLEN bytes sequence which
-// is used as a prefix of QUIC Connection ID.  This function returns
-// -1 on failure.  |server_id| must be 2 bytes long.
-int create_cid_prefix(uint8_t *cid_prefix, const uint8_t *server_id);
-#endif // ENABLE_HTTP3
 
 } // namespace shrpx
 

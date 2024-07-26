@@ -10,10 +10,6 @@ Synopsis
 .. function:: int nghttp2_session_upgrade(nghttp2_session *session, const uint8_t *settings_payload, size_t settings_payloadlen, void *stream_user_data)
 
     
-    Performs post-process of HTTP Upgrade request.  This function can
-    be called from both client and server, but the behavior is very
-    different in each other.
-    
     .. warning::
     
       This function is deprecated in favor of
@@ -24,6 +20,10 @@ Synopsis
       header field (see `nghttp2_option_set_no_http_messaging()`).  If
       HEAD is used in request, the length of response body must be 0
       regardless of value included in content-length header field.
+    
+    Performs post-process of HTTP Upgrade request.  This function can
+    be called from both client and server, but the behavior is very
+    different in each other.
     
     If called from client side, the *settings_payload* must be the
     value sent in ``HTTP2-Settings`` header field and must be decoded
@@ -47,9 +47,9 @@ Synopsis
     This function returns 0 if it succeeds, or one of the following
     negative error codes:
     
-    :macro:`nghttp2_error.NGHTTP2_ERR_NOMEM`
+    :enum:`nghttp2_error.NGHTTP2_ERR_NOMEM`
         Out of memory.
-    :macro:`nghttp2_error.NGHTTP2_ERR_INVALID_ARGUMENT`
+    :enum:`nghttp2_error.NGHTTP2_ERR_INVALID_ARGUMENT`
         The *settings_payload* is badly formed.
-    :macro:`nghttp2_error.NGHTTP2_ERR_PROTO`
+    :enum:`nghttp2_error.NGHTTP2_ERR_PROTO`
         The stream ID 1 is already used or closed; or is not available.

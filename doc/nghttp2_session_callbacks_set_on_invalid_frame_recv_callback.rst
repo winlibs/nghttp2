@@ -11,5 +11,5 @@ Synopsis
 
     
     Sets callback function invoked by `nghttp2_session_recv()` and
-    `nghttp2_session_mem_recv()` when an invalid non-DATA frame is
+    `nghttp2_session_mem_recv2()` when an invalid non-DATA frame is
     received.

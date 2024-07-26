@@ -144,19 +144,19 @@ RProc *compile(mrb_state *mrb, const StringRef &filename) {
     return nullptr;
   }
 
-  auto infile = fopen(filename.c_str(), "rb");
+  auto infile = fopen(filename.data(), "rb");
   if (infile == nullptr) {
     LOG(ERROR) << "Could not open mruby file " << filename;
     return nullptr;
   }
   auto infile_d = defer(fclose, infile);
 
-  auto mrbc = mrbc_context_new(mrb);
+  auto mrbc = mrb_ccontext_new(mrb);
   if (mrbc == nullptr) {
     LOG(ERROR) << "mrb_context_new failed";
     return nullptr;
   }
-  auto mrbc_d = defer(mrbc_context_free, mrb, mrbc);
+  auto mrbc_d = defer(mrb_ccontext_free, mrb, mrbc);
 
   auto parser = mrb_parse_file(mrb, infile, nullptr);
   if (parser == nullptr) {

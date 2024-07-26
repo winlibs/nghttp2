@@ -36,7 +36,7 @@
 #       # foo: two
 #       # foo: three
 #
-# This allows you to chain Enumerators together.  For example, you
+# This allows you to chain Enumerators together. For example, you
 # can map a list's elements to strings containing the index
 # and the element as a string via:
 #
@@ -112,7 +112,7 @@ class Enumerator
   # given object using the given method with the given arguments passed. This
   # form is left only for internal use.
   #
-  # Use of this form is discouraged.  Use Kernel#enum_for or Kernel#to_enum
+  # Use of this form is discouraged. Use Kernel#enum_for or Kernel#to_enum
   # instead.
   def initialize(obj=NONE, meth=:each, *args, **kwd, &block)
     if block
@@ -132,16 +132,20 @@ class Enumerator
     @stop_exc = false
   end
 
-  attr_accessor :obj, :meth, :args, :kwd
-  attr_reader :fib
-
   def initialize_copy(obj)
     raise TypeError, "can't copy type #{obj.class}" unless obj.kind_of? Enumerator
-    raise TypeError, "can't copy execution context" if obj.fib
-    @obj = obj.obj
-    @meth = obj.meth
-    @args = obj.args
-    @kwd = obj.kwd
+    raise TypeError, "can't copy execution context" if obj.instance_eval{@fib}
+    meth = args = kwd = fib = nil
+    obj.instance_eval {
+      obj = @obj
+      meth = @meth
+      args = @args
+      kwd = @kwd
+    }
+    @obj = obj
+    @meth = meth
+    @args = args
+    @kwd = kwd
     @fib = nil
     @lookahead = nil
     @feedvalue = nil
@@ -154,7 +158,7 @@ class Enumerator
   #   e.with_index(offset = 0)
   #
   # Iterates the given block for each element with an index, which
-  # starts from +offset+.  If no block is given, returns a new Enumerator
+  # starts from +offset+. If no block is given, returns a new Enumerator
   # that includes the index, starting from +offset+
   #
   # +offset+:: the starting index to use
@@ -169,7 +173,7 @@ class Enumerator
     end
 
     n = offset - 1
-    enumerator_block_call do |*i|
+    __enumerator_block_call do |*i|
       n += 1
       block.call i.__svalue, n
     end
@@ -219,7 +223,7 @@ class Enumerator
   def with_object(object, &block)
     return to_enum(:with_object, object) unless block
 
-    enumerator_block_call do |i|
+    __enumerator_block_call do |i|
       block.call [i,object]
     end
     object
@@ -231,6 +235,14 @@ class Enumerator
       "#<#{self.class}: #{@obj.inspect}:#{@meth}(#{args})>"
     else
       "#<#{self.class}: #{@obj.inspect}:#{@meth}>"
+    end
+  end
+
+  def size
+    if @size
+      @size
+    elsif @obj.respond_to?(:size)
+      @obj.size
     end
   end
 
@@ -274,30 +286,30 @@ class Enumerator
     obj = self
     if 0 < argv.length
       obj = self.dup
-      args = obj.args
+      args = obj.instance_eval{@args}
       if !args.empty?
         args = args.dup
         args.concat argv
       else
         args = argv.dup
       end
-      obj.args = args
+      obj.instance_eval{@args = args}
     end
     return obj unless block
-    enumerator_block_call(&block)
+    __enumerator_block_call(&block)
   end
 
-  def enumerator_block_call(&block)
+  def __enumerator_block_call(&block)
     @obj.__send__ @meth, *@args, **@kwd, &block
   end
-  private :enumerator_block_call
+  private :__enumerator_block_call
 
   ##
   # call-seq:
   #   e.next   -> object
   #
   # Returns the next object in the enumerator, and move the internal position
-  # forward.  When the position reached at the end, StopIteration is raised.
+  # forward. When the position reached at the end, StopIteration is raised.
   #
   # === Example
   #
@@ -321,7 +333,7 @@ class Enumerator
   #   e.next_values   -> array
   #
   # Returns the next object as an array in the enumerator, and move the
-  # internal position forward.  When the position reached at the end,
+  # internal position forward. When the position reached at the end,
   # StopIteration is raised.
   #
   # This method can be used to distinguish <code>yield</code> and <code>yield
@@ -405,7 +417,7 @@ class Enumerator
   #   e.peek   -> object
   #
   # Returns the next object in the enumerator, but doesn't move the internal
-  # position forward.  If the position is already at the end, StopIteration
+  # position forward. If the position is already at the end, StopIteration
   # is raised.
   #
   # === Example
@@ -429,7 +441,7 @@ class Enumerator
   #   e.peek_values   -> array
   #
   # Returns the next object as an array, similar to Enumerator#next_values, but
-  # doesn't move the internal position forward.  If the position is already at
+  # doesn't move the internal position forward. If the position is already at
   # the end, StopIteration is raised.
   #
   # === Example
@@ -564,7 +576,7 @@ class Enumerator
   #    Enumerator.produce(initial = nil) { |val| } -> enumerator
   #
   # Creates an infinite enumerator from any block, just called over and
-  # over.  Result of the previous iteration is passed to the next one.
+  # over. Result of the previous iteration is passed to the next one.
   # If +initial+ is provided, it is passed to the first iteration, and
   # becomes the first element of the enumerator; if it is not provided,
   # first iteration receives +nil+, and its result becomes first
@@ -574,7 +586,7 @@ class Enumerator
   #
   # Examples of usage:
   #
-  #   Enumerator.produce(1, &:succ)   # => enumerator of 1, 2, 3, 4, ....
+  #   Enumerator.produce(1, &:succ)   # => enumerator of 1, 2, 3, 4, ...
   #
   #   Enumerator.produce { rand(10) } # => infinite random number sequence
   #

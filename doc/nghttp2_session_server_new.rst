@@ -15,7 +15,7 @@ Synopsis
     does not store *callbacks*.  The *user_data* is an arbitrary user
     supplied data, which will be passed to the callback functions.
     
-    The :type:`nghttp2_send_callback` must be specified.  If the
+    The :type:`nghttp2_send_callback2` must be specified.  If the
     application code uses `nghttp2_session_recv()`, the
     :type:`nghttp2_recv_callback` must be specified.  The other members
     of *callbacks* can be ``NULL``.
@@ -25,5 +25,5 @@ Synopsis
     This function returns 0 if it succeeds, or one of the following
     negative error codes:
     
-    :macro:`nghttp2_error.NGHTTP2_ERR_NOMEM`
+    :enum:`nghttp2_error.NGHTTP2_ERR_NOMEM`
         Out of memory.

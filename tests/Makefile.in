@@ -103,20 +103,14 @@ POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
 target_triplet = @target@
-@HAVE_CUNIT_TRUE@check_PROGRAMS = main$(EXEEXT) $(am__EXEEXT_1)
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@am__append_1 = failmalloc
-@HAVE_CUNIT_TRUE@am__append_2 = @CUNIT_LIBS@ @TESTLDADD@
-@HAVE_CUNIT_TRUE@TESTS = main$(EXEEXT) $(am__EXEEXT_1)
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@am__append_3 = failmalloc
+check_PROGRAMS = main$(EXEEXT) $(am__EXEEXT_1)
+@ENABLE_FAILMALLOC_TRUE@am__append_1 = failmalloc
+TESTS = main$(EXEEXT) $(am__EXEEXT_1)
+@ENABLE_FAILMALLOC_TRUE@am__append_2 = failmalloc
 subdir = tests
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
-am__aclocal_m4_deps = $(top_srcdir)/m4/ax_boost_asio.m4 \
-	$(top_srcdir)/m4/ax_boost_base.m4 \
-	$(top_srcdir)/m4/ax_boost_system.m4 \
-	$(top_srcdir)/m4/ax_boost_thread.m4 \
-	$(top_srcdir)/m4/ax_check_compile_flag.m4 \
+am__aclocal_m4_deps = $(top_srcdir)/m4/ax_check_compile_flag.m4 \
 	$(top_srcdir)/m4/ax_cxx_compile_stdcxx.m4 \
-	$(top_srcdir)/m4/ax_python_devel.m4 \
 	$(top_srcdir)/m4/libtool.m4 $(top_srcdir)/m4/ltoptions.m4 \
 	$(top_srcdir)/m4/ltsugar.m4 $(top_srcdir)/m4/ltversion.m4 \
 	$(top_srcdir)/m4/lt~obsolete.m4 $(top_srcdir)/configure.ac
@@ -127,23 +121,24 @@ mkinstalldirs = $(install_sh) -d
 CONFIG_HEADER = $(top_builddir)/config.h
 CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@am__EXEEXT_1 =  \
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@	failmalloc$(EXEEXT)
+@ENABLE_FAILMALLOC_TRUE@am__EXEEXT_1 = failmalloc$(EXEEXT)
 am__failmalloc_SOURCES_DIST = failmalloc.c failmalloc_test.c \
 	failmalloc_test.h malloc_wrapper.c malloc_wrapper.h \
-	nghttp2_test_helper.c nghttp2_test_helper.h
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@am_failmalloc_OBJECTS =  \
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@	failmalloc.$(OBJEXT) \
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@	failmalloc_test.$(OBJEXT) \
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@	malloc_wrapper.$(OBJEXT) \
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@	nghttp2_test_helper.$(OBJEXT)
+	nghttp2_test_helper.c nghttp2_test_helper.h munit/munit.c \
+	munit/munit.h
+am__dirstamp = $(am__leading_dot)dirstamp
+@ENABLE_FAILMALLOC_TRUE@am_failmalloc_OBJECTS = failmalloc.$(OBJEXT) \
+@ENABLE_FAILMALLOC_TRUE@	failmalloc_test.$(OBJEXT) \
+@ENABLE_FAILMALLOC_TRUE@	malloc_wrapper.$(OBJEXT) \
+@ENABLE_FAILMALLOC_TRUE@	nghttp2_test_helper.$(OBJEXT) \
+@ENABLE_FAILMALLOC_TRUE@	munit/munit.$(OBJEXT)
 failmalloc_OBJECTS = $(am_failmalloc_OBJECTS)
-am__DEPENDENCIES_1 =
-@ENABLE_STATIC_FALSE@@HAVE_CUNIT_TRUE@am__DEPENDENCIES_2 = ${top_builddir}/lib/.libs/*.o \
-@ENABLE_STATIC_FALSE@@HAVE_CUNIT_TRUE@	$(am__DEPENDENCIES_1)
-@ENABLE_STATIC_TRUE@@HAVE_CUNIT_TRUE@am__DEPENDENCIES_2 = ${top_builddir}/lib/libnghttp2.la \
-@ENABLE_STATIC_TRUE@@HAVE_CUNIT_TRUE@	$(am__DEPENDENCIES_1)
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@failmalloc_DEPENDENCIES = $(am__DEPENDENCIES_2)
+@ENABLE_STATIC_FALSE@am__DEPENDENCIES_1 =  \
+@ENABLE_STATIC_FALSE@	${top_builddir}/lib/.libs/*.o
+@ENABLE_STATIC_TRUE@am__DEPENDENCIES_1 =  \
+@ENABLE_STATIC_TRUE@	${top_builddir}/lib/libnghttp2.la
+@ENABLE_FAILMALLOC_TRUE@failmalloc_DEPENDENCIES =  \
+@ENABLE_FAILMALLOC_TRUE@	$(am__DEPENDENCIES_1)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
 am__v_lt_0 = --silent
@@ -151,38 +146,21 @@ am__v_lt_1 =
 failmalloc_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) \
 	$(failmalloc_LDFLAGS) $(LDFLAGS) -o $@
-am__main_SOURCES_DIST = nghttp2_pq_test.h nghttp2_map_test.h \
-	nghttp2_queue_test.h nghttp2_session_test.h \
-	nghttp2_frame_test.h nghttp2_stream_test.h nghttp2_hd_test.h \
-	nghttp2_npn_test.h nghttp2_helper_test.h nghttp2_test_helper.h \
-	nghttp2_buf_test.h nghttp2_http_test.h nghttp2_extpri_test.h \
-	main.c nghttp2_pq_test.c nghttp2_map_test.c \
-	nghttp2_queue_test.c nghttp2_test_helper.c \
-	nghttp2_frame_test.c nghttp2_stream_test.c \
-	nghttp2_session_test.c nghttp2_hd_test.c nghttp2_npn_test.c \
-	nghttp2_helper_test.c nghttp2_buf_test.c nghttp2_http_test.c \
-	nghttp2_extpri_test.c
 am__objects_1 =
-@HAVE_CUNIT_TRUE@am__objects_2 = main.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_pq_test.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_map_test.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_queue_test.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_test_helper.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_frame_test.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_stream_test.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_session_test.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_hd_test.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_npn_test.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_helper_test.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_buf_test.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_http_test.$(OBJEXT) \
-@HAVE_CUNIT_TRUE@	nghttp2_extpri_test.$(OBJEXT)
-@HAVE_CUNIT_TRUE@am_main_OBJECTS = $(am__objects_1) $(am__objects_2)
+am__objects_2 = main.$(OBJEXT) nghttp2_pq_test.$(OBJEXT) \
+	nghttp2_map_test.$(OBJEXT) nghttp2_queue_test.$(OBJEXT) \
+	nghttp2_test_helper.$(OBJEXT) nghttp2_frame_test.$(OBJEXT) \
+	nghttp2_stream_test.$(OBJEXT) nghttp2_session_test.$(OBJEXT) \
+	nghttp2_hd_test.$(OBJEXT) nghttp2_alpn_test.$(OBJEXT) \
+	nghttp2_helper_test.$(OBJEXT) nghttp2_buf_test.$(OBJEXT) \
+	nghttp2_http_test.$(OBJEXT) nghttp2_extpri_test.$(OBJEXT) \
+	nghttp2_ratelim_test.$(OBJEXT) munit/munit.$(OBJEXT)
+am_main_OBJECTS = $(am__objects_1) $(am__objects_2)
 main_OBJECTS = $(am_main_OBJECTS)
-@ENABLE_STATIC_FALSE@@HAVE_CUNIT_TRUE@main_DEPENDENCIES = ${top_builddir}/lib/.libs/*.o \
-@ENABLE_STATIC_FALSE@@HAVE_CUNIT_TRUE@	$(am__DEPENDENCIES_1)
-@ENABLE_STATIC_TRUE@@HAVE_CUNIT_TRUE@main_DEPENDENCIES = ${top_builddir}/lib/libnghttp2.la \
-@ENABLE_STATIC_TRUE@@HAVE_CUNIT_TRUE@	$(am__DEPENDENCIES_1)
+@ENABLE_STATIC_FALSE@main_DEPENDENCIES =  \
+@ENABLE_STATIC_FALSE@	${top_builddir}/lib/.libs/*.o
+@ENABLE_STATIC_TRUE@main_DEPENDENCIES =  \
+@ENABLE_STATIC_TRUE@	${top_builddir}/lib/libnghttp2.la
 main_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) \
 	$(main_LDFLAGS) $(LDFLAGS) -o $@
@@ -203,18 +181,19 @@ depcomp = $(SHELL) $(top_srcdir)/depcomp
 am__maybe_remake_depfiles = depfiles
 am__depfiles_remade = ./$(DEPDIR)/failmalloc.Po \
 	./$(DEPDIR)/failmalloc_test.Po ./$(DEPDIR)/main.Po \
-	./$(DEPDIR)/malloc_wrapper.Po ./$(DEPDIR)/nghttp2_buf_test.Po \
+	./$(DEPDIR)/malloc_wrapper.Po ./$(DEPDIR)/nghttp2_alpn_test.Po \
+	./$(DEPDIR)/nghttp2_buf_test.Po \
 	./$(DEPDIR)/nghttp2_extpri_test.Po \
 	./$(DEPDIR)/nghttp2_frame_test.Po \
 	./$(DEPDIR)/nghttp2_hd_test.Po \
 	./$(DEPDIR)/nghttp2_helper_test.Po \
 	./$(DEPDIR)/nghttp2_http_test.Po \
-	./$(DEPDIR)/nghttp2_map_test.Po \
-	./$(DEPDIR)/nghttp2_npn_test.Po ./$(DEPDIR)/nghttp2_pq_test.Po \
+	./$(DEPDIR)/nghttp2_map_test.Po ./$(DEPDIR)/nghttp2_pq_test.Po \
 	./$(DEPDIR)/nghttp2_queue_test.Po \
+	./$(DEPDIR)/nghttp2_ratelim_test.Po \
 	./$(DEPDIR)/nghttp2_session_test.Po \
 	./$(DEPDIR)/nghttp2_stream_test.Po \
-	./$(DEPDIR)/nghttp2_test_helper.Po
+	./$(DEPDIR)/nghttp2_test_helper.Po munit/$(DEPDIR)/munit.Po
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -235,7 +214,7 @@ am__v_CCLD_ = $(am__v_CCLD_@AM_DEFAULT_V@)
 am__v_CCLD_0 = @echo "  CCLD    " $@;
 am__v_CCLD_1 = 
 SOURCES = $(failmalloc_SOURCES) $(main_SOURCES)
-DIST_SOURCES = $(am__failmalloc_SOURCES_DIST) $(am__main_SOURCES_DIST)
+DIST_SOURCES = $(am__failmalloc_SOURCES_DIST) $(main_SOURCES)
 RECURSIVE_TARGETS = all-recursive check-recursive cscopelist-recursive \
 	ctags-recursive dvi-recursive html-recursive info-recursive \
 	install-data-recursive install-dvi-recursive \
@@ -516,11 +495,6 @@ AUTOCONF = @AUTOCONF@
 AUTOHEADER = @AUTOHEADER@
 AUTOMAKE = @AUTOMAKE@
 AWK = @AWK@
-BOOST_ASIO_LIB = @BOOST_ASIO_LIB@
-BOOST_CPPFLAGS = @BOOST_CPPFLAGS@
-BOOST_LDFLAGS = @BOOST_LDFLAGS@
-BOOST_SYSTEM_LIB = @BOOST_SYSTEM_LIB@
-BOOST_THREAD_LIB = @BOOST_THREAD_LIB@
 BPFCFLAGS = @BPFCFLAGS@
 CC = @CC@
 CCDEPMODE = @CCDEPMODE@
@@ -529,15 +503,12 @@ CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
 CSCOPE = @CSCOPE@
 CTAGS = @CTAGS@
-CUNIT_CFLAGS = @CUNIT_CFLAGS@
-CUNIT_LIBS = @CUNIT_LIBS@
 CXX = @CXX@
 CXX1XCXXFLAGS = @CXX1XCXXFLAGS@
 CXXCPP = @CXXCPP@
 CXXDEPMODE = @CXXDEPMODE@
 CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
-CYTHON = @CYTHON@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 DLLTOOL = @DLLTOOL@
@@ -553,9 +524,8 @@ EXTRABPFCFLAGS = @EXTRABPFCFLAGS@
 EXTRACFLAG = @EXTRACFLAG@
 EXTRA_DEFS = @EXTRA_DEFS@
 FGREP = @FGREP@
-FILECMD = @FILECMD@
 GREP = @GREP@
-HAVE_CXX14 = @HAVE_CXX14@
+HAVE_CXX20 = @HAVE_CXX20@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
@@ -569,6 +539,10 @@ LD = @LD@
 LDFLAGS = @LDFLAGS@
 LIBBPF_CFLAGS = @LIBBPF_CFLAGS@
 LIBBPF_LIBS = @LIBBPF_LIBS@
+LIBBROTLIDEC_CFLAGS = @LIBBROTLIDEC_CFLAGS@
+LIBBROTLIDEC_LIBS = @LIBBROTLIDEC_LIBS@
+LIBBROTLIENC_CFLAGS = @LIBBROTLIENC_CFLAGS@
+LIBBROTLIENC_LIBS = @LIBBROTLIENC_LIBS@
 LIBCARES_CFLAGS = @LIBCARES_CFLAGS@
 LIBCARES_LIBS = @LIBCARES_LIBS@
 LIBEVENT_OPENSSL_CFLAGS = @LIBEVENT_OPENSSL_CFLAGS@
@@ -582,8 +556,8 @@ LIBNGHTTP3_LIBS = @LIBNGHTTP3_LIBS@
 LIBNGTCP2_CFLAGS = @LIBNGTCP2_CFLAGS@
 LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS = @LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS@
 LIBNGTCP2_CRYPTO_BORINGSSL_LIBS = @LIBNGTCP2_CRYPTO_BORINGSSL_LIBS@
-LIBNGTCP2_CRYPTO_OPENSSL_CFLAGS = @LIBNGTCP2_CRYPTO_OPENSSL_CFLAGS@
-LIBNGTCP2_CRYPTO_OPENSSL_LIBS = @LIBNGTCP2_CRYPTO_OPENSSL_LIBS@
+LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS = @LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS@
+LIBNGTCP2_CRYPTO_QUICTLS_LIBS = @LIBNGTCP2_CRYPTO_QUICTLS_LIBS@
 LIBNGTCP2_LIBS = @LIBNGTCP2_LIBS@
 LIBOBJS = @LIBOBJS@
 LIBS = @LIBS@
@@ -622,15 +596,9 @@ PKG_CONFIG = @PKG_CONFIG@
 PKG_CONFIG_LIBDIR = @PKG_CONFIG_LIBDIR@
 PKG_CONFIG_PATH = @PKG_CONFIG_PATH@
 PYTHON = @PYTHON@
-PYTHON_CPPFLAGS = @PYTHON_CPPFLAGS@
 PYTHON_EXEC_PREFIX = @PYTHON_EXEC_PREFIX@
-PYTHON_EXTRA_LDFLAGS = @PYTHON_EXTRA_LDFLAGS@
-PYTHON_EXTRA_LIBS = @PYTHON_EXTRA_LIBS@
-PYTHON_LIBS = @PYTHON_LIBS@
 PYTHON_PLATFORM = @PYTHON_PLATFORM@
-PYTHON_PLATFORM_SITE_PKG = @PYTHON_PLATFORM_SITE_PKG@
 PYTHON_PREFIX = @PYTHON_PREFIX@
-PYTHON_SITE_PKG = @PYTHON_SITE_PKG@
 PYTHON_VERSION = @PYTHON_VERSION@
 RANLIB = @RANLIB@
 SED = @SED@
@@ -716,48 +684,56 @@ top_srcdir = @top_srcdir@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 SUBDIRS = testdata
-EXTRA_DIST = CMakeLists.txt
-@HAVE_CUNIT_TRUE@OBJECTS = main.c nghttp2_pq_test.c nghttp2_map_test.c nghttp2_queue_test.c \
-@HAVE_CUNIT_TRUE@	nghttp2_test_helper.c \
-@HAVE_CUNIT_TRUE@	nghttp2_frame_test.c \
-@HAVE_CUNIT_TRUE@	nghttp2_stream_test.c \
-@HAVE_CUNIT_TRUE@	nghttp2_session_test.c \
-@HAVE_CUNIT_TRUE@	nghttp2_hd_test.c \
-@HAVE_CUNIT_TRUE@	nghttp2_npn_test.c \
-@HAVE_CUNIT_TRUE@	nghttp2_helper_test.c \
-@HAVE_CUNIT_TRUE@	nghttp2_buf_test.c \
-@HAVE_CUNIT_TRUE@	nghttp2_http_test.c \
-@HAVE_CUNIT_TRUE@	nghttp2_extpri_test.c
+EXTRA_DIST = CMakeLists.txt munit/COPYING
+OBJECTS = main.c nghttp2_pq_test.c nghttp2_map_test.c nghttp2_queue_test.c \
+	nghttp2_test_helper.c \
+	nghttp2_frame_test.c \
+	nghttp2_stream_test.c \
+	nghttp2_session_test.c \
+	nghttp2_hd_test.c \
+	nghttp2_alpn_test.c \
+	nghttp2_helper_test.c \
+	nghttp2_buf_test.c \
+	nghttp2_http_test.c \
+	nghttp2_extpri_test.c \
+	nghttp2_ratelim_test.c \
+	munit/munit.c
 
-@HAVE_CUNIT_TRUE@HFILES = nghttp2_pq_test.h nghttp2_map_test.h nghttp2_queue_test.h \
-@HAVE_CUNIT_TRUE@	nghttp2_session_test.h \
-@HAVE_CUNIT_TRUE@	nghttp2_frame_test.h nghttp2_stream_test.h nghttp2_hd_test.h \
-@HAVE_CUNIT_TRUE@	nghttp2_npn_test.h nghttp2_helper_test.h \
-@HAVE_CUNIT_TRUE@	nghttp2_test_helper.h \
-@HAVE_CUNIT_TRUE@	nghttp2_buf_test.h \
-@HAVE_CUNIT_TRUE@	nghttp2_http_test.h \
-@HAVE_CUNIT_TRUE@	nghttp2_extpri_test.h
+HFILES = nghttp2_pq_test.h nghttp2_map_test.h nghttp2_queue_test.h \
+	nghttp2_session_test.h \
+	nghttp2_frame_test.h nghttp2_stream_test.h nghttp2_hd_test.h \
+	nghttp2_alpn_test.h nghttp2_helper_test.h \
+	nghttp2_assertion.h \
+	nghttp2_test_helper.h \
+	nghttp2_buf_test.h \
+	nghttp2_http_test.h \
+	nghttp2_extpri_test.h \
+	nghttp2_ratelim_test.h \
+	munit/munit.h
 
-@HAVE_CUNIT_TRUE@main_SOURCES = $(HFILES) $(OBJECTS)
+main_SOURCES = $(HFILES) $(OBJECTS)
 # With static lib disabled and symbol hiding enabled, we have to link object
 # files directly because the tests use symbols not included in public API.
-@ENABLE_STATIC_FALSE@@HAVE_CUNIT_TRUE@main_LDADD = ${top_builddir}/lib/.libs/*.o \
-@ENABLE_STATIC_FALSE@@HAVE_CUNIT_TRUE@	$(am__append_2)
-@ENABLE_STATIC_TRUE@@HAVE_CUNIT_TRUE@main_LDADD = ${top_builddir}/lib/libnghttp2.la \
-@ENABLE_STATIC_TRUE@@HAVE_CUNIT_TRUE@	$(am__append_2)
-@HAVE_CUNIT_TRUE@main_LDFLAGS = -static
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@failmalloc_SOURCES = failmalloc.c failmalloc_test.c failmalloc_test.h \
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@	malloc_wrapper.c malloc_wrapper.h \
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@	nghttp2_test_helper.c nghttp2_test_helper.h
+@ENABLE_STATIC_FALSE@main_LDADD = ${top_builddir}/lib/.libs/*.o \
+@ENABLE_STATIC_FALSE@	@TESTLDADD@ $(am__empty)
+@ENABLE_STATIC_TRUE@main_LDADD = ${top_builddir}/lib/libnghttp2.la \
+@ENABLE_STATIC_TRUE@	@TESTLDADD@ $(am__empty)
+main_LDFLAGS = -static
+@ENABLE_FAILMALLOC_TRUE@failmalloc_SOURCES = failmalloc.c failmalloc_test.c failmalloc_test.h \
+@ENABLE_FAILMALLOC_TRUE@	malloc_wrapper.c malloc_wrapper.h \
+@ENABLE_FAILMALLOC_TRUE@	nghttp2_test_helper.c nghttp2_test_helper.h \
+@ENABLE_FAILMALLOC_TRUE@	munit/munit.c munit/munit.h
 
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@failmalloc_LDADD = $(main_LDADD)
-@ENABLE_FAILMALLOC_TRUE@@HAVE_CUNIT_TRUE@failmalloc_LDFLAGS = $(main_LDFLAGS)
-@HAVE_CUNIT_TRUE@AM_CFLAGS = $(WARNCFLAGS) \
-@HAVE_CUNIT_TRUE@	-I${top_srcdir}/lib \
-@HAVE_CUNIT_TRUE@	-I${top_srcdir}/lib/includes \
-@HAVE_CUNIT_TRUE@	-I${top_builddir}/lib/includes \
-@HAVE_CUNIT_TRUE@	-DBUILDING_NGHTTP2 \
-@HAVE_CUNIT_TRUE@	@CUNIT_CFLAGS@ @DEFS@
+@ENABLE_FAILMALLOC_TRUE@failmalloc_LDADD = $(main_LDADD)
+@ENABLE_FAILMALLOC_TRUE@failmalloc_LDFLAGS = $(main_LDFLAGS)
+AM_CFLAGS = $(WARNCFLAGS) \
+	-I${top_srcdir}/lib \
+	-I${top_srcdir}/lib/includes \
+	-I${top_srcdir}/tests/munit \
+	-I${top_builddir}/lib/includes \
+	-DBUILDING_NGHTTP2 \
+	-DNGHTTP2_STATICLIB \
+	@DEFS@
 
 all: all-recursive
 
@@ -801,6 +777,14 @@ clean-checkPROGRAMS:
 	list=`for p in $$list; do echo "$$p"; done | sed 's/$(EXEEXT)$$//'`; \
 	echo " rm -f" $$list; \
 	rm -f $$list
+munit/$(am__dirstamp):
+	@$(MKDIR_P) munit
+	@: > munit/$(am__dirstamp)
+munit/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) munit/$(DEPDIR)
+	@: > munit/$(DEPDIR)/$(am__dirstamp)
+munit/munit.$(OBJEXT): munit/$(am__dirstamp) \
+	munit/$(DEPDIR)/$(am__dirstamp)
 
 failmalloc$(EXEEXT): $(failmalloc_OBJECTS) $(failmalloc_DEPENDENCIES) $(EXTRA_failmalloc_DEPENDENCIES) 
 	@rm -f failmalloc$(EXEEXT)
@@ -812,6 +796,7 @@ main$(EXEEXT): $(main_OBJECTS) $(main_DEPENDENCIES) $(EXTRA_main_DEPENDENCIES)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
+	-rm -f munit/*.$(OBJEXT)
 
 distclean-compile:
 	-rm -f *.tab.c
@@ -820,6 +805,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/failmalloc_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/main.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/malloc_wrapper.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_alpn_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_buf_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_extpri_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_frame_test.Po@am__quote@ # am--include-marker
@@ -827,12 +813,13 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_helper_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_http_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_map_test.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_npn_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_pq_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_queue_test.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_ratelim_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_session_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_stream_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_test_helper.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@munit/$(DEPDIR)/munit.Po@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
 	@$(MKDIR_P) $(@D)
@@ -1232,6 +1219,8 @@ clean-generic:
 distclean-generic:
 	-test -z "$(CONFIG_CLEAN_FILES)" || rm -f $(CONFIG_CLEAN_FILES)
 	-test . = "$(srcdir)" || test -z "$(CONFIG_CLEAN_VPATH_FILES)" || rm -f $(CONFIG_CLEAN_VPATH_FILES)
+	-rm -f munit/$(DEPDIR)/$(am__dirstamp)
+	-rm -f munit/$(am__dirstamp)
 
 maintainer-clean-generic:
 	@echo "This command is intended for maintainers to use"
@@ -1246,6 +1235,7 @@ distclean: distclean-recursive
 	-rm -f ./$(DEPDIR)/failmalloc_test.Po
 	-rm -f ./$(DEPDIR)/main.Po
 	-rm -f ./$(DEPDIR)/malloc_wrapper.Po
+	-rm -f ./$(DEPDIR)/nghttp2_alpn_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_buf_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_extpri_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_frame_test.Po
@@ -1253,12 +1243,13 @@ distclean: distclean-recursive
 	-rm -f ./$(DEPDIR)/nghttp2_helper_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_http_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_map_test.Po
-	-rm -f ./$(DEPDIR)/nghttp2_npn_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_pq_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_queue_test.Po
+	-rm -f ./$(DEPDIR)/nghttp2_ratelim_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_session_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_stream_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_test_helper.Po
+	-rm -f munit/$(DEPDIR)/munit.Po
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-tags
@@ -1308,6 +1299,7 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f ./$(DEPDIR)/failmalloc_test.Po
 	-rm -f ./$(DEPDIR)/main.Po
 	-rm -f ./$(DEPDIR)/malloc_wrapper.Po
+	-rm -f ./$(DEPDIR)/nghttp2_alpn_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_buf_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_extpri_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_frame_test.Po
@@ -1315,12 +1307,13 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f ./$(DEPDIR)/nghttp2_helper_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_http_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_map_test.Po
-	-rm -f ./$(DEPDIR)/nghttp2_npn_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_pq_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_queue_test.Po
+	-rm -f ./$(DEPDIR)/nghttp2_ratelim_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_session_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_stream_test.Po
 	-rm -f ./$(DEPDIR)/nghttp2_test_helper.Po
+	-rm -f munit/$(DEPDIR)/munit.Po
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 
@@ -1358,9 +1351,6 @@ uninstall-am:
 
 .PRECIOUS: Makefile
 
-
-# EXTRA_DIST = end_to_end.py
-# TESTS += end_to_end.py
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

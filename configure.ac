@@ -25,7 +25,7 @@ dnl Do not change user variables!
 dnl https://www.gnu.org/software/automake/manual/html_node/Flag-Variables-Ordering.html
 
 AC_PREREQ(2.61)
-AC_INIT([nghttp2], [1.59.0], [t-tujikawa@users.sourceforge.net])
+AC_INIT([nghttp2], [1.62.1], [t-tujikawa@users.sourceforge.net])
 AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([config.h])
@@ -38,15 +38,15 @@ AC_CANONICAL_BUILD
 AC_CANONICAL_HOST
 AC_CANONICAL_TARGET
 
-AM_INIT_AUTOMAKE([subdir-objects])
+AM_INIT_AUTOMAKE([subdir-objects tar-pax])
 
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
 dnl See versioning rule:
 dnl  https://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
-AC_SUBST(LT_CURRENT, 40)
-AC_SUBST(LT_REVISION, 0)
-AC_SUBST(LT_AGE, 26)
+AC_SUBST(LT_CURRENT, 42)
+AC_SUBST(LT_REVISION, 1)
+AC_SUBST(LT_AGE, 28)
 
 major=`echo $PACKAGE_VERSION |cut -d. -f1 | sed -e "s/[^0-9]//g"`
 minor=`echo $PACKAGE_VERSION |cut -d. -f2 | sed -e "s/[^0-9]//g"`
@@ -137,11 +137,6 @@ AC_ARG_WITH([libev],
                     [Use libev [default=check]])],
     [request_libev=$withval], [request_libev=check])
 
-AC_ARG_WITH([cunit],
-    [AS_HELP_STRING([--with-cunit],
-                    [Use cunit [default=check]])],
-    [request_cunit=$withval], [request_cunit=check])
-
 AC_ARG_WITH([jemalloc],
     [AS_HELP_STRING([--with-jemalloc],
                     [Use jemalloc [default=check]])],
@@ -176,6 +171,16 @@ AC_ARG_WITH([libbpf],
     [AS_HELP_STRING([--with-libbpf],
                     [Use libbpf [default=no]])],
     [request_libbpf=$withval], [request_libbpf=no])
+
+AC_ARG_WITH([libbrotlienc],
+    [AS_HELP_STRING([--with-libbrotlienc],
+                    [Use libbrotlienc [default=no]])],
+    [request_libbrotlienc=$withval], [request_libbrotlienc=no])
+
+AC_ARG_WITH([libbrotlidec],
+    [AS_HELP_STRING([--with-libbrotlidec],
+                    [Use libbrotlidec [default=no]])],
+    [request_libbrotlidec=$withval], [request_libbrotlidec=no])
 
 dnl Define variables
 AC_ARG_VAR([LIBEV_CFLAGS], [C compiler flags for libev, skipping any checks])
@@ -233,7 +238,7 @@ fi
 save_CXXFLAGS="$CXXFLAGS"
 CXXFLAGS=
 
-AX_CXX_COMPILE_STDCXX([14], [], [optional])
+AX_CXX_COMPILE_STDCXX([20], [], [optional])
 
 CXX1XCXXFLAGS="$CXXFLAGS"
 CXXFLAGS="$save_CXXFLAGS"
@@ -278,21 +283,20 @@ std::map<int, int>().emplace(1, 2);
     [have_std_map_emplace=no
      AC_MSG_RESULT([no])])
 
-# Check that std::atomic_* overloads for std::shared_ptr are
-# available.
-AC_MSG_CHECKING([whether std::atomic_* overloads for std::shared_ptr are available])
+# Check that std::atomic<std::shared_ptr<T>> is supported.
+AC_MSG_CHECKING([whether std::atomic<std::shared_ptr<T>> is supported])
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
 [[
 #include <memory>
 ]],
 [[
-auto a = std::make_shared<int>(1000000007);
-auto p = std::atomic_load(&a);
+auto a = std::atomic<std::shared_ptr<int>>(std::make_shared<int>(1000000007));
+auto p = a.load();
 ++*p;
-std::atomic_store(&a, p);
+a.store(p);
 ]])],
     [AC_DEFINE([HAVE_ATOMIC_STD_SHARED_PTR], [1],
-               [Define to 1 if you have the std::atomic_* overloads for std::shared_ptr.])
+               [Define to 1 if you have the std::atomic<std::shared_ptr<T>> is supported.])
      have_atomic_std_shared_ptr=yes
      AC_MSG_RESULT([yes])],
     [have_atomic_std_shared_ptr=no
@@ -377,43 +381,6 @@ case "${host_os}" in
     ;;
 esac
 
-# cunit
-have_cunit=no
-if test "x${request_cunit}" != "xno"; then
-  PKG_CHECK_MODULES([CUNIT], [cunit >= 2.1], [have_cunit=yes], [have_cunit=no])
-  # If pkg-config does not find cunit, check it using AC_CHECK_LIB.  We
-  # do this because Debian (Ubuntu) lacks pkg-config file for cunit.
-  if test "x${have_cunit}" = "xno"; then
-    AC_MSG_WARN([${CUNIT_PKG_ERRORS}])
-    AC_CHECK_LIB([cunit], [CU_initialize_registry],
-                 [have_cunit=yes], [have_cunit=no])
-    if test "x${have_cunit}" = "xyes"; then
-      CUNIT_LIBS="-lcunit"
-      CUNIT_CFLAGS=""
-      AC_SUBST([CUNIT_LIBS])
-      AC_SUBST([CUNIT_CFLAGS])
-    fi
-  fi
-  if test "x${have_cunit}" = "xyes"; then
-    # cunit in Mac OS X requires ncurses. Note that in Mac OS X, test
-    # program can be built without -lncurses, but it emits runtime
-    # error.
-    case "${build}" in
-      *-apple-darwin*)
-        CUNIT_LIBS="$CUNIT_LIBS -lncurses"
-        AC_SUBST([CUNIT_LIBS])
-        ;;
-    esac
-  fi
-fi
-
-if test "x${request_cunit}" = "xyes" &&
-   test "x${have_cunit}" != "xyes"; then
-  AC_MSG_ERROR([cunit was requested (--with-cunit) but not found])
-fi
-
-AM_CONDITIONAL([HAVE_CUNIT], [ test "x${have_cunit}" = "xyes" ])
-
 # libev (for src)
 have_libev=no
 if test "x${request_libev}" != "xno"; then
@@ -452,9 +419,12 @@ if test "x${request_openssl}" != "xno"; then
   if test "x${have_openssl}" = "xno"; then
     AC_MSG_NOTICE($OPENSSL_PKG_ERRORS)
   else
-    save_CFLAGS="$CFLAGS"
+    # Use C++ compiler because boringssl needs C++ runtime.
+    AC_LANG_PUSH(C++)
+
+    save_CXXFLAGS="$CXXFLAGS"
     save_LIBS="$LIBS"
-    CFLAGS="$OPENSSL_CFLAGS $CFLAGS"
+    CXXFLAGS="$OPENSSL_CFLAGS $CXXFLAGS"
     LIBS="$OPENSSL_LIBS $LIBS"
 
     # quictls/openssl has SSL_provide_quic_data.  boringssl also has
@@ -464,7 +434,7 @@ if test "x${request_openssl}" != "xno"; then
     AC_LINK_IFELSE([AC_LANG_PROGRAM([[
       #include <openssl/ssl.h>
     ]], [[
-      SSL_provide_quic_data(NULL, 0, NULL, 0);
+      SSL_provide_quic_data(NULL, (ssl_encryption_level_t)0, NULL, 0);
     ]])],
     [AC_MSG_RESULT([yes]); have_ssl_provide_quic_data=yes],
     [AC_MSG_RESULT([no]); have_ssl_provide_quic_data=no])
@@ -480,8 +450,10 @@ if test "x${request_openssl}" != "xno"; then
     [AC_MSG_RESULT([yes]); have_boringssl_quic=yes],
     [AC_MSG_RESULT([no]); have_boringssl_quic=no])
 
-    CFLAGS="$save_CFLAGS"
+    CXXFLAGS="$save_CXXFLAGS"
     LIBS="$save_LIBS"
+
+    AC_LANG_POP()
   fi
 fi
 
@@ -493,7 +465,7 @@ fi
 # c-ares (for src)
 have_libcares=no
 if test "x${request_libcares}" != "xno"; then
-  PKG_CHECK_MODULES([LIBCARES], [libcares >= 1.7.5], [have_libcares=yes],
+  PKG_CHECK_MODULES([LIBCARES], [libcares >= 1.16.0], [have_libcares=yes],
                     [have_libcares=no])
   if test "x${have_libcares}" = "xno"; then
     AC_MSG_NOTICE($LIBCARES_PKG_ERRORS)
@@ -508,7 +480,7 @@ fi
 # ngtcp2 (for src)
 have_libngtcp2=no
 if test "x${request_libngtcp2}" != "xno"; then
-  PKG_CHECK_MODULES([LIBNGTCP2], [libngtcp2 >= 1.0.0], [have_libngtcp2=yes],
+  PKG_CHECK_MODULES([LIBNGTCP2], [libngtcp2 >= 1.4.0], [have_libngtcp2=yes],
                     [have_libngtcp2=no])
   if test "x${have_libngtcp2}" = "xno"; then
     AC_MSG_NOTICE($LIBNGTCP2_PKG_ERRORS)
@@ -625,6 +597,47 @@ if test "x${request_libbpf}" = "xyes" &&
 fi
 
 AM_CONDITIONAL([HAVE_LIBBPF], [ test "x${have_libbpf}" = "xyes" ])
+
+# libbrotlienc (for src)
+have_libbrotlienc=no
+if test "x${request_libbrotlienc}" != "xno"; then
+  PKG_CHECK_MODULES([LIBBROTLIENC], [libbrotlienc >= 1.0.9],
+                    [have_libbrotlienc=yes],
+                    [have_libbrotlienc=no])
+  if test "x${have_libbrotlienc}" = "xno"; then
+    AC_MSG_NOTICE($LIBBROTLIENC_PKG_ERRORS)
+  fi
+fi
+
+if test "x${request_libbrotlienc}" = "xyes" &&
+   test "x${have_libbrotlienc}" != "xyes"; then
+  AC_MSG_ERROR([libbrotlienc was requested (--with-libbrotlienc) but not found])
+fi
+
+# libbrotlidec (for src)
+have_libbrotlidec=no
+if test "x${request_libbrotlidec}" != "xno"; then
+  PKG_CHECK_MODULES([LIBBROTLIDEC], [libbrotlidec >= 1.0.9],
+                    [have_libbrotlidec=yes],
+                    [have_libbrotlidec=no])
+  if test "x${have_libbrotlidec}" = "xno"; then
+    AC_MSG_NOTICE($LIBBROTLIDEC_PKG_ERRORS)
+  fi
+fi
+
+if test "x${request_libbrotlidec}" = "xyes" &&
+   test "x${have_libbrotlidec}" != "xyes"; then
+  AC_MSG_ERROR([libbrotlidec was requested (--with-libbrotlidec) but not found])
+fi
+
+have_libbrotli=no
+if test "x${have_libbrotlienc}" = "xyes" &&
+   test "x${have_libbrotlidec}" = "xyes"; then
+  have_libbrotli=yes
+
+  AC_DEFINE([HAVE_LIBBROTLI], [1],
+            [Define to 1 if you have `libbrotlienc` and `libbrotlidec` libraries.])
+fi
 
 # libevent_openssl (for examples)
 # 2.0.8 is required because we use evconnlistener_set_error_cb()
@@ -1155,7 +1168,6 @@ AC_MSG_NOTICE([summary of build options:
       Python:         ${PYTHON}
       PYTHON_VERSION: ${PYTHON_VERSION}
     Test:
-      CUnit:          ${have_cunit} (CFLAGS='${CUNIT_CFLAGS}' LIBS='${CUNIT_LIBS}')
       Failmalloc:     ${enable_failmalloc}
     Libs:
       OpenSSL:        ${have_openssl} (CFLAGS='${OPENSSL_CFLAGS}' LIBS='${OPENSSL_LIBS}')
@@ -1172,6 +1184,8 @@ AC_MSG_NOTICE([summary of build options:
       Jemalloc:       ${have_jemalloc} (CFLAGS='${JEMALLOC_CFLAGS}' LIBS='${JEMALLOC_LIBS}')
       Zlib:           ${have_zlib} (CFLAGS='${ZLIB_CFLAGS}' LIBS='${ZLIB_LIBS}')
       Systemd:        ${have_libsystemd} (CFLAGS='${SYSTEMD_CFLAGS}' LIBS='${SYSTEMD_LIBS}')
+      Libbrotlienc:   ${have_libbrotlienc} (CFLAGS="${LIBBROTLIENC_CFLAGS}' LIBS='${LIBBROTLIENC_LIBS}')
+      Libbrotlidec:   ${have_libbrotlidec} (CFLAGS="${LIBBROTLIDEC_CFLAGS}' LIBS='${LIBBROTLIDEC_LIBS}')
     Third-party:
       http-parser:    ${enable_third_party}
       MRuby:          ${have_mruby} (CFLAGS='${LIBMRUBY_CFLAGS}' LIBS='${LIBMRUBY_LIBS}')

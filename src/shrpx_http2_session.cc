@@ -468,11 +468,11 @@ int Http2Session::initiate_connection() {
         auto sni_name =
             addr_->sni.empty() ? StringRef{addr_->host} : StringRef{addr_->sni};
 
-        if (!util::numeric_host(sni_name.c_str())) {
+        if (!util::numeric_host(sni_name.data())) {
           // TLS extensions: SNI. There is no documentation about the return
           // code for this function (actually this is macro wrapping SSL_ctrl
           // at the time of this writing).
-          SSL_set_tlsext_host_name(conn_.tls.ssl, sni_name.c_str());
+          SSL_set_tlsext_host_name(conn_.tls.ssl, sni_name.data());
         }
 
         auto tls_session = tls::reuse_tls_session(addr_->tls_session_cache);
@@ -693,7 +693,7 @@ int Http2Session::downstream_connect_proxy() {
   }
 
   std::string req = "CONNECT ";
-  req.append(addr_->hostport.c_str(), addr_->hostport.size());
+  req.append(addr_->hostport.data(), addr_->hostport.size());
   if (addr_->port == 80 || addr_->port == 443) {
     req += ':';
     req += util::utos(addr_->port);
@@ -755,15 +755,15 @@ void Http2Session::remove_stream_data(StreamData *sd) {
 
 int Http2Session::submit_request(Http2DownstreamConnection *dconn,
                                  const nghttp2_nv *nva, size_t nvlen,
-                                 const nghttp2_data_provider *data_prd) {
+                                 const nghttp2_data_provider2 *data_prd) {
   assert(state_ == Http2SessionState::CONNECTED);
   auto sd = std::make_unique<StreamData>();
   sd->dlnext = sd->dlprev = nullptr;
   // TODO Specify nullptr to pri_spec for now
-  auto stream_id =
-      nghttp2_submit_request(session_, nullptr, nva, nvlen, data_prd, sd.get());
+  auto stream_id = nghttp2_submit_request2(session_, nullptr, nva, nvlen,
+                                           data_prd, sd.get());
   if (stream_id < 0) {
-    SSLOG(FATAL, this) << "nghttp2_submit_request() failed: "
+    SSLOG(FATAL, this) << "nghttp2_submit_request2() failed: "
                        << nghttp2_strerror(stream_id);
     return -1;
   }
@@ -939,7 +939,9 @@ int on_header_callback2(nghttp2_session *session, const nghttp2_frame *frame,
       return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
     }
 
-    auto token = http2::lookup_token(namebuf.base, namebuf.len);
+    auto nameref = StringRef{namebuf.base, namebuf.len};
+    auto valueref = StringRef{valuebuf.base, valuebuf.len};
+    auto token = http2::lookup_token(nameref);
     auto no_index = flags & NGHTTP2_NV_FLAG_NO_INDEX;
 
     downstream->add_rcbuf(name);
@@ -947,15 +949,11 @@ int on_header_callback2(nghttp2_session *session, const nghttp2_frame *frame,
 
     if (trailer) {
       // just store header fields for trailer part
-      resp.fs.add_trailer_token(StringRef{namebuf.base, namebuf.len},
-                                StringRef{valuebuf.base, valuebuf.len},
-                                no_index, token);
+      resp.fs.add_trailer_token(nameref, valueref, no_index, token);
       return 0;
     }
 
-    resp.fs.add_header_token(StringRef{namebuf.base, namebuf.len},
-                             StringRef{valuebuf.base, valuebuf.len}, no_index,
-                             token);
+    resp.fs.add_header_token(nameref, valueref, no_index, token);
     return 0;
   }
   case NGHTTP2_PUSH_PROMISE: {
@@ -993,9 +991,10 @@ int on_header_callback2(nghttp2_session *session, const nghttp2_frame *frame,
     promised_downstream->add_rcbuf(name);
     promised_downstream->add_rcbuf(value);
 
-    auto token = http2::lookup_token(namebuf.base, namebuf.len);
-    promised_req.fs.add_header_token(StringRef{namebuf.base, namebuf.len},
-                                     StringRef{valuebuf.base, valuebuf.len},
+    auto nameref = StringRef{namebuf.base, namebuf.len};
+    auto valueref = StringRef{valuebuf.base, valuebuf.len};
+    auto token = http2::lookup_token(nameref);
+    promised_req.fs.add_header_token(nameref, valueref,
                                      flags & NGHTTP2_NV_FLAG_NO_INDEX, token);
 
     return 0;
@@ -1171,7 +1170,8 @@ int on_response_headers(Http2Session *http2session, Downstream *downstream,
     auto content_length = resp.fs.header(http2::HD_CONTENT_LENGTH);
     if (content_length) {
       // libnghttp2 guarantees this can be parsed
-      resp.fs.content_length = util::parse_uint(content_length->value);
+      resp.fs.content_length =
+          util::parse_uint(content_length->value).value_or(-1);
     }
 
     if (resp.fs.content_length == -1 && downstream->expect_response_body()) {
@@ -1184,8 +1184,7 @@ int on_response_headers(Http2Session *http2session, Downstream *downstream,
         // Otherwise, use chunked encoding to keep upstream connection
         // open.  In HTTP2, we are supposed not to receive
         // transfer-encoding.
-        resp.fs.add_header_token(StringRef::from_lit("transfer-encoding"),
-                                 StringRef::from_lit("chunked"), false,
+        resp.fs.add_header_token("transfer-encoding"_sr, "chunked"_sr, false,
                                  http2::HD_TRANSFER_ENCODING);
         downstream->set_chunked_response(true);
       }
@@ -1653,7 +1652,7 @@ nghttp2_session_callbacks *create_http2_downstream_callbacks() {
                                                    send_data_callback);
 
   if (get_config()->padding) {
-    nghttp2_session_callbacks_set_select_padding_callback(
+    nghttp2_session_callbacks_set_select_padding_callback2(
         callbacks, http::select_padding_callback);
   }
 
@@ -1754,11 +1753,9 @@ int Http2Session::on_read(const uint8_t *data, size_t datalen) {
 int Http2Session::on_write() { return on_write_(*this); }
 
 int Http2Session::downstream_read(const uint8_t *data, size_t datalen) {
-  ssize_t rv;
-
-  rv = nghttp2_session_mem_recv(session_, data, datalen);
+  auto rv = nghttp2_session_mem_recv2(session_, data, datalen);
   if (rv < 0) {
-    SSLOG(ERROR, this) << "nghttp2_session_mem_recv() returned error: "
+    SSLOG(ERROR, this) << "nghttp2_session_mem_recv2() returned error: "
                        << nghttp2_strerror(rv);
     return -1;
   }
@@ -1778,9 +1775,9 @@ int Http2Session::downstream_read(const uint8_t *data, size_t datalen) {
 int Http2Session::downstream_write() {
   for (;;) {
     const uint8_t *data;
-    auto datalen = nghttp2_session_mem_send(session_, &data);
+    auto datalen = nghttp2_session_mem_send2(session_, &data);
     if (datalen < 0) {
-      SSLOG(ERROR, this) << "nghttp2_session_mem_send() returned error: "
+      SSLOG(ERROR, this) << "nghttp2_session_mem_send2() returned error: "
                          << nghttp2_strerror(datalen);
       return -1;
     }
@@ -2281,7 +2278,7 @@ int Http2Session::handle_downstream_push_promise_complete(
   }
 
   // For server-wide OPTIONS request, path is empty.
-  if (method_token != HTTP_OPTIONS || path->value != "*") {
+  if (method_token != HTTP_OPTIONS || path->value != "*"_sr) {
     promised_req.path = http2::rewrite_clean_path(promised_balloc, path->value);
   }
 

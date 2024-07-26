@@ -25,12 +25,19 @@
 #include "tls.h"
 
 #include <cassert>
+#include <cstring>
 #include <vector>
 #include <mutex>
 #include <iostream>
+#include <fstream>
 
 #include <openssl/crypto.h>
 #include <openssl/conf.h>
+
+#ifdef HAVE_LIBBROTLI
+#  include <brotli/encode.h>
+#  include <brotli/decode.h>
+#endif // HAVE_LIBBROTLI
 
 #include "ssl_compat.h"
 
@@ -117,6 +124,83 @@ int ssl_ctx_set_proto_versions(SSL_CTX *ssl_ctx, int min, int max) {
       SSL_CTX_set_max_proto_version(ssl_ctx, max) != 1) {
     return -1;
   }
+  return 0;
+}
+
+#if defined(NGHTTP2_OPENSSL_IS_BORINGSSL) && defined(HAVE_LIBBROTLI)
+int cert_compress(SSL *ssl, CBB *out, const uint8_t *in, size_t in_len) {
+  uint8_t *dest;
+
+  auto compressed_size = BrotliEncoderMaxCompressedSize(in_len);
+  if (compressed_size == 0) {
+    return 0;
+  }
+
+  if (!CBB_reserve(out, &dest, compressed_size)) {
+    return 0;
+  }
+
+  if (BrotliEncoderCompress(BROTLI_MAX_QUALITY, BROTLI_DEFAULT_WINDOW,
+                            BROTLI_MODE_GENERIC, in_len, in, &compressed_size,
+                            dest) != BROTLI_TRUE) {
+    return 0;
+  }
+
+  if (!CBB_did_write(out, compressed_size)) {
+    return 0;
+  }
+
+  return 1;
+}
+
+int cert_decompress(SSL *ssl, CRYPTO_BUFFER **out, size_t uncompressed_len,
+                    const uint8_t *in, size_t in_len) {
+  uint8_t *dest;
+  auto buf = CRYPTO_BUFFER_alloc(&dest, uncompressed_len);
+  auto len = uncompressed_len;
+
+  if (BrotliDecoderDecompress(in_len, in, &len, dest) !=
+      BROTLI_DECODER_RESULT_SUCCESS) {
+    CRYPTO_BUFFER_free(buf);
+
+    return 0;
+  }
+
+  if (uncompressed_len != len) {
+    CRYPTO_BUFFER_free(buf);
+
+    return 0;
+  }
+
+  *out = buf;
+
+  return 1;
+}
+#endif // NGHTTP2_OPENSSL_IS_BORINGSSL && HAVE_LIBBROTLI
+
+namespace {
+std::ofstream keylog_file;
+
+void keylog_callback(const SSL *ssl, const char *line) {
+  keylog_file.write(line, strlen(line));
+  keylog_file.put('\n');
+  keylog_file.flush();
+}
+} // namespace
+
+int setup_keylog_callback(SSL_CTX *ssl_ctx) {
+  auto keylog_filename = getenv("SSLKEYLOGFILE");
+  if (!keylog_filename) {
+    return 0;
+  }
+
+  keylog_file.open(keylog_filename, std::ios_base::app);
+  if (!keylog_file) {
+    return -1;
+  }
+
+  SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
+
   return 0;
 }
 

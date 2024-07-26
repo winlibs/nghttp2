@@ -30,51 +30,62 @@
 
 #include <cstdlib>
 
-#include <CUnit/CUnit.h>
+#include "munitxx.h"
 
 #include "shrpx_http.h"
 #include "shrpx_config.h"
 #include "shrpx_log.h"
 
+using namespace std::literals;
+
 namespace shrpx {
+
+namespace {
+const MunitTest tests[]{
+    munit_void_test(test_shrpx_http_create_forwarded),
+    munit_void_test(test_shrpx_http_create_via_header_value),
+    munit_void_test(test_shrpx_http_create_affinity_cookie),
+    munit_void_test(test_shrpx_http_create_altsvc_header_value),
+    munit_void_test(test_shrpx_http_check_http_scheme),
+    munit_test_end(),
+};
+} // namespace
+
+const MunitSuite http_suite{
+    "/http", tests, NULL, 1, MUNIT_SUITE_OPTION_NONE,
+};
 
 void test_shrpx_http_create_forwarded(void) {
   BlockAllocator balloc(1024, 1024);
 
-  CU_ASSERT("by=\"example.com:3000\";for=\"[::1]\";host=\"www.example.com\";"
-            "proto=https" ==
-            http::create_forwarded(balloc,
-                                   FORWARDED_BY | FORWARDED_FOR |
-                                       FORWARDED_HOST | FORWARDED_PROTO,
-                                   StringRef::from_lit("example.com:3000"),
-                                   StringRef::from_lit("[::1]"),
-                                   StringRef::from_lit("www.example.com"),
-                                   StringRef::from_lit("https")));
+  assert_stdsv_equal(
+      "by=\"example.com:3000\";for=\"[::1]\";host=\"www.example.com\";"
+      "proto=https"sv,
+      http::create_forwarded(
+          balloc,
+          FORWARDED_BY | FORWARDED_FOR | FORWARDED_HOST | FORWARDED_PROTO,
+          "example.com:3000"_sr, "[::1]"_sr, "www.example.com"_sr, "https"_sr));
 
-  CU_ASSERT("for=192.168.0.1" ==
-            http::create_forwarded(
-                balloc, FORWARDED_FOR, StringRef::from_lit("alpha"),
-                StringRef::from_lit("192.168.0.1"),
-                StringRef::from_lit("bravo"), StringRef::from_lit("charlie")));
+  assert_stdsv_equal("for=192.168.0.1"sv,
+                     http::create_forwarded(balloc, FORWARDED_FOR, "alpha"_sr,
+                                            "192.168.0.1"_sr, "bravo"_sr,
+                                            "charlie"_sr));
 
-  CU_ASSERT("by=_hidden;for=\"[::1]\"" ==
-            http::create_forwarded(
-                balloc, FORWARDED_BY | FORWARDED_FOR,
-                StringRef::from_lit("_hidden"), StringRef::from_lit("[::1]"),
-                StringRef::from_lit(""), StringRef::from_lit("")));
+  assert_stdsv_equal(
+      "by=_hidden;for=\"[::1]\""sv,
+      http::create_forwarded(balloc, FORWARDED_BY | FORWARDED_FOR, "_hidden"_sr,
+                             "[::1]"_sr, ""_sr, ""_sr));
 
-  CU_ASSERT("by=\"[::1]\";for=_hidden" ==
-            http::create_forwarded(
-                balloc, FORWARDED_BY | FORWARDED_FOR,
-                StringRef::from_lit("[::1]"), StringRef::from_lit("_hidden"),
-                StringRef::from_lit(""), StringRef::from_lit("")));
+  assert_stdsv_equal(
+      "by=\"[::1]\";for=_hidden"sv,
+      http::create_forwarded(balloc, FORWARDED_BY | FORWARDED_FOR, "[::1]"_sr,
+                             "_hidden"_sr, ""_sr, ""_sr));
 
-  CU_ASSERT("" ==
-            http::create_forwarded(
-                balloc,
-                FORWARDED_BY | FORWARDED_FOR | FORWARDED_HOST | FORWARDED_PROTO,
-                StringRef::from_lit(""), StringRef::from_lit(""),
-                StringRef::from_lit(""), StringRef::from_lit("")));
+  assert_stdsv_equal(""sv, http::create_forwarded(balloc,
+                                                  FORWARDED_BY | FORWARDED_FOR |
+                                                      FORWARDED_HOST |
+                                                      FORWARDED_PROTO,
+                                                  ""_sr, ""_sr, ""_sr, ""_sr));
 }
 
 void test_shrpx_http_create_via_header_value(void) {
@@ -82,40 +93,38 @@ void test_shrpx_http_create_via_header_value(void) {
 
   auto end = http::create_via_header_value(std::begin(buf), 1, 1);
 
-  CU_ASSERT(("1.1 nghttpx" == StringRef{std::begin(buf), end}));
+  assert_stdstring_equal("1.1 nghttpx", (std::string{std::begin(buf), end}));
 
   std::fill(std::begin(buf), std::end(buf), '\0');
 
   end = http::create_via_header_value(std::begin(buf), 2, 0);
 
-  CU_ASSERT(("2 nghttpx" == StringRef{std::begin(buf), end}));
+  assert_stdstring_equal("2 nghttpx", (std::string{std::begin(buf), end}));
 }
 
 void test_shrpx_http_create_affinity_cookie(void) {
   BlockAllocator balloc(1024, 1024);
   StringRef c;
 
-  c = http::create_affinity_cookie(balloc, StringRef::from_lit("cookie-val"),
-                                   0xf1e2d3c4u, StringRef{}, false);
+  c = http::create_affinity_cookie(balloc, "cookie-val"_sr, 0xf1e2d3c4u,
+                                   StringRef{}, false);
 
-  CU_ASSERT("cookie-val=f1e2d3c4" == c);
+  assert_stdsv_equal("cookie-val=f1e2d3c4"sv, c);
 
-  c = http::create_affinity_cookie(balloc, StringRef::from_lit("alpha"),
-                                   0x00000000u, StringRef{}, true);
-
-  CU_ASSERT("alpha=00000000; Secure" == c);
-
-  c = http::create_affinity_cookie(balloc, StringRef::from_lit("bravo"),
-                                   0x01111111u, StringRef::from_lit("bar"),
-                                   false);
-
-  CU_ASSERT("bravo=01111111; Path=bar" == c);
-
-  c = http::create_affinity_cookie(balloc, StringRef::from_lit("charlie"),
-                                   0x01111111u, StringRef::from_lit("bar"),
+  c = http::create_affinity_cookie(balloc, "alpha"_sr, 0x00000000u, StringRef{},
                                    true);
 
-  CU_ASSERT("charlie=01111111; Path=bar; Secure" == c);
+  assert_stdsv_equal("alpha=00000000; Secure"sv, c);
+
+  c = http::create_affinity_cookie(balloc, "bravo"_sr, 0x01111111u, "bar"_sr,
+                                   false);
+
+  assert_stdsv_equal("bravo=01111111; Path=bar"sv, c);
+
+  c = http::create_affinity_cookie(balloc, "charlie"_sr, 0x01111111u, "bar"_sr,
+                                   true);
+
+  assert_stdsv_equal("charlie=01111111; Path=bar; Secure"sv, c);
 }
 
 void test_shrpx_http_create_altsvc_header_value(void) {
@@ -123,46 +132,46 @@ void test_shrpx_http_create_altsvc_header_value(void) {
     BlockAllocator balloc(1024, 1024);
     std::vector<AltSvc> altsvcs{
         AltSvc{
-            .protocol_id = StringRef::from_lit("h3"),
-            .host = StringRef::from_lit("127.0.0.1"),
-            .service = StringRef::from_lit("443"),
-            .params = StringRef::from_lit("ma=3600"),
+            .protocol_id = "h3"_sr,
+            .host = "127.0.0.1"_sr,
+            .service = "443"_sr,
+            .params = "ma=3600"_sr,
         },
     };
 
-    CU_ASSERT(R"(h3="127.0.0.1:443"; ma=3600)" ==
-              http::create_altsvc_header_value(balloc, altsvcs));
+    assert_stdsv_equal(R"(h3="127.0.0.1:443"; ma=3600)"sv,
+                       http::create_altsvc_header_value(balloc, altsvcs));
   }
 
   {
     BlockAllocator balloc(1024, 1024);
     std::vector<AltSvc> altsvcs{
         AltSvc{
-            .protocol_id = StringRef::from_lit("h3"),
-            .service = StringRef::from_lit("443"),
-            .params = StringRef::from_lit("ma=3600"),
+            .protocol_id = "h3"_sr,
+            .service = "443"_sr,
+            .params = "ma=3600"_sr,
         },
         AltSvc{
-            .protocol_id = StringRef::from_lit("h3%"),
-            .host = StringRef::from_lit("\"foo\""),
-            .service = StringRef::from_lit("4433"),
+            .protocol_id = "h3%"_sr,
+            .host = "\"foo\""_sr,
+            .service = "4433"_sr,
         },
     };
 
-    CU_ASSERT(R"(h3=":443"; ma=3600, h3%25="\"foo\":4433")" ==
-              http::create_altsvc_header_value(balloc, altsvcs));
+    assert_stdsv_equal(R"(h3=":443"; ma=3600, h3%25="\"foo\":4433")"sv,
+                       http::create_altsvc_header_value(balloc, altsvcs));
   }
 }
 
 void test_shrpx_http_check_http_scheme(void) {
-  CU_ASSERT(http::check_http_scheme(StringRef::from_lit("https"), true));
-  CU_ASSERT(!http::check_http_scheme(StringRef::from_lit("https"), false));
-  CU_ASSERT(!http::check_http_scheme(StringRef::from_lit("http"), true));
-  CU_ASSERT(http::check_http_scheme(StringRef::from_lit("http"), false));
-  CU_ASSERT(!http::check_http_scheme(StringRef::from_lit("foo"), true));
-  CU_ASSERT(!http::check_http_scheme(StringRef::from_lit("foo"), false));
-  CU_ASSERT(!http::check_http_scheme(StringRef{}, true));
-  CU_ASSERT(!http::check_http_scheme(StringRef{}, false));
+  assert_true(http::check_http_scheme("https"_sr, true));
+  assert_false(http::check_http_scheme("https"_sr, false));
+  assert_false(http::check_http_scheme("http"_sr, true));
+  assert_true(http::check_http_scheme("http"_sr, false));
+  assert_false(http::check_http_scheme("foo"_sr, true));
+  assert_false(http::check_http_scheme("foo"_sr, false));
+  assert_false(http::check_http_scheme(StringRef{}, true));
+  assert_false(http::check_http_scheme(StringRef{}, false));
 }
 
 } // namespace shrpx

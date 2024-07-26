@@ -22,7 +22,7 @@ Enums
     .. enum:: NGHTTP2_ERR_WOULDBLOCK
 
         (``-504``) 
-        Used as a return value from :type:`nghttp2_send_callback`,
+        Used as a return value from :type:`nghttp2_send_callback2`,
         :type:`nghttp2_recv_callback` and
         :type:`nghttp2_send_data_callback` to indicate that the operation
         would block.
@@ -42,9 +42,9 @@ Enums
 
         (``-508``) 
         Used as a return value from
-        :func:`nghttp2_data_source_read_callback` to indicate that data
+        :func:`nghttp2_data_source_read_callback2` to indicate that data
         transfer is postponed.  See
-        :func:`nghttp2_data_source_read_callback` for details.
+        :func:`nghttp2_data_source_read_callback2` for details.
     .. enum:: NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE
 
         (``-509``) 
@@ -178,7 +178,7 @@ Enums
     .. enum:: NGHTTP2_ERR_FATAL
 
         (``-900``) 
-        The errors < :macro:`nghttp2_error.NGHTTP2_ERR_FATAL` mean that
+        The errors < :enum:`nghttp2_error.NGHTTP2_ERR_FATAL` mean that
         the library is under unexpected condition and processing was
         terminated (e.g., out of memory).  If application receives this
         error code, it must stop using that :type:`nghttp2_session`
@@ -206,6 +206,11 @@ Enums
         response for the peer initiated frames, and peer can cause memory
         exhaustion on server side to send these frames forever and does
         not read network.
+    .. enum:: NGHTTP2_ERR_TOO_MANY_CONTINUATIONS
+
+        (``-905``) 
+        When a local endpoint receives too many CONTINUATION frames
+        following a HEADER frame.
 
 .. type:: nghttp2_nv_flag
 
@@ -431,7 +436,7 @@ Enums
 
     
     The flags used to set in *data_flags* output parameter in
-    :type:`nghttp2_data_source_read_callback`.
+    :type:`nghttp2_data_source_read_callback2`.
 
     .. enum:: NGHTTP2_DATA_FLAG_NONE
 
@@ -446,8 +451,8 @@ Enums
         (``0x02``) 
         Indicates that END_STREAM flag must not be set even if
         NGHTTP2_DATA_FLAG_EOF is set.  Usually this flag is used to send
-        trailer fields with `nghttp2_submit_request()` or
-        `nghttp2_submit_response()`.
+        trailer fields with `nghttp2_submit_request2()` or
+        `nghttp2_submit_response2()`.
     .. enum:: NGHTTP2_DATA_FLAG_NO_COPY
 
         (``0x04``) 

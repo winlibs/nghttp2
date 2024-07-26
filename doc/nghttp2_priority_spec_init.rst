@@ -10,6 +10,12 @@ Synopsis
 .. function:: void nghttp2_priority_spec_init(nghttp2_priority_spec *pri_spec, int32_t stream_id, int32_t weight, int exclusive)
 
     
+    .. warning::
+    
+      Deprecated.  :rfc:`7540` priorities are deprecated by
+      :rfc:`9113`.  Consider migrating to :rfc:`9218` extensible
+      prioritization scheme.
+    
     Initializes *pri_spec* with the *stream_id* of the stream to depend
     on with *weight* and its exclusive flag.  If *exclusive* is
     nonzero, exclusive flag is set.

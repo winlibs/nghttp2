@@ -11,7 +11,7 @@ Synopsis
 
     
     Returns stream_user_data for the stream *stream_id*.  The
-    stream_user_data is provided by `nghttp2_submit_request()`,
+    stream_user_data is provided by `nghttp2_submit_request2()`,
     `nghttp2_submit_headers()` or
     `nghttp2_session_set_stream_user_data()`.  Unless it is set using
     `nghttp2_session_set_stream_user_data()`, if the stream is

@@ -47,6 +47,7 @@
 #include <thread>
 #include <future>
 #include <random>
+#include <string_view>
 
 #include <openssl/err.h>
 
@@ -84,15 +85,6 @@ namespace h2load {
 namespace {
 bool recorded(const std::chrono::steady_clock::time_point &t) {
   return std::chrono::steady_clock::duration::zero() != t.time_since_epoch();
-}
-} // namespace
-
-namespace {
-std::ofstream keylog_file;
-void keylog_callback(const SSL *ssl, const char *line) {
-  keylog_file.write(line, strlen(line));
-  keylog_file.put('\n');
-  keylog_file.flush();
 }
 } // namespace
 
@@ -410,7 +402,7 @@ namespace {
 void client_request_timeout_cb(struct ev_loop *loop, ev_timer *w, int revents) {
   auto client = static_cast<Client *>(w->data);
 
-  if (client->streams.size() >= (size_t)config.max_concurrent_streams) {
+  if (client->streams.size() >= config.max_concurrent_streams) {
     ev_timer_stop(client->worker->loop, w);
     return;
   }
@@ -582,8 +574,12 @@ int Client::make_socket(addrinfo *addr) {
     }
   }
 
-  if (ssl && !util::numeric_host(config.host.c_str())) {
-    SSL_set_tlsext_host_name(ssl, config.host.c_str());
+  if (ssl) {
+    if (!config.sni.empty()) {
+      SSL_set_tlsext_host_name(ssl, config.sni.c_str());
+    } else if (!util::numeric_host(config.host.c_str())) {
+      SSL_set_tlsext_host_name(ssl, config.host.c_str());
+    }
   }
 
   if (config.is_quic()) {
@@ -831,6 +827,7 @@ void Client::process_request_failure() {
             << std::endl;
 }
 
+#ifndef NGHTTP2_OPENSSL_IS_BORINGSSL
 namespace {
 void print_server_tmp_key(SSL *ssl) {
   EVP_PKEY *key;
@@ -852,7 +849,7 @@ void print_server_tmp_key(SSL *ssl) {
     std::cout << "DH " << EVP_PKEY_bits(key) << " bits" << std::endl;
     break;
   case EVP_PKEY_EC: {
-#if OPENSSL_3_0_0_API
+#  if OPENSSL_3_0_0_API
     std::array<char, 64> curve_name;
     const char *cname;
     if (!EVP_PKEY_get_utf8_string_param(key, "group", curve_name.data(),
@@ -861,7 +858,7 @@ void print_server_tmp_key(SSL *ssl) {
     } else {
       cname = curve_name.data();
     }
-#else  // !OPENSSL_3_0_0_API
+#  else  // !OPENSSL_3_0_0_API
     auto ec = EVP_PKEY_get1_EC_KEY(key);
     auto ec_del = defer(EC_KEY_free, ec);
     auto nid = EC_GROUP_get_curve_name(EC_KEY_get0_group(ec));
@@ -869,7 +866,7 @@ void print_server_tmp_key(SSL *ssl) {
     if (!cname) {
       cname = OBJ_nid2sn(nid);
     }
-#endif // !OPENSSL_3_0_0_API
+#  endif // !OPENSSL_3_0_0_API
 
     std::cout << "ECDH " << cname << " " << EVP_PKEY_bits(key) << " bits"
               << std::endl;
@@ -882,6 +879,7 @@ void print_server_tmp_key(SSL *ssl) {
   }
 }
 } // namespace
+#endif // !NGHTTP2_OPENSSL_IS_BORINGSSL
 
 void Client::report_tls_info() {
   if (worker->id == 0 && !worker->tls_info_report_done) {
@@ -889,7 +887,9 @@ void Client::report_tls_info() {
     auto cipher = SSL_get_current_cipher(ssl);
     std::cout << "TLS Protocol: " << tls::get_tls_protocol(ssl) << "\n"
               << "Cipher: " << SSL_CIPHER_get_name(cipher) << std::endl;
+#ifndef NGHTTP2_OPENSSL_IS_BORINGSSL
     print_server_tmp_key(ssl);
+#endif // !NGHTTP2_OPENSSL_IS_BORINGSSL
   }
 }
 
@@ -932,7 +932,7 @@ void Client::on_header(int32_t stream_id, const uint8_t *name, size_t namelen,
   }
 
   if (stream.status_success == -1 && namelen == 7 &&
-      util::streq_l(":status", name, namelen)) {
+      ":status"_sr == StringRef{name, namelen}) {
     int status = 0;
     for (size_t i = 0; i < valuelen; ++i) {
       if ('0' <= value[i] && value[i] <= '9') {
@@ -1106,20 +1106,19 @@ int Client::connection_made() {
       if (config.is_quic()) {
 #ifdef ENABLE_HTTP3
         assert(session);
-        if (!util::streq(StringRef{&NGHTTP3_ALPN_H3[1]}, proto) &&
-            !util::streq_l("h3-29", proto)) {
+        if ("h3"_sr != proto && "h3-29"_sr != proto) {
           return -1;
         }
 #endif // ENABLE_HTTP3
       } else if (util::check_h2_is_selected(proto)) {
         session = std::make_unique<Http2Session>(this);
-      } else if (util::streq(NGHTTP2_H1_1, proto)) {
+      } else if (NGHTTP2_H1_1 == proto) {
         session = std::make_unique<Http1Session>(this);
       }
 
       // Just assign next_proto to selected_proto anyway to show the
       // negotiation result.
-      selected_proto = proto.str();
+      selected_proto = proto;
     } else if (config.is_quic()) {
       std::cerr << "QUIC requires ALPN negotiation" << std::endl;
       return -1;
@@ -1128,11 +1127,11 @@ int Client::connection_made() {
                 << std::endl;
 
       for (const auto &proto : config.alpn_list) {
-        if (util::streq(NGHTTP2_H1_1_ALPN, StringRef{proto})) {
+        if (NGHTTP2_H1_1_ALPN == proto) {
           std::cout << "Server does not support ALPN. Falling back to HTTP/1.1."
                     << std::endl;
           session = std::make_unique<Http1Session>(this);
-          selected_proto = NGHTTP2_H1_1.str();
+          selected_proto = NGHTTP2_H1_1;
           break;
         }
       }
@@ -1160,7 +1159,7 @@ int Client::connection_made() {
       break;
     case Config::PROTO_HTTP1_1:
       session = std::make_unique<Http1Session>(this);
-      selected_proto = NGHTTP2_H1_1.str();
+      selected_proto = NGHTTP2_H1_1;
       break;
     default:
       // unreachable
@@ -1866,7 +1865,7 @@ std::string get_reqline(const char *uri, const http_parser_url &u) {
   std::string reqline;
 
   if (util::has_uri_field(u, UF_PATH)) {
-    reqline = util::get_uri_field(uri, u, UF_PATH).str();
+    reqline = util::get_uri_field(uri, u, UF_PATH);
   } else {
     reqline = "/";
   }
@@ -1881,20 +1880,20 @@ std::string get_reqline(const char *uri, const http_parser_url &u) {
 } // namespace
 
 namespace {
-constexpr char UNIX_PATH_PREFIX[] = "unix:";
+constexpr auto UNIX_PATH_PREFIX = "unix:"_sr;
 } // namespace
 
 namespace {
 bool parse_base_uri(const StringRef &base_uri) {
   http_parser_url u{};
-  if (http_parser_parse_url(base_uri.c_str(), base_uri.size(), 0, &u) != 0 ||
+  if (http_parser_parse_url(base_uri.data(), base_uri.size(), 0, &u) != 0 ||
       !util::has_uri_field(u, UF_SCHEMA) || !util::has_uri_field(u, UF_HOST)) {
     return false;
   }
 
-  config.scheme = util::get_uri_field(base_uri.c_str(), u, UF_SCHEMA).str();
-  config.host = util::get_uri_field(base_uri.c_str(), u, UF_HOST).str();
-  config.default_port = util::get_default_port(base_uri.c_str(), u);
+  config.scheme = util::get_uri_field(base_uri.data(), u, UF_SCHEMA);
+  config.host = util::get_uri_field(base_uri.data(), u, UF_HOST);
+  config.default_port = util::get_default_port(base_uri.data(), u);
   if (util::has_uri_field(u, UF_PORT)) {
     config.port = u.port;
   } else {
@@ -2038,7 +2037,7 @@ namespace {
 int parse_header_table_size(uint32_t &dst, const char *opt,
                             const char *optarg) {
   auto n = util::parse_uint_with_unit(optarg);
-  if (n == -1) {
+  if (!n) {
     std::cerr << "--" << opt << ": Bad option value: " << optarg << std::endl;
     return -1;
   }
@@ -2049,7 +2048,7 @@ int parse_header_table_size(uint32_t &dst, const char *opt,
     return -1;
   }
 
-  dst = n;
+  dst = *n;
 
   return 0;
 }
@@ -2091,7 +2090,7 @@ benchmarking tool for HTTP/2 server)"
 } // namespace
 
 namespace {
-constexpr char DEFAULT_ALPN_LIST[] = "h2,h2-16,h2-14,http/1.1";
+constexpr auto DEFAULT_ALPN_LIST = "h2,h2-16,h2-14,http/1.1"_sr;
 } // namespace
 
 namespace {
@@ -2301,6 +2300,9 @@ Options:
   --max-udp-payload-size=<SIZE>
               Specify the maximum outgoing UDP datagram payload size.
   --ktls      Enable ktls.
+  --sni=<DNSNAME>
+              Send  <DNSNAME> in  TLS  SNI, overriding  the host  name
+              specified in URI.
   -v, --verbose
               Output debug information.
   --version   Display version information and exit.
@@ -2363,6 +2365,7 @@ int main(int argc, char **argv) {
         {"max-udp-payload-size", required_argument, &flag, 17},
         {"ktls", no_argument, &flag, 18},
         {"alpn-list", required_argument, &flag, 19},
+        {"sni", required_argument, &flag, 20},
         {nullptr, 0, nullptr, 0}};
     int option_index = 0;
     auto c = getopt_long(argc, argv,
@@ -2374,21 +2377,21 @@ int main(int argc, char **argv) {
     switch (c) {
     case 'n': {
       auto n = util::parse_uint(optarg);
-      if (n == -1) {
+      if (!n) {
         std::cerr << "-n: bad option value: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.nreqs = n;
+      config.nreqs = *n;
       nreqs_set_manually = true;
       break;
     }
     case 'c': {
       auto n = util::parse_uint(optarg);
-      if (n == -1) {
+      if (!n) {
         std::cerr << "-c: bad option value: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.nclients = n;
+      config.nclients = *n;
       break;
     }
     case 'd':
@@ -2400,55 +2403,55 @@ int main(int argc, char **argv) {
                 << "no threads created." << std::endl;
 #else
       auto n = util::parse_uint(optarg);
-      if (n == -1) {
+      if (!n) {
         std::cerr << "-t: bad option value: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.nthreads = n;
+      config.nthreads = *n;
 #endif // NOTHREADS
       break;
     }
     case 'm': {
       auto n = util::parse_uint(optarg);
-      if (n == -1) {
+      if (!n) {
         std::cerr << "-m: bad option value: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.max_concurrent_streams = n;
+      config.max_concurrent_streams = *n;
       break;
     }
     case 'w':
     case 'W': {
       auto n = util::parse_uint(optarg);
-      if (n == -1 || n > 30) {
+      if (!n || n > 30) {
         std::cerr << "-" << static_cast<char>(c)
                   << ": specify the integer in the range [0, 30], inclusive"
                   << std::endl;
         exit(EXIT_FAILURE);
       }
       if (c == 'w') {
-        config.window_bits = n;
+        config.window_bits = *n;
       } else {
-        config.connection_window_bits = n;
+        config.connection_window_bits = *n;
       }
       break;
     }
     case 'f': {
       auto n = util::parse_uint_with_unit(optarg);
-      if (n == -1) {
+      if (!n) {
         std::cerr << "--max-frame-size: bad option value: " << optarg
                   << std::endl;
         exit(EXIT_FAILURE);
       }
-      if (static_cast<uint64_t>(n) < 16_k) {
+      if (static_cast<uint64_t>(*n) < 16_k) {
         std::cerr << "--max-frame-size: minimum 16384" << std::endl;
         exit(EXIT_FAILURE);
       }
-      if (static_cast<uint64_t>(n) > 16_m - 1) {
+      if (static_cast<uint64_t>(*n) > 16_m - 1) {
         std::cerr << "--max-frame-size: maximum 16777215" << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.max_frame_size = n;
+      config.max_frame_size = *n;
       break;
     }
     case 'H': {
@@ -2482,8 +2485,7 @@ int main(int argc, char **argv) {
       break;
     case 'p': {
       auto proto = StringRef{optarg};
-      if (util::strieq(StringRef::from_lit(NGHTTP2_CLEARTEXT_PROTO_VERSION_ID),
-                       proto)) {
+      if (util::strieq(NGHTTP2_CLEARTEXT_PROTO_VERSION_ID ""_sr, proto)) {
         config.no_tls_proto = Config::PROTO_HTTP2;
       } else if (util::strieq(NGHTTP2_H1_1, proto)) {
         config.no_tls_proto = Config::PROTO_HTTP1_1;
@@ -2495,7 +2497,7 @@ int main(int argc, char **argv) {
     }
     case 'r': {
       auto n = util::parse_uint(optarg);
-      if (n == -1) {
+      if (!n) {
         std::cerr << "-r: bad option value: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
@@ -2504,36 +2506,40 @@ int main(int argc, char **argv) {
                   << "must be positive." << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.rate = n;
+      config.rate = *n;
       break;
     }
-    case 'T':
-      config.conn_active_timeout = util::parse_duration_with_unit(optarg);
-      if (!std::isfinite(config.conn_active_timeout)) {
+    case 'T': {
+      auto d = util::parse_duration_with_unit(optarg);
+      if (!d) {
         std::cerr << "-T: bad value for the conn_active_timeout wait time: "
                   << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
+      config.conn_active_timeout = *d;
       break;
-    case 'N':
-      config.conn_inactivity_timeout = util::parse_duration_with_unit(optarg);
-      if (!std::isfinite(config.conn_inactivity_timeout)) {
+    }
+    case 'N': {
+      auto d = util::parse_duration_with_unit(optarg);
+      if (!d) {
         std::cerr << "-N: bad value for the conn_inactivity_timeout wait time: "
                   << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
+      config.conn_inactivity_timeout = *d;
       break;
+    }
     case 'B': {
       auto arg = StringRef{optarg};
       config.base_uri = "";
       config.base_uri_unix = false;
 
-      if (util::istarts_with_l(arg, UNIX_PATH_PREFIX)) {
+      if (util::istarts_with(arg, UNIX_PATH_PREFIX)) {
         // UNIX domain socket path
         sockaddr_un un;
 
-        auto path = StringRef{std::begin(arg) + str_size(UNIX_PATH_PREFIX),
-                              std::end(arg)};
+        auto path =
+            StringRef{std::begin(arg) + UNIX_PATH_PREFIX.size(), std::end(arg)};
 
         if (path.size() == 0 || path.size() + 1 > sizeof(un.sun_path)) {
           std::cerr << "--base-uri: invalid UNIX domain socket path: " << arg
@@ -2556,16 +2562,18 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
       }
 
-      config.base_uri = arg.str();
+      config.base_uri = arg;
       break;
     }
-    case 'D':
-      config.duration = util::parse_duration_with_unit(optarg);
-      if (!std::isfinite(config.duration)) {
+    case 'D': {
+      auto d = util::parse_duration_with_unit(optarg);
+      if (!d) {
         std::cerr << "-D: value error " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
+      config.duration = *d;
       break;
+    }
     case 'v':
       config.verbose = true;
       break;
@@ -2590,18 +2598,19 @@ int main(int argc, char **argv) {
         config.ifile = optarg;
         config.timing_script = true;
         break;
-      case 5:
+      case 5: {
         // rate-period
-        config.rate_period = util::parse_duration_with_unit(optarg);
-        if (!std::isfinite(config.rate_period)) {
+        auto d = util::parse_duration_with_unit(optarg);
+        if (!d) {
           std::cerr << "--rate-period: value error " << optarg << std::endl;
           exit(EXIT_FAILURE);
         }
+        config.rate_period = *d;
         break;
+      }
       case 6:
         // --h1
-        config.alpn_list =
-            util::parse_config_str_list(StringRef::from_lit("http/1.1"));
+        config.alpn_list = util::parse_config_str_list("http/1.1"_sr);
         config.no_tls_proto = Config::PROTO_HTTP1_1;
         break;
       case 7:
@@ -2618,14 +2627,16 @@ int main(int argc, char **argv) {
           exit(EXIT_FAILURE);
         }
         break;
-      case 9:
+      case 9: {
         // --warm-up-time
-        config.warm_up_time = util::parse_duration_with_unit(optarg);
-        if (!std::isfinite(config.warm_up_time)) {
+        auto d = util::parse_duration_with_unit(optarg);
+        if (!d) {
           std::cerr << "--warm-up-time: value error " << optarg << std::endl;
           exit(EXIT_FAILURE);
         }
+        config.warm_up_time = *d;
         break;
+      }
       case 10:
         // --log-file
         logfile = optarg;
@@ -2635,11 +2646,12 @@ int main(int argc, char **argv) {
         auto p = util::split_hostport(StringRef{optarg});
         int64_t port = 0;
         if (p.first.empty() ||
-            (!p.second.empty() && (port = util::parse_uint(p.second)) == -1)) {
+            (!p.second.empty() &&
+             (port = util::parse_uint(p.second).value_or(-1)) == -1)) {
           std::cerr << "--connect-to: Invalid value " << optarg << std::endl;
           exit(EXIT_FAILURE);
         }
-        config.connect_to_host = p.first.str();
+        config.connect_to_host = p.first;
         config.connect_to_port = port;
         break;
       }
@@ -2673,17 +2685,17 @@ int main(int argc, char **argv) {
       case 17: {
         // --max-udp-payload-size
         auto n = util::parse_uint_with_unit(optarg);
-        if (n == -1) {
+        if (!n) {
           std::cerr << "--max-udp-payload-size: bad option value: " << optarg
                     << std::endl;
           exit(EXIT_FAILURE);
         }
-        if (static_cast<uint64_t>(n) > 64_k) {
+        if (static_cast<uint64_t>(*n) > 64_k) {
           std::cerr << "--max-udp-payload-size: must not exceed 65536"
                     << std::endl;
           exit(EXIT_FAILURE);
         }
-        config.max_udp_payload_size = n;
+        config.max_udp_payload_size = *n;
         break;
       }
       case 18:
@@ -2698,6 +2710,10 @@ int main(int argc, char **argv) {
       case 19:
         // alpn-list option
         config.alpn_list = util::parse_config_str_list(StringRef{optarg});
+        break;
+      case 20:
+        // --sni
+        config.sni = optarg;
         break;
       }
       break;
@@ -2720,8 +2736,7 @@ int main(int argc, char **argv) {
   }
 
   if (config.alpn_list.empty()) {
-    config.alpn_list =
-        util::parse_config_str_list(StringRef::from_lit(DEFAULT_ALPN_LIST));
+    config.alpn_list = util::parse_config_str_list(DEFAULT_ALPN_LIST);
   }
 
   // serialize the APLN tokens
@@ -2965,13 +2980,20 @@ int main(int argc, char **argv) {
 
   SSL_CTX_set_alpn_protos(ssl_ctx, proto_list.data(), proto_list.size());
 
-  auto keylog_filename = getenv("SSLKEYLOGFILE");
-  if (keylog_filename) {
-    keylog_file.open(keylog_filename, std::ios_base::app);
-    if (keylog_file) {
-      SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
-    }
+  if (tls::setup_keylog_callback(ssl_ctx) != 0) {
+    std::cerr << "Failed to setup keylog" << std::endl;
+
+    exit(EXIT_FAILURE);
   }
+
+#if defined(NGHTTP2_OPENSSL_IS_BORINGSSL) && defined(HAVE_LIBBROTLI)
+  if (!SSL_CTX_add_cert_compression_alg(
+          ssl_ctx, nghttp2::tls::CERTIFICATE_COMPRESSION_ALGO_BROTLI,
+          nghttp2::tls::cert_compress, nghttp2::tls::cert_decompress)) {
+    std::cerr << "SSL_CTX_add_cert_compression_alg failed" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+#endif // NGHTTP2_OPENSSL_IS_BORINGSSL && HAVE_LIBBROTLI
 
   std::string user_agent = "h2load nghttp2/" NGHTTP2_VERSION;
   Headers shared_nva;
@@ -2981,15 +3003,15 @@ int main(int argc, char **argv) {
   shared_nva.emplace_back("user-agent", user_agent);
 
   // list header fields that can be overridden.
-  auto override_hdrs = make_array<std::string>(":authority", ":host", ":method",
-                                               ":scheme", "user-agent");
+  auto override_hdrs = std::to_array<std::string_view>(
+      {":authority", "host", ":method", ":scheme", "user-agent"});
 
   for (auto &kv : config.custom_headers) {
     if (std::find(std::begin(override_hdrs), std::end(override_hdrs),
                   kv.name) != std::end(override_hdrs)) {
       // override header
       for (auto &nv : shared_nva) {
-        if ((nv.name == ":authority" && kv.name == ":host") ||
+        if ((nv.name == ":authority" && kv.name == "host") ||
             (nv.name == kv.name)) {
           nv.value = kv.value;
         }
@@ -3049,15 +3071,15 @@ int main(int argc, char **argv) {
     // 2 for :path, and possible content-length
     nva.reserve(2 + shared_nva.size());
 
-    nva.push_back(http2::make_nv_ls(":path", req));
+    nva.push_back(http2::make_field_v(":path"_sr, req));
 
     for (auto &nv : shared_nva) {
-      nva.push_back(http2::make_nv(nv.name, nv.value, false));
+      nva.push_back(http2::make_field_nv(nv.name, nv.value));
     }
 
     if (!content_length_str.empty()) {
-      nva.push_back(http2::make_nv(StringRef::from_lit("content-length"),
-                                   StringRef{content_length_str}));
+      nva.push_back(
+          http2::make_field_nv("content-length"_sr, content_length_str));
     }
 
     config.nva.push_back(std::move(nva));
@@ -3079,18 +3101,18 @@ int main(int argc, char **argv) {
 
 #ifndef NOTHREADS
   size_t nreqs_per_thread = 0;
-  ssize_t nreqs_rem = 0;
+  size_t nreqs_rem = 0;
 
   if (!config.timing_script) {
     nreqs_per_thread = config.nreqs / config.nthreads;
     nreqs_rem = config.nreqs % config.nthreads;
   }
 
-  size_t nclients_per_thread = config.nclients / config.nthreads;
-  ssize_t nclients_rem = config.nclients % config.nthreads;
+  auto nclients_per_thread = config.nclients / config.nthreads;
+  auto nclients_rem = config.nclients % config.nthreads;
 
-  size_t rate_per_thread = config.rate / config.nthreads;
-  ssize_t rate_per_thread_rem = config.rate % config.nthreads;
+  auto rate_per_thread = config.rate / config.nthreads;
+  auto rate_per_thread_rem = config.rate % config.nthreads;
 
   size_t max_samples_per_thread =
       std::max(static_cast<size_t>(256), MAX_SAMPLES / config.nthreads);
