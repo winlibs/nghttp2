@@ -85,6 +85,9 @@
 /* Define to 1 if you have `libngtcp2_crypto_quictls` library. */
 #undef HAVE_LIBNGTCP2_CRYPTO_QUICTLS
 
+/* Define to 1 if you have `libngtcp2_crypto_wolfssl` library. */
+#undef HAVE_LIBNGTCP2_CRYPTO_WOLFSSL
+
 /* Define to 1 if you have `libsystemd` library. */
 #undef HAVE_LIBSYSTEMD
 
@@ -126,6 +129,9 @@
 
 /* Define to 1 if you have `neverbleed` library. */
 #undef HAVE_NEVERBLEED
+
+/* Define to 1 if you have the `pipe2' function. */
+#undef HAVE_PIPE2
 
 /* Define to 1 if the system has the type `ptrdiff_t'. */
 #undef HAVE_PTRDIFF_T
@@ -231,6 +237,9 @@
 
 /* Define to 1 if you have the <windows.h> header file. */
 #undef HAVE_WINDOWS_H
+
+/* Define to 1 if you have 'wolfssl' library. */
+#undef HAVE_WOLFSSL
 
 /* Define to 1 if `fork' works. */
 #undef HAVE_WORKING_FORK
