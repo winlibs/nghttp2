@@ -14,6 +14,12 @@ Synopsis
     :authority or host header field is valid according to
     https://tools.ietf.org/html/rfc3986#section-3.2
     
+    Note that :authority and host field values are not authority.  They
+    do not include userinfo in RFC 3986, see
+    https://datatracker.ietf.org/doc/html/rfc3986#section-3.2.2, that
+    is, it does not include '@'.  This function treats '@' as a valid
+    character.
+    
     *value* is valid if it merely consists of the allowed characters.
     In particular, it does not check whether *value* follows the syntax
     of authority.
