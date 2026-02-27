@@ -25,7 +25,7 @@ dnl Do not change user variables!
 dnl https://www.gnu.org/software/automake/manual/html_node/Flag-Variables-Ordering.html
 
 AC_PREREQ(2.61)
-AC_INIT([nghttp2], [1.64.0], [t-tujikawa@users.sourceforge.net])
+AC_INIT([nghttp2], [1.68.0], [t-tujikawa@users.sourceforge.net])
 AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([config.h])
@@ -44,9 +44,9 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
 dnl See versioning rule:
 dnl  https://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
-AC_SUBST(LT_CURRENT, 42)
-AC_SUBST(LT_REVISION, 3)
-AC_SUBST(LT_AGE, 28)
+AC_SUBST(LT_CURRENT, 43)
+AC_SUBST(LT_REVISION, 2)
+AC_SUBST(LT_AGE, 29)
 
 major=`echo $PACKAGE_VERSION |cut -d. -f1 | sed -e "s/[^0-9]//g"`
 minor=`echo $PACKAGE_VERSION |cut -d. -f2 | sed -e "s/[^0-9]//g"`
@@ -272,22 +272,6 @@ std::vector<std::future<int>> v;
     [have_std_future=no
      AC_MSG_RESULT([no])])
 
-# Check that std::map::emplace is available for g++-4.7.
-AC_MSG_CHECKING([whether std::map::emplace is available])
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
-[[
-#include <map>
-]],
-[[
-std::map<int, int>().emplace(1, 2);
-]])],
-    [AC_DEFINE([HAVE_STD_MAP_EMPLACE], [1],
-               [Define to 1 if you have the `std::map::emplace`.])
-     have_std_map_emplace=yes
-     AC_MSG_RESULT([yes])],
-    [have_std_map_emplace=no
-     AC_MSG_RESULT([no])])
-
 # Check that std::atomic<std::shared_ptr<T>> is supported.
 AC_MSG_CHECKING([whether std::atomic<std::shared_ptr<T>> is supported])
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
@@ -307,19 +291,21 @@ a.store(p);
     [have_atomic_std_shared_ptr=no
      AC_MSG_RESULT([no])])
 
-# Check that thread_local storage specifier is available
-AC_MSG_CHECKING([whether thread_local storage class specifier is available.])
+# Check that std::chrono::time_zone is available.
+AC_MSG_CHECKING([whether std::chrono::time_zone is available])
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
-,
 [[
-thread_local int a = 0;
-(void)a;
+#include <chrono>
+]],
+[[
+auto tz = std::chrono::current_zone();
+(void)tz;
 ]])],
-    [AC_DEFINE([HAVE_THREAD_LOCAL], [1],
-               [Define to 1 if you have thread_local storage specifier.])
-     have_thread_local=yes
+    [AC_DEFINE([HAVE_STD_CHRONO_TIME_ZONE], [1],
+               [Define to 1 if you have the `std::chrono::time_zone`.])
+     have_std_chrono_time_zone=yes
      AC_MSG_RESULT([yes])],
-    [have_Thread_local=no
+    [have_std_chrono_time_zone=no
      AC_MSG_RESULT([no])])
 
 CXXFLAGS=$save_CXXFLAGS
@@ -450,6 +436,22 @@ if test "x${request_openssl}" != "xno" &&
     [AC_MSG_RESULT([yes]); have_ssl_provide_quic_data=yes],
     [AC_MSG_RESULT([no]); have_ssl_provide_quic_data=no])
 
+    # Check whether this is libressl or not
+    AC_CHECK_DECLS([LIBRESSL_VERSION_NUMBER],
+                   [have_libressl=yes], [have_libressl=no],
+    [[
+    #include <openssl/opensslv.h>
+    ]])
+
+    AC_MSG_CHECKING([for SSL_set_quic_tls_cbs])
+    AC_LINK_IFELSE([AC_LANG_PROGRAM([[
+      #include <openssl/ssl.h>
+    ]], [[
+      SSL_set_quic_tls_cbs(NULL, NULL, NULL);
+    ]])],
+    [AC_MSG_RESULT([yes]); have_ossl_quic=yes],
+    [AC_MSG_RESULT([no]); have_ossl_quic=no])
+
     # boringssl has SSL_set_quic_early_data_context.
     AC_MSG_CHECKING([for SSL_set_quic_early_data_context])
     AC_LINK_IFELSE([AC_LANG_PROGRAM([[
@@ -530,7 +532,7 @@ fi
 # ngtcp2 (for src)
 have_libngtcp2=no
 if test "x${request_libngtcp2}" != "xno"; then
-  PKG_CHECK_MODULES([LIBNGTCP2], [libngtcp2 >= 1.4.0], [have_libngtcp2=yes],
+  PKG_CHECK_MODULES([LIBNGTCP2], [libngtcp2 >= 1.16.0], [have_libngtcp2=yes],
                     [have_libngtcp2=no])
   if test "x${have_libngtcp2}" = "xno"; then
     AC_MSG_NOTICE($LIBNGTCP2_PKG_ERRORS)
@@ -547,7 +549,7 @@ have_libngtcp2_crypto_wolfssl=no
 if test "x${have_wolfssl_quic}" = "xyes" &&
    test "x${request_libngtcp2}" != "xno"; then
   PKG_CHECK_MODULES([LIBNGTCP2_CRYPTO_WOLFSSL],
-                    [libngtcp2_crypto_wolfssl >= 1.0.0],
+                    [libngtcp2_crypto_wolfssl >= 1.16.0],
                     [have_libngtcp2_crypto_wolfssl=yes],
                     [have_libngtcp2_crypto_wolfssl=no])
   if test "x${have_libngtcp2_crypto_wolfssl}" = "xno"; then
@@ -567,10 +569,11 @@ fi
 # ngtcp2_crypto_quictls (for src)
 have_libngtcp2_crypto_quictls=no
 if test "x${have_ssl_provide_quic_data}" = "xyes" &&
+   test "x${have_libressl}" != "xyes" &&
    test "x${have_boringssl_quic}" != "xyes" &&
    test "x${request_libngtcp2}" != "xno"; then
   PKG_CHECK_MODULES([LIBNGTCP2_CRYPTO_QUICTLS],
-                    [libngtcp2_crypto_quictls >= 1.0.0],
+                    [libngtcp2_crypto_quictls >= 1.16.0],
                     [have_libngtcp2_crypto_quictls=yes],
                     [have_libngtcp2_crypto_quictls=no])
   if test "x${have_libngtcp2_crypto_quictls}" = "xno"; then
@@ -582,10 +585,35 @@ if test "x${have_ssl_provide_quic_data}" = "xyes" &&
 fi
 
 if test "x${have_ssl_provide_quic_data}" = "xyes" &&
+   test "x${have_libressl}" != "xyes" &&
    test "x${have_boringssl_quic}" != "xyes" &&
    test "x${request_libngtcp2}" = "xyes" &&
    test "x${have_libngtcp2_crypto_quictls}" != "xyes"; then
   AC_MSG_ERROR([libngtcp2_crypto_quictls was requested (--with-libngtcp2) but not found])
+fi
+
+# ngtcp2_crypto_libressl (for src)
+have_libngtcp2_crypto_libressl=no
+if test "x${have_ssl_provide_quic_data}" = "xyes" &&
+   test "x${have_libressl}" = "xyes" &&
+   test "x${request_libngtcp2}" != "xno"; then
+  PKG_CHECK_MODULES([LIBNGTCP2_CRYPTO_LIBRESSL],
+                    [libngtcp2_crypto_libressl >= 1.16.0],
+                    [have_libngtcp2_crypto_libressl=yes],
+                    [have_libngtcp2_crypto_libressl=no])
+  if test "x${have_libngtcp2_crypto_libressl}" = "xno"; then
+    AC_MSG_NOTICE($LIBNGTCP2_CRYPTO_LIBRESSL_PKG_ERRORS)
+  else
+    AC_DEFINE([HAVE_LIBNGTCP2_CRYPTO_LIBRESSL], [1],
+              [Define to 1 if you have `libngtcp2_crypto_libressl` library.])
+  fi
+fi
+
+if test "x${have_ssl_provide_quic_data}" = "xyes" &&
+   test "x${have_libressl}" = "xyes" &&
+   test "x${request_libngtcp2}" = "xyes" &&
+   test "x${have_libngtcp2_crypto_libressl}" != "xyes"; then
+  AC_MSG_ERROR([libngtcp2_crypto_libressl was requested (--with-libngtcp2) but not found])
 fi
 
 # ngtcp2_crypto_boringssl (for src)
@@ -610,10 +638,32 @@ if test "x${have_boringssl_quic}" = "xyes" &&
   AC_MSG_ERROR([libngtcp2_crypto_boringssl was requested (--with-libngtcp2) but not found])
 fi
 
+# ngtcp2_crypto_ossl (for src)
+have_libngtcp2_crypto_ossl=no
+if test "x${have_ossl_quic}" = "xyes" &&
+   test "x${request_libngtcp2}" != "xno"; then
+  PKG_CHECK_MODULES([LIBNGTCP2_CRYPTO_OSSL],
+                    [libngtcp2_crypto_ossl >= 1.16.0],
+                    [have_libngtcp2_crypto_ossl=yes],
+                    [have_libngtcp2_crypto_ossl=no])
+  if test "x${have_libngtcp2_crypto_ossl}" = "xno"; then
+    AC_MSG_NOTICE($LIBNGTCP2_CRYPTO_OSSL_PKG_ERRORS)
+  else
+    AC_DEFINE([HAVE_LIBNGTCP2_CRYPTO_OSSL], [1],
+              [Define to 1 if you have `libngtcp2_crypto_ossl` library.])
+  fi
+fi
+
+if test "x${have_ossl_quic}" = "xyes" &&
+   test "x${request_libngtcp2}" = "xyes" &&
+   test "x${have_libngtcp2_crypto_ossl}" != "xyes"; then
+  AC_MSG_ERROR([libngtcp2_crypto_ossl was requested (--with-libngtcp2) but not found])
+fi
+
 # nghttp3 (for src)
 have_libnghttp3=no
 if test "x${request_libnghttp3}" != "xno"; then
-  PKG_CHECK_MODULES([LIBNGHTTP3], [libnghttp3 >= 1.1.0], [have_libnghttp3=yes],
+  PKG_CHECK_MODULES([LIBNGHTTP3], [libnghttp3 >= 1.12.0], [have_libnghttp3=yes],
                     [have_libnghttp3=no])
   if test "x${have_libnghttp3}" = "xno"; then
     AC_MSG_NOTICE($LIBNGHTTP3_PKG_ERRORS)
@@ -842,7 +892,9 @@ if test "x${request_http3}" != "xno" &&
    test "x${have_libngtcp2}" = "xyes" &&
    (test "x${have_libngtcp2_crypto_wolfssl}" = "xyes" ||
     test "x${have_libngtcp2_crypto_quictls}" = "xyes" ||
-    test "x${have_libngtcp2_crypto_boringssl}" = "xyes") &&
+    test "x${have_libngtcp2_crypto_libressl}" = "xyes" ||
+    test "x${have_libngtcp2_crypto_boringssl}" = "xyes" ||
+    test "x${have_libngtcp2_crypto_ossl}" = "xyes") &&
    test "x${have_libnghttp3}" = "xyes"; then
   enable_http3=yes
   AC_DEFINE([ENABLE_HTTP3], [1], [Define to 1 if HTTP/3 is enabled.])
@@ -1135,9 +1187,12 @@ if test "x$werror" != "xno"; then
     AX_CHECK_COMPILE_FLAG([-Wformat-security], [CXXFLAGS="$CXXFLAGS -Wformat-security"])
     AX_CHECK_COMPILE_FLAG([-Wsometimes-uninitialized], [CXXFLAGS="$CXXFLAGS -Wsometimes-uninitialized"])
     AX_CHECK_COMPILE_FLAG([-Wextra-semi], [CXXFLAGS="$CXXFLAGS -Wextra-semi"])
+    AX_CHECK_COMPILE_FLAG([-Wconversion], [CXXFLAGS="$CXXFLAGS -Wconversion"])
     # Disable noexcept-type warning of g++-7.  This is not harmful as
     # long as all source files are compiled with the same compiler.
     AX_CHECK_COMPILE_FLAG([-Wno-noexcept-type], [CXXFLAGS="$CXXFLAGS -Wno-noexcept-type"])
+    # clang++-18 warns this when building with wolfSSL >= v5.7.6-stable.
+    AX_CHECK_COMPILE_FLAG([-Wno-extern-c-compat], [CXXFLAGS="$CXXFLAGS -Wno-extern-c-compat"])
     AC_LANG_POP()
 fi
 
@@ -1204,7 +1259,6 @@ AC_CONFIG_FILES([
   doc/nghttp2ver.h.rst
   doc/contribute.rst
   contrib/Makefile
-  script/Makefile
 ])
 AC_OUTPUT
 
@@ -1253,7 +1307,9 @@ AC_MSG_NOTICE([summary of build options:
       Libc-ares:      ${have_libcares} (CFLAGS='${LIBCARES_CFLAGS}' LIBS='${LIBCARES_LIBS}')
       libngtcp2:      ${have_libngtcp2} (CFLAGS='${LIBNGTCP2_CFLAGS}' LIBS='${LIBNGTCP2_LIBS}')
       libngtcp2_crypto_quictls: ${have_libngtcp2_crypto_quictls} (CFLAGS='${LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS}' LIBS='${LIBNGTCP2_CRYPTO_QUICTLS_LIBS}')
+      libngtcp2_crypto_libressl: ${have_libngtcp2_crypto_libressl} (CFLAGS='${LIBNGTCP2_CRYPTO_LIBRESSL_CFLAGS}' LIBS='${LIBNGTCP2_CRYPTO_LIBRESSL_LIBS}')
       libngtcp2_crypto_boringssl: ${have_libngtcp2_crypto_boringssl} (CFLAGS='${LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS}' LIBS='${LIBNGTCP2_CRYPTO_BORINGSSL_LIBS}')
+      libngtcp2_crypto_ossl: ${have_libngtcp2_crypto_ossl} (CFLAGS='${LIBNGTCP2_CRYPTO_OSSL_CFLAGS}' LIBS='${LIBNGTCP2_CRYPTO_OSSL_LIBS}')
       libnghttp3:     ${have_libnghttp3} (CFLAGS='${LIBNGHTTP3_CFLAGS}' LIBS='${LIBNGHTTP3_LIBS}')
       libbpf:         ${have_libbpf} (CFLAGS='${LIBBPF_CFLAGS}' LIBS='${LIBBPF_LIBS}')
       Libevent(SSL):  ${have_libevent_openssl} (CFLAGS='${LIBEVENT_OPENSSL_CFLAGS}' LIBS='${LIBEVENT_OPENSSL_LIBS}')

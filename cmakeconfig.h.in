@@ -4,8 +4,8 @@
 /* Define to `int' if <sys/types.h> does not define. */
 #cmakedefine ssize_t @ssize_t@
 
-/* Define to 1 if you have the `std::map::emplace`. */
-#cmakedefine HAVE_STD_MAP_EMPLACE 1
+/* Define to 1 if you have the `std::chrono::time_zone`. */
+#cmakedefine HAVE_STD_CHRONO_TIME_ZONE 1
 
 /* Define to 1 if you have `libjansson` library. */
 #cmakedefine HAVE_JANSSON 1
@@ -99,6 +99,9 @@
 
 /* Define to 1 if you have `libngtcp2_crypto_quictls` library. */
 #cmakedefine HAVE_LIBNGTCP2_CRYPTO_QUICTLS
+
+/* Define to 1 if you have `libngtcp2_crypto_libressl` library. */
+#cmakedefine HAVE_LIBNGTCP2_CRYPTO_LIBRESSL
 
 /* Define to 1 if you have `libngtcp2_crypto_wolfssl` library. */
 #cmakedefine HAVE_LIBNGTCP2_CRYPTO_WOLFSSL 1

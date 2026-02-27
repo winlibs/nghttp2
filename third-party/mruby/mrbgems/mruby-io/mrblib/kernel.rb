@@ -1,9 +1,9 @@
 module Kernel
-  def `(cmd)
+  private def `(cmd) #`
     IO.popen(cmd) { |io| io.read }
   end
 
-  def open(file, *rest, &block)
+  private def open(file, *rest, &block)
     raise ArgumentError unless file.is_a?(String)
 
     if file[0] == "|"
@@ -13,19 +13,27 @@ module Kernel
     end
   end
 
-  def print(*args)
-    $stdout.print(*args)
+  private def print(...)
+    $stdout.print(...)
   end
 
-  def puts(*args)
-    $stdout.puts(*args)
+  private def puts(...)
+    $stdout.puts(...)
   end
 
-  def printf(*args)
-    $stdout.printf(*args)
+  private def printf(...)
+    $stdout.printf(...)
   end
 
-  def gets(*args)
-    $stdin.gets(*args)
+  private def gets(...)
+    $stdin.gets(...)
+  end
+
+  private def readline(...)
+    $stdin.readline(...)
+  end
+
+  private def readlines(...)
+    $stdin.readlines(...)
   end
 end

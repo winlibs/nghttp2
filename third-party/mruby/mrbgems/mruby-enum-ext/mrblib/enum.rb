@@ -189,20 +189,9 @@ module Enumerable
   # values in <i>enum</i> through the given block.
   #
   # If no block is given, an enumerator is returned instead.
-
   def sort_by(&block)
     return to_enum :sort_by unless block
-
-    ary = []
-    orig = []
-    self.each_with_index{|e, i|
-      orig.push(e)
-      ary.push([block.call(e), i])
-    }
-    if ary.size > 1
-      ary.sort!
-    end
-    ary.collect{|e,i| orig[i]}
+    self.to_a.sort_by(&block)
   end
 
   ##
@@ -253,7 +242,7 @@ module Enumerable
         count += 1 if block.call(*val)
       end
     else
-      if v == NONE
+      if NONE.equal?(v)
         self.each { count += 1 }
       else
         self.each do |*val|
@@ -464,7 +453,7 @@ module Enumerable
   #     [nil, true].none?                                  #=> false
 
   def none?(pat=NONE, &block)
-    if pat != NONE
+    if !NONE.equal?(pat)
       self.each do |*val|
         return false if pat === val.__svalue
       end
@@ -505,7 +494,7 @@ module Enumerable
 
   def one?(pat=NONE, &block)
     count = 0
-    if pat!=NONE
+    if !NONE.equal?(pat)
       self.each do |*val|
         count += 1 if pat === val.__svalue
         return false if count > 1
@@ -547,7 +536,7 @@ module Enumerable
   #     [nil, true, 99].all?                              #=> false
   #
   def all?(pat=NONE, &block)
-    if pat != NONE
+    if !NONE.equal?(pat)
       self.each{|*val| return false unless pat === val.__svalue}
     elsif block
       self.each{|*val| return false unless block.call(*val)}
@@ -580,7 +569,7 @@ module Enumerable
   #     [].any?                                           #=> false
   #
   def any?(pat=NONE, &block)
-    if pat != NONE
+    if !NONE.equal?(pat)
       self.each{|*val| return true if pat === val.__svalue}
     elsif block
       self.each{|*val| return true if block.call(*val)}
@@ -708,7 +697,7 @@ module Enumerable
   #
 
   def find_index(val=NONE, &block)
-    return to_enum(:find_index, val) if !block && val == NONE
+    return to_enum(:find_index, val) if !block && NONE.equal?(val)
 
     idx = 0
     if block
@@ -831,14 +820,25 @@ module Enumerable
     return to_enum(:filter_map) unless blk
 
     ary = []
-    self.each do |x|
-      x = blk.call(x)
+    self.each do |*x|
+      x = blk.call(*x)
       ary.push x if x
     end
     ary
   end
 
   alias filter select
+
+  def grep_v(pattern, &block)
+    ary = []
+    self.each{|*val|
+      sv = val.__svalue
+      unless pattern === sv
+        ary.push((block)? block.call(*val): sv)
+      end
+    }
+    ary
+  end
 
   ##
   # call-seq:
@@ -851,7 +851,8 @@ module Enumerable
   #    ["a", "b", "c", "b"].tally #=> {"a"=>1, "b"=>2, "c"=>1}
   def tally
     hash = {}
-    self.each do |x|
+    self.each do |*x|
+      x = x.__svalue
       hash[x] = (hash[x]||0)+1
     end
     hash
@@ -870,14 +871,68 @@ module Enumerable
   def sum(init=0,&block)
     result=init
     if block
-      self.each do |e|
-        result += block.call(e)
+      self.each do |*e|
+        result += block.call(*e)
       end
     else
-      self.each do |e|
-        result += e
+      self.each do |*e|
+        result += e.__svalue
       end
     end
     result
+  end
+
+  ##
+  # call-seq:
+  #   enum.each_entry { |obj| block }  -> enum
+  #   enum.each_entry                  -> an_enumerator
+  #
+  # Calls block once for each element in self, passing that
+  # element as a parameter, converting multiple values from yield to an
+  # array.
+  #
+  # If no block is given, an enumerator is returned instead.
+  #
+  #    class Foo
+  #      include Enumerable
+  #      def each
+  #        yield 1
+  #        yield 1, 2
+  #        yield
+  #      end
+  #    end
+  #    Foo.new.each_entry{ |o| p o }
+  #
+  #  produces:
+  #
+  #    1
+  #    [1, 2]
+  #    nil
+  #
+  def each_entry(*args, &blk)
+    return to_enum(:each_entry) unless blk
+    self.each do |*a|
+      yield a.__svalue
+    end
+    return self
+  end
+end
+
+class Array
+  def sort_by(&block)
+    return to_enum :sort_by unless block
+
+    ary = []
+    self.each_with_index{|e, i|
+      ary.push([block.call(e), i])
+    }
+    if ary.size > 1
+      ary.sort!
+    end
+    ary.collect!{|e,i| self[i]}
+  end
+
+  def sort_by!(&block)
+    self.replace(self.sort_by(&block))
   end
 end

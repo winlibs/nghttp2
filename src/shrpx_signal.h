@@ -31,10 +31,10 @@
 
 namespace shrpx {
 
-constexpr int REOPEN_LOG_SIGNAL = SIGUSR1;
-constexpr int EXEC_BINARY_SIGNAL = SIGUSR2;
-constexpr int GRACEFUL_SHUTDOWN_SIGNAL = SIGQUIT;
-constexpr int RELOAD_SIGNAL = SIGHUP;
+inline constexpr int REOPEN_LOG_SIGNAL = SIGUSR1;
+inline constexpr int EXEC_BINARY_SIGNAL = SIGUSR2;
+inline constexpr int GRACEFUL_SHUTDOWN_SIGNAL = SIGQUIT;
+inline constexpr int RELOAD_SIGNAL = SIGHUP;
 
 // Blocks all signals.  The previous signal mask is stored into
 // |oldset| if it is not nullptr.  This function returns 0 if it
@@ -57,4 +57,4 @@ int shrpx_signal_unset_worker_proc_ign_handler();
 
 } // namespace shrpx
 
-#endif // SHRPX_SIGNAL_H
+#endif // !defined(SHRPX_SIGNAL_H)

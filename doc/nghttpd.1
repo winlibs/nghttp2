@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "NGHTTPD" "1" "Oct 21, 2024" "1.64.0" "nghttp2"
+.TH "NGHTTPD" "1" "Oct 25, 2025" "1.68.0" "nghttp2"
 .SH NAME
 nghttpd \- HTTP/2 server
 .SH SYNOPSIS
@@ -204,13 +204,15 @@ Don\(aqt send content\-length header field.
 .UNINDENT
 .INDENT 0.0
 .TP
-.B \-\-ktls
-Enable ktls.
+.B \-\-groups=<GROUPS>
+Specify the supported groups.
+.sp
+Default: \fBX25519:P\-256:P\-384:P\-521\fP
 .UNINDENT
 .INDENT 0.0
 .TP
-.B \-\-no\-rfc7540\-pri
-Disable RFC7540 priorities.
+.B \-\-ktls
+Enable ktls.
 .UNINDENT
 .INDENT 0.0
 .TP

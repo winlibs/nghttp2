@@ -297,8 +297,7 @@ int LiveCheck::initiate_connection() {
   }
 
   if (addr_->tls) {
-    auto sni_name =
-      addr_->sni.empty() ? StringRef{addr_->host} : StringRef{addr_->sni};
+    auto sni_name = addr_->sni.empty() ? addr_->host : addr_->sni;
     if (!util::numeric_host(sni_name.data())) {
       SSL_set_tlsext_host_name(conn_.tls.ssl, sni_name.data());
     }
@@ -407,11 +406,11 @@ int LiveCheck::tls_handshake() {
 
   SSL_get0_alpn_selected(conn_.tls.ssl, &next_proto, &next_proto_len);
 
-  auto proto = StringRef{next_proto, next_proto_len};
+  auto proto = as_string_view(next_proto, next_proto_len);
 
   switch (addr_->proto) {
   case Proto::HTTP1:
-    if (proto.empty() || proto == "http/1.1"_sr) {
+    if (proto.empty() || proto == "http/1.1"sv) {
       break;
     }
     return -1;
@@ -453,10 +452,10 @@ int LiveCheck::read_tls() {
     }
 
     if (nread < 0) {
-      return nread;
+      return static_cast<int>(nread);
     }
 
-    if (on_read(buf.data(), nread) != 0) {
+    if (on_read(buf.data(), as_unsigned(nread)) != 0) {
       return -1;
     }
   }
@@ -483,10 +482,10 @@ int LiveCheck::write_tls() {
       }
 
       if (nwrite < 0) {
-        return nwrite;
+        return static_cast<int>(nwrite);
       }
 
-      wb_.drain(nwrite);
+      wb_.drain(as_unsigned(nwrite));
 
       continue;
     }
@@ -524,10 +523,10 @@ int LiveCheck::read_clear() {
     }
 
     if (nread < 0) {
-      return nread;
+      return static_cast<int>(nread);
     }
 
-    if (on_read(buf.data(), nread) != 0) {
+    if (on_read(buf.data(), as_unsigned(nread)) != 0) {
       return -1;
     }
   }
@@ -552,10 +551,10 @@ int LiveCheck::write_clear() {
       }
 
       if (nwrite < 0) {
-        return nwrite;
+        return static_cast<int>(nwrite);
       }
 
-      wb_.drain(nwrite);
+      wb_.drain(as_unsigned(nwrite));
 
       continue;
     }
@@ -583,7 +582,7 @@ int LiveCheck::on_read(const uint8_t *data, size_t len) {
   auto rv = nghttp2_session_mem_recv2(session_, data, len);
   if (rv < 0) {
     LOG(ERROR) << "nghttp2_session_mem_recv2() returned error: "
-               << nghttp2_strerror(rv);
+               << nghttp2_strerror(static_cast<int>(rv));
     return -1;
   }
 
@@ -621,13 +620,13 @@ int LiveCheck::on_write() {
 
     if (datalen < 0) {
       LOG(ERROR) << "nghttp2_session_mem_send2() returned error: "
-                 << nghttp2_strerror(datalen);
+                 << nghttp2_strerror(static_cast<int>(datalen));
       return -1;
     }
     if (datalen == 0) {
       break;
     }
-    wb_.append(data, datalen);
+    wb_.append(data, as_unsigned(datalen));
 
     if (wb_.rleft() >= MAX_BUFFER_SIZE) {
       break;
@@ -751,6 +750,7 @@ int LiveCheck::connection_made() {
                                                        on_frame_send_callback);
   nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks,
                                                        on_frame_recv_callback);
+  nghttp2_session_callbacks_set_rand_callback(callbacks, util::secure_random);
 
   rv = nghttp2_session_client_new(&session_, callbacks, this);
 

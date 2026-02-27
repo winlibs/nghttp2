@@ -34,7 +34,7 @@
 #ifdef HAVE_LIBBROTLI
 #  include <brotli/encode.h>
 #  include <brotli/decode.h>
-#endif // HAVE_LIBBROTLI
+#endif // defined(HAVE_LIBBROTLI)
 
 #include "ssl_compat.h"
 
@@ -42,33 +42,33 @@
 #  include <wolfssl/options.h>
 #  include <wolfssl/openssl/crypto.h>
 #  include <wolfssl/openssl/conf.h>
-#else // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#else // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 #  include <openssl/crypto.h>
 #  include <openssl/conf.h>
-#endif // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#endif // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 
 namespace nghttp2 {
 
 namespace tls {
 
-const char *get_tls_protocol(SSL *ssl) {
+std::string_view get_tls_protocol(SSL *ssl) {
   switch (SSL_version(ssl)) {
   case SSL2_VERSION:
-    return "SSLv2";
+    return "SSLv2"sv;
   case SSL3_VERSION:
-    return "SSLv3";
+    return "SSLv3"sv;
 #ifdef TLS1_3_VERSION
   case TLS1_3_VERSION:
-    return "TLSv1.3";
-#endif // TLS1_3_VERSION
+    return "TLSv1.3"sv;
+#endif // defined(TLS1_3_VERSION)
   case TLS1_2_VERSION:
-    return "TLSv1.2";
+    return "TLSv1.2"sv;
   case TLS1_1_VERSION:
-    return "TLSv1.1";
+    return "TLSv1.1"sv;
   case TLS1_VERSION:
-    return "TLSv1";
+    return "TLSv1"sv;
   default:
-    return "unknown";
+    return "unknown"sv;
   }
 }
 
@@ -126,8 +126,10 @@ bool check_http2_requirement(SSL *ssl) {
 }
 
 int ssl_ctx_set_proto_versions(SSL_CTX *ssl_ctx, int min, int max) {
-  if (SSL_CTX_set_min_proto_version(ssl_ctx, min) != 1 ||
-      SSL_CTX_set_max_proto_version(ssl_ctx, max) != 1) {
+  if (SSL_CTX_set_min_proto_version(
+        ssl_ctx, static_cast<nghttp2_ssl_proto_version_type>(min)) != 1 ||
+      SSL_CTX_set_max_proto_version(
+        ssl_ctx, static_cast<nghttp2_ssl_proto_version_type>(max)) != 1) {
     return -1;
   }
   return 0;
@@ -182,7 +184,8 @@ int cert_decompress(SSL *ssl, CRYPTO_BUFFER **out, size_t uncompressed_len,
 
   return 1;
 }
-#endif // NGHTTP2_OPENSSL_IS_BORINGSSL && HAVE_LIBBROTLI
+#endif // defined(NGHTTP2_OPENSSL_IS_BORINGSSL) &&
+       // defined(HAVE_LIBBROTLI)
 
 #if defined(NGHTTP2_GENUINE_OPENSSL) ||                                        \
   defined(NGHTTP2_OPENSSL_IS_BORINGSSL) ||                                     \
@@ -192,7 +195,7 @@ namespace {
 std::ofstream keylog_file;
 
 void keylog_callback(const SSL *ssl, const char *line) {
-  keylog_file.write(line, strlen(line));
+  keylog_file.write(line, static_cast<std::streamsize>(strlen(line)));
   keylog_file.put('\n');
   keylog_file.flush();
 }
@@ -213,13 +216,17 @@ int setup_keylog_callback(SSL_CTX *ssl_ctx) {
 
   return 0;
 }
-#else  // !NGHTTP2_GENUINE_OPENSSL && !NGHTTP2_OPENSSL_IS_BORINGSSL &&
-       // !NGHTTP2_OPENSSL_IS_LIBRESSL && !(NGHTTP2_OPENSSL_IS_WOLFSSL &&
-       // HAVE_SECRET_CALLBACK)
+#else  // !defined(NGHTTP2_GENUINE_OPENSSL) &&
+       // !defined(NGHTTP2_OPENSSL_IS_BORINGSSL) &&
+       // !defined(NGHTTP2_OPENSSL_IS_LIBRESSL) &&
+       // (!defined(NGHTTP2_OPENSSL_IS_WOLFSSL) ||
+       // !defined(HAVE_SECRET_CALLBACK))
 int setup_keylog_callback(SSL_CTX *ssl_ctx) { return 0; }
-#endif // !NGHTTP2_GENUINE_OPENSSL && !NGHTTP2_OPENSSL_IS_BORINGSSL &&
-       // !NGHTTP2_OPENSSL_IS_LIBRESSL && !(NGHTTP2_OPENSSL_IS_WOLFSSL &&
-       // HAVE_SECRET_CALLBACK)
+#endif // !defined(NGHTTP2_GENUINE_OPENSSL) &&
+       // !defined(NGHTTP2_OPENSSL_IS_BORINGSSL) &&
+       // !defined(NGHTTP2_OPENSSL_IS_LIBRESSL) &&
+       // (!defined(NGHTTP2_OPENSSL_IS_WOLFSSL) ||
+       // !defined(HAVE_SECRET_CALLBACK))
 
 } // namespace tls
 

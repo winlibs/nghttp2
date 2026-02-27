@@ -68,7 +68,16 @@ mrb_value mrb_rational_to_f(mrb_state *mrb, mrb_value x)
 {
   return mrb_nil_value();
 }
+mrb_value
+mrb_as_rational(mrb_state *mrb, mrb_value x)
+{
+  return mrb_nil_value();
+}
 void mrb_rational_copy(mrb_state *mrb, mrb_value x, mrb_value y)
 {
+}
+int mrb_rational_mark(mrb_state *mrb, struct RBasic *x)
+{
+  return 2;
 }
 #endif

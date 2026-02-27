@@ -27,7 +27,7 @@
 #include <sys/types.h>
 #ifdef HAVE_UNISTD_H
 #  include <unistd.h>
-#endif // HAVE_UNISTD_H
+#endif // defined(HAVE_UNISTD_H)
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <grp.h>
@@ -40,9 +40,9 @@
 #ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
 #  include <wolfssl/options.h>
 #  include <wolfssl/openssl/rand.h>
-#else // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#else // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 #  include <openssl/rand.h>
-#endif // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#endif // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 
 #include <ev.h>
 
@@ -73,7 +73,7 @@ namespace {
 void drop_privileges(
 #ifdef HAVE_NEVERBLEED
   neverbleed_t *nb
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
 ) {
   std::array<char, STRERROR_BUFSIZE> errbuf;
   auto config = get_config();
@@ -83,9 +83,15 @@ void drop_privileges(
     if (nb) {
       neverbleed_setuidgid(nb, config->user.data(), 1);
     }
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
 
-    if (initgroups(config->user.data(), config->gid) != 0) {
+    if (initgroups(config->user.data(),
+#ifndef __APPLE__
+                   config->gid
+#else  // defined(__APPLE__)
+                   static_cast<int>(config->gid)
+#endif // defined(__APPLE__)
+                   ) != 0) {
       auto error = errno;
       LOG(FATAL) << "Could not change supplementary groups: "
                  << xsi_strerror(error, errbuf.data(), errbuf.size());
@@ -120,12 +126,6 @@ void graceful_shutdown(ConnectionHandler *conn_handler) {
   LOG(NOTICE) << "Graceful shutdown signal received";
 
   conn_handler->set_graceful_shutdown(true);
-
-  // TODO What happens for the connections not established in the
-  // kernel?
-  conn_handler->accept_pending_connection();
-  conn_handler->delete_acceptor();
-
   conn_handler->graceful_shutdown_worker();
 
   auto single_worker = conn_handler->get_single_worker();
@@ -174,7 +174,7 @@ void ipc_readcb(struct ev_loop *loop, ev_io *w, int revents) {
     nghttp2_Exit(EXIT_FAILURE);
   }
 
-  for (ssize_t i = 0; i < nread; ++i) {
+  for (size_t i = 0; i < as_unsigned(nread); ++i) {
     switch (buf[i]) {
     case SHRPX_IPC_GRACEFUL_SHUTDOWN:
       graceful_shutdown(conn_handler);
@@ -199,13 +199,13 @@ void quic_ipc_readcb(struct ev_loop *loop, ev_io *w, int revents) {
   }
 }
 } // namespace
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 namespace {
 int generate_ticket_key(TicketKey &ticket_key) {
   ticket_key.cipher = get_config()->tls.ticket.cipher;
   ticket_key.hmac = EVP_sha256();
-  ticket_key.hmac_keylen = EVP_MD_size(ticket_key.hmac);
+  ticket_key.hmac_keylen = static_cast<size_t>(EVP_MD_size(ticket_key.hmac));
 
   assert(static_cast<size_t>(EVP_CIPHER_key_length(ticket_key.cipher)) <=
          ticket_key.data.enc_key.size());
@@ -254,8 +254,9 @@ void renew_ticket_key_cb(struct ev_loop *loop, ev_timer *w, int revents) {
                             .count());
 
     new_keys.resize(std::min(max_tickets, old_keys.size() + 1));
-    std::copy_n(std::begin(old_keys), new_keys.size() - 1,
-                std::begin(new_keys) + 1);
+    std::ranges::copy_n(std::ranges::begin(old_keys),
+                        as_signed(new_keys.size() - 1),
+                        std::ranges::begin(new_keys) + 1);
   } else {
     ticket_keys->keys.resize(1);
   }
@@ -374,14 +375,17 @@ void memcached_get_ticket_key_cb(struct ev_loop *loop, ev_timer *w,
       key.hmac = EVP_sha256();
       key.hmac_keylen = hmac_keylen;
 
-      std::copy_n(p, key.data.name.size(), std::begin(key.data.name));
-      p += key.data.name.size();
+      p = std::ranges::copy_n(p, key.data.name.size(),
+                              std::ranges::begin(key.data.name))
+            .in;
 
-      std::copy_n(p, enc_keylen, std::begin(key.data.enc_key));
-      p += enc_keylen;
+      p = std::ranges::copy_n(p, as_signed(enc_keylen),
+                              std::ranges::begin(key.data.enc_key))
+            .in;
 
-      std::copy_n(p, hmac_keylen, std::begin(key.data.hmac_key));
-      p += hmac_keylen;
+      p = std::ranges::copy_n(p, as_signed(hmac_keylen),
+                              std::ranges::begin(key.data.hmac_key))
+            .in;
 
       ticket_keys->keys.push_back(std::move(key));
     }
@@ -410,7 +414,7 @@ void nb_child_cb(struct ev_loop *loop, ev_child *w, int revents) {
   nghttp2_Exit(EXIT_FAILURE);
 }
 } // namespace
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
 
 namespace {
 int send_ready_event(int ready_ipc_fd) {
@@ -472,24 +476,19 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
   ev_child_init(&nb_childev, nb_child_cb, nb->daemon_pid, 0);
   nb_childev.data = nullptr;
   ev_child_start(loop, &nb_childev);
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
 
   auto conn_handler = std::make_unique<ConnectionHandler>(loop, gen);
 
 #ifdef HAVE_NEVERBLEED
   conn_handler->set_neverbleed(nb.get());
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
 
 #ifdef ENABLE_HTTP3
   conn_handler->set_quic_ipc_fd(wpconf->quic_ipc_fd);
   conn_handler->set_quic_lingering_worker_processes(
     wpconf->quic_lingering_worker_processes);
-#endif // ENABLE_HTTP3
-
-  for (auto &addr : config->conn.listener.addrs) {
-    conn_handler->add_acceptor(
-      std::make_unique<AcceptHandler>(&addr, conn_handler.get()));
-  }
+#endif // defined(ENABLE_HTTP3)
 
   MemchunkPool mcpool;
 
@@ -506,9 +505,9 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
       }
 
       conn_handler->set_tls_ticket_key_memcached_dispatcher(
-        std::make_unique<MemcachedDispatcher>(
-          &ticketconf.memcached.addr, loop, ssl_ctx,
-          StringRef{memcachedconf.host}, &mcpool, gen));
+        std::make_unique<MemcachedDispatcher>(&ticketconf.memcached.addr, loop,
+                                              ssl_ctx, memcachedconf.host,
+                                              &mcpool, gen));
 
       ev_timer_init(&renew_ticket_key_timer, memcached_get_ticket_key_cb, 0.,
                     0.);
@@ -566,17 +565,21 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
 
     auto &qkm = qkms->keying_materials.front();
 
-    if (RAND_bytes(qkm.reserved.data(), qkm.reserved.size()) != 1) {
+    if (RAND_bytes(qkm.reserved.data(),
+                   static_cast<nghttp2_ssl_rand_length_type>(
+                     qkm.reserved.size())) != 1) {
       LOG(ERROR) << "Failed to generate QUIC secret reserved data";
       return -1;
     }
 
-    if (RAND_bytes(qkm.secret.data(), qkm.secret.size()) != 1) {
+    if (RAND_bytes(qkm.secret.data(), static_cast<nghttp2_ssl_rand_length_type>(
+                                        qkm.secret.size())) != 1) {
       LOG(ERROR) << "Failed to generate QUIC secret";
       return -1;
     }
 
-    if (RAND_bytes(qkm.salt.data(), qkm.salt.size()) != 1) {
+    if (RAND_bytes(qkm.salt.data(), static_cast<nghttp2_ssl_rand_length_type>(
+                                      qkm.salt.size())) != 1) {
       LOG(ERROR) << "Failed to generate QUIC salt";
       return -1;
     }
@@ -615,7 +618,7 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
   conn_handler->set_worker_ids(wpconf->worker_ids);
   conn_handler->set_quic_lingering_worker_processes(
     wpconf->quic_lingering_worker_processes);
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
   if (config->single_thread) {
     rv = conn_handler->create_single_worker();
@@ -634,7 +637,7 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
                  << xsi_strerror(rv, errbuf.data(), errbuf.size());
       return -1;
     }
-#endif // !NOTHREADS
+#endif // !defined(NOTHREADS)
 
     rv = conn_handler->create_worker_thread(config->num_worker);
     if (rv != 0) {
@@ -648,7 +651,15 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
                  << xsi_strerror(rv, errbuf.data(), errbuf.size());
       return -1;
     }
-#endif // !NOTHREADS
+#endif // !defined(NOTHREADS)
+  }
+
+  // UNIX domain sockets are copied in AcceptHandler.  No need to keep
+  // the original.
+  for (auto &addr : config->conn.listener.addrs) {
+    if (addr.host_unix) {
+      close(addr.fd);
+    }
   }
 
 #if defined(ENABLE_HTTP3) && defined(HAVE_LIBBPF)
@@ -658,7 +669,7 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
   drop_privileges(
 #ifdef HAVE_NEVERBLEED
     nb.get()
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
   );
 
   ev_io ipcev;
@@ -671,16 +682,7 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
   ev_io_init(&quic_ipcev, quic_ipc_readcb, wpconf->quic_ipc_fd, EV_READ);
   quic_ipcev.data = conn_handler.get();
   ev_io_start(loop, &quic_ipcev);
-#endif // ENABLE_HTTP3
-
-  if (tls::upstream_tls_enabled(config->conn) && !config->tls.ocsp.disabled) {
-    if (config->tls.ocsp.startup) {
-      conn_handler->set_enable_acceptor_on_ocsp_completion(true);
-      conn_handler->disable_acceptor();
-    }
-
-    conn_handler->proceed_next_cert_ocsp();
-  }
+#endif // defined(ENABLE_HTTP3)
 
   if (LOG_ENABLED(INFO)) {
     LOG(INFO) << "Entering event loop";
@@ -691,8 +693,6 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
   }
 
   ev_run(loop, 0);
-
-  conn_handler->cancel_ocsp_update();
 
   // Destroy SSL_CTX held in conn_handler before killing neverbleed
   // daemon.  Otherwise priv_rsa_finish yields "write error" and
@@ -716,7 +716,7 @@ int worker_process_event_loop(WorkerProcessConfig *wpconf) {
                   "of neverbleed process: errno="
                << error;
   }
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
 
   ares_library_cleanup();
 

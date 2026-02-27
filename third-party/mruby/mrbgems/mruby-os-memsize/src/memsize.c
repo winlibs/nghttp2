@@ -1,4 +1,5 @@
 #include <mruby.h>
+#include <mruby/error.h>
 #include <mruby/gc.h>
 #include <mruby/hash.h>
 #include <mruby/class.h>
@@ -15,15 +16,13 @@
 static size_t
 os_memsize_of_irep(mrb_state* state, const struct mrb_irep *irep)
 {
-  size_t size;
-
-  size = (irep->slen * sizeof(mrb_sym)) +
-         (irep->plen * sizeof(mrb_pool_value)) +
-         (irep->ilen * sizeof(mrb_code)) +
-         (irep->rlen * sizeof(struct mrb_irep*));
+  size_t size = (irep->slen * sizeof(mrb_sym)) +
+                (irep->plen * sizeof(mrb_irep_pool)) +
+                (irep->ilen * sizeof(mrb_code)) +
+                (irep->rlen * sizeof(struct mrb_irep*));
 
   for (int i = 0; i < irep->plen; i++) {
-    const mrb_pool_value *p = &irep->pool[i];
+    const mrb_irep_pool *p = &irep->pool[i];
     if ((p->tt & IREP_TT_NFLAG) == 0) { /* string pool value */
       size += (p->tt>>2);
     }
@@ -42,13 +41,12 @@ os_memsize_of_irep(mrb_state* state, const struct mrb_irep *irep)
 static size_t
 os_memsize_of_method(mrb_state* mrb, mrb_value method_obj)
 {
-  size_t size;
   mrb_value proc_value = mrb_obj_iv_get(mrb, mrb_obj_ptr(method_obj),
                                         mrb_intern_lit(mrb, "_proc"));
   if (mrb_nil_p(proc_value)) return 0;
   struct RProc *proc = mrb_proc_ptr(proc_value);
 
-  size = sizeof(struct RProc);
+  size_t size = sizeof(struct RProc);
   if (!MRB_PROC_CFUNC_P(proc)) size += os_memsize_of_irep(mrb, proc->body.irep);
   return size;
 }
@@ -167,6 +165,9 @@ os_memsize_of_object(mrb_state* mrb, mrb_value obj)
     case MRB_TT_ISTRUCT:
       size += mrb_objspace_page_slot_size();
       break;
+    case MRB_TT_BACKTRACE:
+      size += ((struct RBacktrace*)mrb_obj_ptr(obj))->len * sizeof(struct mrb_backtrace_location);
+      break;
     /*  zero heap size types.
      *  immediate VM stack values, contained within mrb_state, or on C stack */
     case MRB_TT_TRUE:
@@ -204,10 +205,9 @@ os_memsize_of_object(mrb_state* mrb, mrb_value obj)
 static mrb_value
 os_memsize_of(mrb_state *mrb, mrb_value self)
 {
-  size_t total;
   mrb_value obj = mrb_get_arg1(mrb);
 
-  total = os_memsize_of_object(mrb, obj);
+  size_t total = os_memsize_of_object(mrb, obj);
   return mrb_fixnum_value((mrb_int)total);
 }
 

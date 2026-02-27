@@ -98,7 +98,7 @@ constexpr auto read_timeout = 10_s;
 
 MemcachedConnection::MemcachedConnection(const Address *addr,
                                          struct ev_loop *loop, SSL_CTX *ssl_ctx,
-                                         const StringRef &sni_name,
+                                         const std::string_view &sni_name,
                                          MemchunkPool *mcpool,
                                          std::mt19937 &gen)
   : conn_(loop, -1, nullptr, mcpool, write_timeout, read_timeout, {}, {},
@@ -308,17 +308,21 @@ int MemcachedConnection::write_tls() {
 
   for (; !sendq_.empty();) {
     auto iovcnt = fill_request_buffer(iov.data(), iov.size());
-    auto p = std::begin(buf);
+    auto p = std::ranges::begin(buf);
     for (size_t i = 0; i < iovcnt; ++i) {
       auto &v = iov[i];
-      auto n = std::min(static_cast<size_t>(std::end(buf) - p), v.iov_len);
-      p = std::copy_n(static_cast<uint8_t *>(v.iov_base), n, p);
-      if (p == std::end(buf)) {
+      auto n =
+        std::min(static_cast<size_t>(std::ranges::end(buf) - p), v.iov_len);
+      p =
+        std::ranges::copy_n(static_cast<uint8_t *>(v.iov_base), as_signed(n), p)
+          .out;
+      if (p == std::ranges::end(buf)) {
         break;
       }
     }
 
-    auto nwrite = conn_.write_tls(buf.data(), p - std::begin(buf));
+    auto nwrite =
+      conn_.write_tls(buf.data(), as_unsigned(p - std::ranges::begin(buf)));
     if (nwrite < 0) {
       return -1;
     }
@@ -326,7 +330,7 @@ int MemcachedConnection::write_tls() {
       return 0;
     }
 
-    drain_send_queue(nwrite);
+    drain_send_queue(as_unsigned(nwrite));
   }
 
   conn_.wlimit.stopw();
@@ -353,7 +357,7 @@ int MemcachedConnection::read_tls() {
       return -1;
     }
 
-    recvbuf_.write(nread);
+    recvbuf_.write(as_unsigned(nread));
 
     if (parse_packet() != 0) {
       return -1;
@@ -374,7 +378,7 @@ int MemcachedConnection::write_clear() {
 
   for (; !sendq_.empty();) {
     auto iovcnt = fill_request_buffer(iov.data(), iov.size());
-    auto nwrite = conn_.writev_clear(iov.data(), iovcnt);
+    auto nwrite = conn_.writev_clear(iov.data(), static_cast<int>(iovcnt));
     if (nwrite < 0) {
       return -1;
     }
@@ -382,7 +386,7 @@ int MemcachedConnection::write_clear() {
       return 0;
     }
 
-    drain_send_queue(nwrite);
+    drain_send_queue(as_unsigned(nwrite));
   }
 
   conn_.wlimit.stopw();
@@ -409,7 +413,7 @@ int MemcachedConnection::read_clear() {
       return -1;
     }
 
-    recvbuf_.write(nread);
+    recvbuf_.write(as_unsigned(nread));
 
     if (parse_packet() != 0) {
       return -1;
@@ -428,7 +432,7 @@ int MemcachedConnection::parse_packet() {
     switch (parse_state_.state) {
     case MemcachedParseState::HEADER24: {
       if (recvbuf_.last - in < 24) {
-        recvbuf_.drain_reset(in - recvbuf_.pos);
+        recvbuf_.drain_reset(as_unsigned(in - recvbuf_.pos));
         return 0;
       }
 
@@ -532,7 +536,8 @@ int MemcachedConnection::parse_packet() {
       auto n = std::min(static_cast<size_t>(recvbuf_.last - in),
                         parse_state_.read_left);
 
-      parse_state_.value.insert(std::end(parse_state_.value), in, in + n);
+      parse_state_.value.insert(std::ranges::end(parse_state_.value), in,
+                                in + n);
 
       parse_state_.read_left -= n;
       in += n;
@@ -678,20 +683,21 @@ void MemcachedConnection::make_request(MemcachedSendbuf *sendbuf,
                                        MemcachedRequest *req) {
   auto &headbuf = sendbuf->headbuf;
 
-  std::fill(std::begin(headbuf.buf), std::end(headbuf.buf), 0);
+  std::ranges::fill(headbuf.buf, 0);
 
   headbuf[0] = MEMCACHED_REQ_MAGIC;
   headbuf[1] = static_cast<uint8_t>(req->op);
   switch (req->op) {
   case MemcachedOp::GET:
-    util::put_uint16be(&headbuf[2], req->key.size());
-    util::put_uint32be(&headbuf[8], req->key.size());
+    util::put_uint16be(&headbuf[2], static_cast<uint16_t>(req->key.size()));
+    util::put_uint32be(&headbuf[8], static_cast<uint32_t>(req->key.size()));
     headbuf.write(24);
     break;
   case MemcachedOp::ADD:
-    util::put_uint16be(&headbuf[2], req->key.size());
+    util::put_uint16be(&headbuf[2], static_cast<uint16_t>(req->key.size()));
     headbuf[4] = 8;
-    util::put_uint32be(&headbuf[8], 8 + req->key.size() + req->value.size());
+    util::put_uint32be(&headbuf[8], static_cast<uint32_t>(8 + req->key.size() +
+                                                          req->value.size()));
     util::put_uint32be(&headbuf[28], req->expiry);
     headbuf.write(32);
     break;
@@ -754,18 +760,21 @@ void MemcachedConnection::reconnect_or_fail() {
                       << recvq_.size() + sendq_.size() << " request(s) again";
   }
 
-  q.insert(std::end(q), std::make_move_iterator(std::begin(recvq_)),
-           std::make_move_iterator(std::end(recvq_)));
-  q.insert(std::end(q), std::make_move_iterator(std::begin(sendq_)),
-           std::make_move_iterator(std::end(sendq_)));
+  q.insert(std::ranges::end(q),
+           std::make_move_iterator(std::ranges::begin(recvq_)),
+           std::make_move_iterator(std::ranges::end(recvq_)));
+  q.insert(std::ranges::end(q),
+           std::make_move_iterator(std::ranges::begin(sendq_)),
+           std::make_move_iterator(std::ranges::end(sendq_)));
 
   recvq_.clear();
   sendq_.clear();
 
   disconnect();
 
-  sendq_.insert(std::end(sendq_), std::make_move_iterator(std::begin(q)),
-                std::make_move_iterator(std::end(q)));
+  sendq_.insert(std::ranges::end(sendq_),
+                std::make_move_iterator(std::ranges::begin(q)),
+                std::make_move_iterator(std::ranges::end(q)));
 
   if (initiate_connection() != 0) {
     connect_blocker_.on_failure();

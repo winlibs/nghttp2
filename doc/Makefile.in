@@ -260,6 +260,10 @@ LIBNGHTTP3_LIBS = @LIBNGHTTP3_LIBS@
 LIBNGTCP2_CFLAGS = @LIBNGTCP2_CFLAGS@
 LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS = @LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS@
 LIBNGTCP2_CRYPTO_BORINGSSL_LIBS = @LIBNGTCP2_CRYPTO_BORINGSSL_LIBS@
+LIBNGTCP2_CRYPTO_LIBRESSL_CFLAGS = @LIBNGTCP2_CRYPTO_LIBRESSL_CFLAGS@
+LIBNGTCP2_CRYPTO_LIBRESSL_LIBS = @LIBNGTCP2_CRYPTO_LIBRESSL_LIBS@
+LIBNGTCP2_CRYPTO_OSSL_CFLAGS = @LIBNGTCP2_CRYPTO_OSSL_CFLAGS@
+LIBNGTCP2_CRYPTO_OSSL_LIBS = @LIBNGTCP2_CRYPTO_OSSL_LIBS@
 LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS = @LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS@
 LIBNGTCP2_CRYPTO_QUICTLS_LIBS = @LIBNGTCP2_CRYPTO_QUICTLS_LIBS@
 LIBNGTCP2_CRYPTO_WOLFSSL_CFLAGS = @LIBNGTCP2_CRYPTO_WOLFSSL_CFLAGS@
@@ -442,6 +446,7 @@ APIDOCS = \
 	nghttp2_option_set_max_outbound_ack.rst \
 	nghttp2_option_set_max_settings.rst \
 	nghttp2_option_set_stream_reset_rate_limit.rst \
+	nghttp2_option_set_glitch_rate_limit.rst \
 	nghttp2_pack_settings_payload.rst \
 	nghttp2_pack_settings_payload2.rst \
 	nghttp2_priority_spec_check_default.rst \
@@ -475,6 +480,7 @@ APIDOCS = \
 	nghttp2_session_callbacks_set_on_stream_close_callback.rst \
 	nghttp2_session_callbacks_set_pack_extension_callback.rst \
 	nghttp2_session_callbacks_set_pack_extension_callback2.rst \
+	nghttp2_session_callbacks_set_rand_callback.rst \
 	nghttp2_session_callbacks_set_recv_callback.rst \
 	nghttp2_session_callbacks_set_recv_callback2.rst \
 	nghttp2_session_callbacks_set_select_padding_callback.rst \

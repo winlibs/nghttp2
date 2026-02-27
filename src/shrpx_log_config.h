@@ -43,9 +43,9 @@ struct Timestamp {
   std::array<char, sizeof("03/Jul/2014:00:19:38 +0900")> time_local_buf;
   std::array<char, sizeof("2014-11-15T12:58:24.741+09:00")> time_iso8601_buf;
   std::array<char, sizeof("Mon, 10 Oct 2016 10:25:58 GMT")> time_http_buf;
-  StringRef time_local;
-  StringRef time_iso8601;
-  StringRef time_http;
+  std::string_view time_local;
+  std::string_view time_iso8601;
+  std::string_view time_http;
 };
 
 struct LogConfig {
@@ -71,9 +71,6 @@ struct LogConfig {
 // descriptor for log files.
 LogConfig *log_config();
 
-// Deletes log_config
-void delete_log_config();
-
 } // namespace shrpx
 
-#endif // SHRPX_LOG_CONFIG_H
+#endif // !defined(SHRPX_LOG_CONFIG_H)

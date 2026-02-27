@@ -3,13 +3,14 @@
  */
 
 #include <mruby.h>
-#include "mruby/error.h"
-#include "mruby/array.h"
-#include "mruby/class.h"
-#include "mruby/numeric.h"
-#include "mruby/string.h"
-#include "mruby/variable.h"
-#include "mruby/endian.h"
+#include <mruby/error.h>
+#include <mruby/array.h>
+#include <mruby/class.h>
+#include <mruby/numeric.h>
+#include <mruby/string.h>
+#include <mruby/variable.h>
+#include <mruby/endian.h>
+#include <mruby/presym.h>
 
 #include <ctype.h>
 #include <string.h>
@@ -68,18 +69,25 @@ enum pack_type {
 
 #define PACK_BASE64_IGNORE      0xff
 #define PACK_BASE64_PADDING     0xfe
+#define IGN                     PACK_BASE64_IGNORE
+#define PAD                     PACK_BASE64_PADDING
 
-const static unsigned char base64chars[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const static unsigned char base64_dec_tab[] =
-  "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
-  "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
-  "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x3e\xff\xff\xff\x3f"
-  "\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\xff\xff\xff\xfe\xff\xff"
-  "\xff\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e"
-  "\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\xff\xff\xff\xff\xff"
-  "\xff\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28"
-  "\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\xff\xff\xff\xff\xff";
+static const unsigned char base64chars[64] = {
+  'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+  'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+  'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+  'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/',
+};
+static const unsigned char base64_dec_tab[128] = {
+  IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN,
+  IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN,
+  IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN, IGN,  62, IGN, IGN, IGN,  63,
+   52,  53,  54,  55,  56,  57,  58,  59,  60,  61, IGN, IGN, IGN, PAD, IGN, IGN,
+  IGN,   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13,  14,
+   15,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25, IGN, IGN, IGN, IGN, IGN,
+  IGN,  26,  27,  28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,  39,  40,
+   41,  42,  43,  44,  45,  46,  47,  48,  49,  50,  51, IGN, IGN, IGN, IGN, IGN,
+};
 
 static int
 hex2int(unsigned char ch)
@@ -291,27 +299,24 @@ static void
 u64tostr(char *buf, size_t len, uint64_t n)
 {
 #ifdef MRB_NO_STDIO
-  char *bufend = buf + len;
-  char *p = bufend - 1;
+  mrb_assert(len > 0);
 
-  if (len < 1) {
+  if (n < 10) {
+    buf[0] = '0' + n;
+    buf[1] = '\0';
     return;
   }
+
+  char *bufend = buf + len;
+  char *p = bufend - 1;
 
   *p-- = '\0';
   len--;
 
-  if (n > 0) {
-    for (; len > 0 && n > 0; len--, n /= 10) {
-      *p-- = '0' + (n % 10);
-    }
-    p++;
+  for (; len > 0 && n > 0; len--, n /= 10) {
+    *p-- = '0' + (n % 10);
   }
-  else if (len > 0) {
-    *p = '0';
-    len--;
-  }
-
+  p++;
   memmove(buf, p, bufend - p);
 #else
   snprintf(buf, len, "%" PRIu64, n);
@@ -323,9 +328,7 @@ static void
 i64tostr(char *buf, size_t len, int64_t n)
 {
 #ifdef MRB_NO_STDIO
-  if (len < 1) {
-    return;
-  }
+  mrb_assert(len > 0);
 
   if (n < 0) {
     *buf++ = '-';
@@ -731,7 +734,7 @@ unpack_str(mrb_state *mrb, const void *src, int slen, mrb_value ary, int count, 
   CHECK_UNPACK_LEN(mrb, slen, ary);
 
   mrb_value dst;
-  const char *cp, *sptr;
+  const char *sptr;
   int copylen;
 
   sptr = (const char*)src;
@@ -741,6 +744,8 @@ unpack_str(mrb_state *mrb, const void *src, int slen, mrb_value ary, int count, 
   copylen = slen;
 
   if (slen >= 0 && flags & PACK_FLAG_Z) {  /* "Z" */
+    const char *cp;
+
     if ((cp = (const char*)memchr(sptr, '\0', slen)) != NULL) {
       copylen = (int)(cp - sptr);
       if (count == -1) {
@@ -764,7 +769,6 @@ unpack_str(mrb_state *mrb, const void *src, int slen, mrb_value ary, int count, 
 static int
 pack_hex(mrb_state *mrb, mrb_value src, mrb_value dst, mrb_int didx, int count, unsigned int flags)
 {
-  int a, b;
   unsigned int ashift, bshift;
   long slen;
   char *dptr, *dptr0, *sptr;
@@ -793,7 +797,8 @@ pack_hex(mrb_state *mrb, mrb_value src, mrb_value dst, mrb_int didx, int count, 
 
   dptr0 = dptr;
   for (; count > 0; count -= 2) {
-    a = b = 0;
+    int a = 0, b = 0;
+
     if (slen > 0) {
       a = hex2int(*sptr++);
       if (a < 0) break;
@@ -1183,7 +1188,7 @@ pack_nul(mrb_state *mrb, mrb_value dst, mrb_int didx, int count)
 }
 
 static void
-check_x(mrb_state *mrb, int a, int count, char c)
+check_x(mrb_state *mrb, mrb_int a, mrb_int count, char c)
 {
   if (a < count) {
     mrb_raisef(mrb, E_ARGUMENT_ERROR, "%c outside of string", c);
@@ -1204,7 +1209,7 @@ has_tmpl(const struct tmpl *tmpl)
 }
 
 static enum pack_dir
-read_tmpl(mrb_state *mrb, struct tmpl *tmpl, enum pack_type *typep, int *sizep, int *countp, unsigned int *flagsp)
+read_tmpl(mrb_state *mrb, struct tmpl *tmpl, enum pack_type *typep, mrb_int *sizep, mrb_int *countp, unsigned int *flagsp)
 {
   mrb_int t, tlen;
   int ch, size = 0;
@@ -1498,19 +1503,17 @@ static mrb_value
 mrb_pack_pack(mrb_state *mrb, mrb_value ary)
 {
   mrb_value o, result;
-  mrb_int aidx;
   struct tmpl tmpl;
-  int count;
+  enum pack_type type;
+  mrb_int count, size;
   unsigned int flags;
   enum pack_dir dir;
-  enum pack_type type;
-  int ridx, size;
 
   prepare_tmpl(mrb, &tmpl);
 
   result = mrb_str_new(mrb, NULL, 128);  /* allocate initial buffer */
-  aidx = 0;
-  ridx = 0;
+  mrb_int aidx = 0;
+  mrb_int ridx = 0;
   while (has_tmpl(&tmpl)) {
     dir = read_tmpl(mrb, &tmpl, &type, &size, &count, &flags);
 
@@ -1624,16 +1627,15 @@ mrb_pack_pack(mrb_state *mrb, mrb_value ary)
 }
 
 static mrb_value
-pack_unpack(mrb_state *mrb, mrb_value str, int single)
+pack_unpack(mrb_state *mrb, mrb_value str, mrb_bool single)
 {
   mrb_value result;
   struct tmpl tmpl;
-  int count;
+  mrb_int count;
   unsigned int flags;
   enum pack_dir dir;
   enum pack_type type;
-  int size;
-  int srcidx, srclen;
+  mrb_int size, srcidx, srclen;
   const unsigned char *sptr;
 
   prepare_tmpl(mrb, &tmpl);
@@ -1667,18 +1669,23 @@ pack_unpack(mrb_state *mrb, mrb_value str, int single)
     switch (dir) {
     case PACK_DIR_HEX:
       srcidx += unpack_hex(mrb, sptr, srclen - srcidx, result, count, flags);
+      if (single) goto single_return;
       continue;
     case PACK_DIR_BSTR:
       srcidx += unpack_bstr(mrb, sptr, srclen - srcidx, result, count, flags);
+      if (single) goto single_return;
       continue;
     case PACK_DIR_STR:
       srcidx += unpack_str(mrb, sptr, srclen - srcidx, result, count, flags);
+      if (single) goto single_return;
       continue;
     case PACK_DIR_BASE64:
       srcidx += unpack_base64(mrb, sptr, srclen - srcidx, result);
+      if (single) goto single_return;
       continue;
     case PACK_DIR_QENC:
       srcidx += unpack_qenc(mrb, sptr, srclen - srcidx, result);
+      if (single) goto single_return;
       continue;
     default:
       break;
@@ -1729,6 +1736,7 @@ pack_unpack(mrb_state *mrb, mrb_value str, int single)
     }
   }
   if (single) {
+  single_return:
     if (RARRAY_LEN(result) > 0) {
       return RARRAY_PTR(result)[0];
     }
@@ -1740,21 +1748,21 @@ pack_unpack(mrb_state *mrb, mrb_value str, int single)
 static mrb_value
 mrb_pack_unpack(mrb_state *mrb, mrb_value str)
 {
-  return pack_unpack(mrb, str, 0);
+  return pack_unpack(mrb, str, FALSE);
 }
 
 static mrb_value
 mrb_pack_unpack1(mrb_state *mrb, mrb_value str)
 {
-  return pack_unpack(mrb, str, 1);
+  return pack_unpack(mrb, str, TRUE);
 }
 
 void
 mrb_mruby_pack_gem_init(mrb_state *mrb)
 {
-  mrb_define_method(mrb, mrb->array_class, "pack", mrb_pack_pack, MRB_ARGS_REQ(1));
-  mrb_define_method(mrb, mrb->string_class, "unpack", mrb_pack_unpack, MRB_ARGS_REQ(1));
-  mrb_define_method(mrb, mrb->string_class, "unpack1", mrb_pack_unpack1, MRB_ARGS_REQ(1));
+  mrb_define_method_id(mrb, mrb->array_class, MRB_SYM(pack), mrb_pack_pack, MRB_ARGS_REQ(1));
+  mrb_define_method_id(mrb, mrb->string_class, MRB_SYM(unpack), mrb_pack_unpack, MRB_ARGS_REQ(1));
+  mrb_define_method_id(mrb, mrb->string_class, MRB_SYM(unpack1), mrb_pack_unpack1, MRB_ARGS_REQ(1));
 }
 
 void

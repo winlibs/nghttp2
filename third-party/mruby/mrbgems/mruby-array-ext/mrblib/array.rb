@@ -333,13 +333,13 @@ class Array
   def fetch(n, ifnone=NONE, &block)
     #warn "block supersedes default value argument" if !n.nil? && ifnone != NONE && block
 
-    idx = n
+    idx = n.__to_int
     if idx < 0
       idx += size
     end
     if idx < 0 || size <= idx
       return block.call(n) if block
-      if ifnone == NONE
+      if NONE.equal?(ifnone)
         raise IndexError, "index #{n} outside of array bounds: #{-size}...#{size}"
       end
       return ifnone
@@ -400,12 +400,12 @@ class Array
         len += 1 unless arg0.exclude_end?
       elsif !arg0.nil?
         # ary.fill(start [, length] ) { |index| block } -> ary
-        beg = arg0
+        beg = arg0.__to_int
         beg += self.size if beg < 0
         if arg1.nil?
           len = self.size
         else
-          len = arg0 + arg1
+          len = beg + arg1.__to_int
         end
       end
     else
@@ -422,12 +422,12 @@ class Array
         len += 1 unless arg1.exclude_end?
       elsif !arg0.nil? && !arg1.nil?
         # ary.fill(obj, start [, length])               -> ary
-        beg = arg1
+        beg = arg1.__to_int
         beg += self.size if beg < 0
         if arg2.nil?
           len = self.size
         else
-          len = beg + arg2
+          len = beg + arg2.__to_int
         end
       end
     end
@@ -467,15 +467,16 @@ class Array
   def delete_if(&block)
     return to_enum :delete_if unless block
 
+    result = []
     idx = 0
-    while idx < self.size do
-      if block.call(self[idx])
-        self.delete_at(idx)
-      else
-        idx += 1
-      end
+    len = size
+    while idx < len
+      elem = self[idx]
+      result << elem unless block.call(elem)
+      idx += 1
     end
-    self
+
+    self.replace(result)
   end
 
   ##
@@ -496,20 +497,18 @@ class Array
   def reject!(&block)
     return to_enum :reject! unless block
 
-    len = self.size
+    result = []
     idx = 0
-    while idx < self.size do
-      if block.call(self[idx])
-        self.delete_at(idx)
-      else
-        idx += 1
-      end
+    len = size
+    while idx < len
+      elem = self[idx]
+      result << elem unless block.call(elem)
+      idx += 1
     end
-    if self.size == len
-      nil
-    else
-      self
-    end
+
+    return nil if len == result.size
+
+    self.replace(result)
   end
 
   ##
@@ -526,6 +525,7 @@ class Array
   #     a.insert(-2, 1, 2, 3)   #=> ["a", "b", 99, "c", 1, 2, 3, "d"]
 
   def insert(idx, *args)
+    idx = idx.__to_int
     idx += self.size + 1 if idx < 0
     self[idx, 0] = args
     self
@@ -658,15 +658,16 @@ class Array
   def keep_if(&block)
     return to_enum :keep_if unless block
 
+    result = []
     idx = 0
-    while idx < self.size do
-      if block.call(self[idx])
-        idx += 1
-      else
-        self.delete_at(idx)
-      end
+    len = size
+    while idx < len
+      elem = self[idx]
+      result << elem if block.call(elem)
+      idx += 1
     end
-    self
+
+    self.replace(result)
   end
 
   ##
@@ -694,37 +695,10 @@ class Array
       result << elem if block.call(elem)
       idx += 1
     end
+
     return nil if len == result.size
+
     self.replace(result)
-  end
-
-  ##
-  #  call-seq:
-  #     ary.index(val)            -> int or nil
-  #     ary.index {|item| block } ->  int or nil
-  #
-  #  Returns the _index_ of the first object in +ary+ such that the object is
-  #  <code>==</code> to +obj+.
-  #
-  #  If a block is given instead of an argument, returns the _index_ of the
-  #  first object for which the block returns +true+. Returns +nil+ if no
-  #  match is found.
-  #
-  # ISO 15.2.12.5.14
-  def index(val=NONE, &block)
-    return to_enum(:find_index, val) if !block && val == NONE
-
-    if block
-      idx = 0
-      len = size
-      while idx < len
-        return idx if block.call self[idx]
-        idx += 1
-      end
-    else
-      return self.__ary_index(val)
-    end
-    nil
   end
 
   ##
@@ -736,6 +710,7 @@ class Array
   # intermediate step is +nil+.
   #
   def dig(idx,*args)
+    idx = idx.__to_int
     n = self[idx]
     if args.size > 0
       n&.dig(*args)
@@ -771,6 +746,7 @@ class Array
   #  a.permutation(0).to_a #=> [[]] # one permutation of length 0
   #  a.permutation(4).to_a #=> []   # no permutations of length 4
   def permutation(n=self.size, &block)
+    n = n.__to_int
     return to_enum(:permutation, n) unless block
     size = self.size
     if n == 0
@@ -817,6 +793,7 @@ class Array
   #    a.combination(5).to_a  #=> []   # no combinations of length 5
 
   def combination(n, &block)
+    n = n.__to_int
     return to_enum(:combination, n) unless block
     size = self.size
     if n == 0
@@ -899,6 +876,27 @@ class Array
 
   ##
   # call-seq:
+  #   ary.fetch_values(idx, ...)                 -> array
+  #   ary.fetch_values(idx, ...) { |i| block } -> array
+  #
+  # Returns an array containing the values associated with the given indexes.
+  # but also raises <code>IndexError</code> when one of indexes can't be found.
+  # Also see <code>Array#values_at</code> and <code>Array#fetch</code>.
+  #
+  #   a = ["cat", "dog", "cow"]
+  #
+  #   a.fetch_values(2, 0)                #=> ["cow", "cat"]
+  #   a.fetch_values(2, 5)                # raises KeyError
+  #   a.fetch_values(2, 5) {|i| "BIRD" }  #=> ["cow", "BIRD"]
+  #
+  def fetch_values(*idx, &block)
+    idx.map do |i|
+      self.fetch(i, &block)
+    end
+  end
+
+  ##
+  # call-seq:
   #   ary.product(*arys)                  ->   array
   #   ary.product(*arys) { |item| ... }   ->   self
   def product(*arys, &block)
@@ -963,12 +961,14 @@ class Array
   #
   # A +permutation+ method that contains the same elements.
   def repeated_permutation(n, &block)
+    n = n.__to_int
     raise TypeError, "no implicit conversion into Integer" unless 0 <=> n
     return to_enum(:repeated_permutation, n) unless block
     __repeated_combination(n, true, &block)
   end
 
   def __repeated_combination(n, permutation, &block)
+    n = n.__to_int
     case n
     when 0
       yield []

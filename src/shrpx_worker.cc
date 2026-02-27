@@ -26,44 +26,54 @@
 
 #ifdef HAVE_UNISTD_H
 #  include <unistd.h>
-#endif // HAVE_UNISTD_H
+#endif // defined(HAVE_UNISTD_H)
+#include <netinet/tcp.h>
 #include <netinet/udp.h>
 
 #include <cstdio>
 #include <memory>
+#include <map>
 
 #include "ssl_compat.h"
 
 #ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
 #  include <wolfssl/options.h>
 #  include <wolfssl/openssl/rand.h>
-#else // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#else // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 #  include <openssl/rand.h>
-#endif // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#endif // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 
 #ifdef HAVE_LIBBPF
 #  include <bpf/bpf.h>
 #  include <bpf/libbpf.h>
-#endif // HAVE_LIBBPF
+#endif // defined(HAVE_LIBBPF)
 
 #include "shrpx_tls.h"
 #include "shrpx_log.h"
 #include "shrpx_client_handler.h"
 #include "shrpx_http2_session.h"
 #include "shrpx_log_config.h"
-#include "shrpx_memcached_dispatcher.h"
 #ifdef HAVE_MRUBY
 #  include "shrpx_mruby.h"
-#endif // HAVE_MRUBY
+#endif // defined(HAVE_MRUBY)
 #ifdef ENABLE_HTTP3
 #  include "shrpx_quic_listener.h"
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 #include "shrpx_connection_handler.h"
+#include "shrpx_accept_handler.h"
 #include "util.h"
 #include "template.h"
 #include "xsi_strerror.h"
 
 namespace shrpx {
+
+#ifndef _KERNEL_FASTOPEN
+#  define _KERNEL_FASTOPEN
+// conditional define for TCP_FASTOPEN mostly on ubuntu
+#  ifndef TCP_FASTOPEN
+#    define TCP_FASTOPEN 23
+#  endif // !defined(TCP_FASTOPEN)
+#endif   // !defined(_KERNEL_FASTOPEN)
 
 namespace {
 void eventcb(struct ev_loop *loop, ev_async *w, int revents) {
@@ -92,6 +102,20 @@ void proc_wev_cb(struct ev_loop *loop, ev_timer *w, int revents) {
 }
 } // namespace
 
+namespace {
+void disable_listener_cb(struct ev_loop *loop, ev_timer *w, int revent) {
+  auto worker = static_cast<Worker *>(w->data);
+
+  // If we are in graceful shutdown period, we must not enable
+  // acceptors again.
+  if (worker->get_graceful_shutdown()) {
+    return;
+  }
+
+  worker->enable_listener();
+}
+} // namespace
+
 DownstreamAddrGroup::DownstreamAddrGroup() : retired{false} {}
 
 DownstreamAddrGroup::~DownstreamAddrGroup() {}
@@ -99,20 +123,22 @@ DownstreamAddrGroup::~DownstreamAddrGroup() {}
 // DownstreamKey is used to index SharedDownstreamAddr in order to
 // find the same configuration.
 using DownstreamKey = std::tuple<
-  std::vector<std::tuple<StringRef, StringRef, StringRef, size_t, size_t, Proto,
-                         uint32_t, uint32_t, uint32_t, bool, bool, bool, bool>>,
-  bool, SessionAffinity, StringRef, StringRef, SessionAffinityCookieSecure,
-  SessionAffinityCookieStickiness, int64_t, int64_t, StringRef, bool>;
+  std::vector<std::tuple<std::string_view, std::string_view, std::string_view,
+                         size_t, size_t, Proto, uint32_t, uint32_t, uint32_t,
+                         bool, bool, bool, bool>>,
+  bool, SessionAffinity, std::string_view, std::string_view,
+  SessionAffinityCookieSecure, SessionAffinityCookieStickiness, ev_tstamp,
+  ev_tstamp, std::string_view, bool>;
 
 namespace {
 DownstreamKey
 create_downstream_key(const std::shared_ptr<SharedDownstreamAddr> &shared_addr,
-                      const StringRef &mruby_file) {
+                      const std::string_view &mruby_file) {
   DownstreamKey dkey;
 
   auto &addrs = std::get<0>(dkey);
   addrs.resize(shared_addr->addrs.size());
-  auto p = std::begin(addrs);
+  auto p = std::ranges::begin(addrs);
   for (auto &a : shared_addr->addrs) {
     std::get<0>(*p) = a.host;
     std::get<1>(*p) = a.sni;
@@ -129,7 +155,7 @@ create_downstream_key(const std::shared_ptr<SharedDownstreamAddr> &shared_addr,
     std::get<12>(*p) = a.upgrade_scheme;
     ++p;
   }
-  std::sort(std::begin(addrs), std::end(addrs));
+  std::ranges::sort(addrs);
 
   std::get<1>(dkey) = shared_addr->redirect_if_not_tls;
 
@@ -150,29 +176,23 @@ create_downstream_key(const std::shared_ptr<SharedDownstreamAddr> &shared_addr,
 } // namespace
 
 Worker::Worker(struct ev_loop *loop, SSL_CTX *sv_ssl_ctx, SSL_CTX *cl_ssl_ctx,
-               SSL_CTX *tls_session_cache_memcached_ssl_ctx,
                tls::CertLookupTree *cert_tree,
 #ifdef ENABLE_HTTP3
                SSL_CTX *quic_sv_ssl_ctx, tls::CertLookupTree *quic_cert_tree,
                WorkerID wid,
-#  ifdef HAVE_LIBBPF
-               size_t index,
-#  endif // HAVE_LIBBPF
-#endif   // ENABLE_HTTP3
-               const std::shared_ptr<TicketKeys> &ticket_keys,
+#endif // defined(ENABLE_HTTP3)
+               size_t index, const std::shared_ptr<TicketKeys> &ticket_keys,
                ConnectionHandler *conn_handler,
                std::shared_ptr<DownstreamConfig> downstreamconf)
-  :
-#if defined(ENABLE_HTTP3) && defined(HAVE_LIBBPF)
-    index_{index},
-#endif // ENABLE_HTTP3 && HAVE_LIBBPF
+  : index_{index},
     randgen_(util::make_mt19937()),
     worker_stat_{},
     dns_tracker_(loop, get_config()->conn.downstream->family),
+    upstream_addrs_{get_config()->conn.listener.addrs},
 #ifdef ENABLE_HTTP3
     worker_id_{std::move(wid)},
     quic_upstream_addrs_{get_config()->conn.quic_listener.addrs},
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
     loop_(loop),
     sv_ssl_ctx_(sv_ssl_ctx),
     cl_ssl_ctx_(cl_ssl_ctx),
@@ -182,7 +202,7 @@ Worker::Worker(struct ev_loop *loop, SSL_CTX *sv_ssl_ctx, SSL_CTX *cl_ssl_ctx,
     quic_sv_ssl_ctx_{quic_sv_ssl_ctx},
     quic_cert_tree_{quic_cert_tree},
     quic_conn_handler_{this},
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
     ticket_keys_(ticket_keys),
     connect_blocker_(
       std::make_unique<ConnectBlocker>(randgen_, loop_, nullptr, nullptr)),
@@ -197,14 +217,8 @@ Worker::Worker(struct ev_loop *loop, SSL_CTX *sv_ssl_ctx, SSL_CTX *cl_ssl_ctx,
   ev_timer_init(&proc_wev_timer_, proc_wev_cb, 0., 0.);
   proc_wev_timer_.data = this;
 
-  auto &session_cacheconf = get_config()->tls.session_cache;
-
-  if (!session_cacheconf.memcached.host.empty()) {
-    session_cache_memcached_dispatcher_ = std::make_unique<MemcachedDispatcher>(
-      &session_cacheconf.memcached.addr, loop,
-      tls_session_cache_memcached_ssl_ctx,
-      StringRef{session_cacheconf.memcached.host}, &mcpool_, randgen_);
-  }
+  ev_timer_init(&disable_listener_timer_, disable_listener_cb, 0., 0.);
+  disable_listener_timer_.data = this;
 
   replace_downstream_config(std::move(downstreamconf));
 }
@@ -260,24 +274,32 @@ void Worker::replace_downstream_config(
   // backendconfig API call.
   auto groups = downstreamconf->addr_groups;
 
-  downstream_addr_groups_ =
-    std::vector<std::shared_ptr<DownstreamAddrGroup>>(groups.size());
+  auto old_addr_groups = std::exchange(
+    downstream_addr_groups_,
+    std::vector<std::shared_ptr<DownstreamAddrGroup>>(groups.size()));
 
   std::map<DownstreamKey, size_t> addr_groups_indexer;
 #ifdef HAVE_MRUBY
   // TODO It is a bit less efficient because
   // mruby::create_mruby_context returns std::unique_ptr and we cannot
   // use std::make_shared.
-  std::map<StringRef, std::shared_ptr<mruby::MRubyContext>> shared_mruby_ctxs;
-#endif // HAVE_MRUBY
+  std::unordered_map<std::string_view, std::shared_ptr<mruby::MRubyContext>>
+    shared_mruby_ctxs;
+#endif // defined(HAVE_MRUBY)
+
+  auto old_addr_group_it = std::ranges::begin(old_addr_groups);
 
   for (size_t i = 0; i < groups.size(); ++i) {
     auto &src = groups[i];
     auto &dst = downstream_addr_groups_[i];
 
     dst = std::make_shared<DownstreamAddrGroup>();
-    dst->pattern =
-      ImmutableString{std::begin(src.pattern), std::end(src.pattern)};
+    dst->pattern = ImmutableString{src.pattern};
+
+    for (; old_addr_group_it != std::ranges::end(old_addr_groups) &&
+           (*old_addr_group_it)->pattern < dst->pattern;
+         ++old_addr_group_it)
+      ;
 
     auto shared_addr = std::make_shared<SharedDownstreamAddr>();
 
@@ -325,14 +347,14 @@ void Worker::replace_downstream_config(
 
 #ifdef HAVE_MRUBY
     auto mruby_ctx_it = shared_mruby_ctxs.find(src.mruby_file);
-    if (mruby_ctx_it == std::end(shared_mruby_ctxs)) {
+    if (mruby_ctx_it == std::ranges::end(shared_mruby_ctxs)) {
       shared_addr->mruby_ctx = mruby::create_mruby_context(src.mruby_file);
       assert(shared_addr->mruby_ctx);
       shared_mruby_ctxs.emplace(src.mruby_file, shared_addr->mruby_ctx);
     } else {
       shared_addr->mruby_ctx = (*mruby_ctx_it).second;
     }
-#endif // HAVE_MRUBY
+#endif // defined(HAVE_MRUBY)
 
     // share the connection if patterns have the same set of backend
     // addresses.
@@ -340,7 +362,7 @@ void Worker::replace_downstream_config(
     auto dkey = create_downstream_key(shared_addr, src.mruby_file);
     auto it = addr_groups_indexer.find(dkey);
 
-    if (it == std::end(addr_groups_indexer)) {
+    if (it == std::ranges::end(addr_groups_indexer)) {
       auto shared_addr_ptr = shared_addr.get();
 
       for (auto &addr : shared_addr->addrs) {
@@ -364,15 +386,14 @@ void Worker::replace_downstream_config(
         addr.seq = seq++;
       }
 
-      util::shuffle(std::begin(shared_addr->addrs),
-                    std::end(shared_addr->addrs), randgen_,
+      util::shuffle(shared_addr->addrs, randgen_,
                     [](auto i, auto j) { std::swap((*i).seq, (*j).seq); });
 
       if (shared_addr->affinity.type == SessionAffinity::NONE) {
-        std::map<StringRef, WeightGroup *> wgs;
+        std::unordered_map<std::string_view, WeightGroup *> wgs;
         size_t num_wgs = 0;
         for (auto &addr : shared_addr->addrs) {
-          if (wgs.find(addr.group) == std::end(wgs)) {
+          if (!wgs.contains(addr.group)) {
             ++num_wgs;
             wgs.emplace(addr.group, nullptr);
           }
@@ -384,6 +405,7 @@ void Worker::replace_downstream_config(
           auto &wg = wgs[addr.group];
           if (wg == nullptr) {
             wg = &shared_addr->wgs[--num_wgs];
+            wg->name = addr.group;
             wg->seq = num_wgs;
           }
 
@@ -395,10 +417,26 @@ void Worker::replace_downstream_config(
 
         assert(num_wgs == 0);
 
-        for (auto &kv : wgs) {
-          shared_addr->pq.push(
-            WeightGroupEntry{kv.second, kv.second->seq, kv.second->cycle});
-          kv.second->queued = true;
+        auto copy_cycle =
+          old_addr_group_it != std::ranges::end(old_addr_groups) &&
+          (*old_addr_group_it)->pattern == dst->pattern &&
+          (*old_addr_group_it)->shared_addr->affinity.type ==
+            SessionAffinity::NONE &&
+          std::ranges::equal(shared_addr->wgs,
+                             (*old_addr_group_it)->shared_addr->wgs,
+                             [](const auto &a, const auto &b) {
+                               return a.name == b.name && a.weight == b.weight;
+                             });
+
+        for (size_t i = 0; i < shared_addr->wgs.size(); ++i) {
+          auto &wg = shared_addr->wgs[i];
+
+          if (copy_cycle) {
+            wg.cycle = (*old_addr_group_it)->shared_addr->wgs[i].cycle;
+          }
+
+          shared_addr->pq.push(WeightGroupEntry{&wg, wg.seq, wg.cycle});
+          wg.queued = true;
         }
       }
 
@@ -406,7 +444,8 @@ void Worker::replace_downstream_config(
 
       addr_groups_indexer.emplace(std::move(dkey), i);
     } else {
-      auto &g = *(std::begin(downstream_addr_groups_) + (*it).second);
+      auto &g = *(std::ranges::begin(downstream_addr_groups_) +
+                  as_signed((*it).second));
       if (LOG_ENABLED(INFO)) {
         LOG(INFO) << dst->pattern << " shares the same backend group with "
                   << g->pattern;
@@ -420,6 +459,7 @@ Worker::~Worker() {
   ev_async_stop(loop_, &w_);
   ev_timer_stop(loop_, &mcpool_clear_timer_);
   ev_timer_stop(loop_, &proc_wev_timer_);
+  ev_timer_stop(loop_, &disable_listener_timer_);
 }
 
 void Worker::schedule_clear_mcpool() {
@@ -432,7 +472,7 @@ void Worker::schedule_clear_mcpool() {
 void Worker::wait() {
 #ifndef NOTHREADS
   fut_.get();
-#endif // !NOTHREADS
+#endif // !defined(NOTHREADS)
 }
 
 void Worker::run_async() {
@@ -440,13 +480,12 @@ void Worker::run_async() {
   fut_ = std::async(std::launch::async, [this] {
     (void)reopen_log_files(get_config()->logging);
     ev_run(loop_);
-    delete_log_config();
 
 #  ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
     wc_ecc_fp_free();
-#  endif // NGHTTP2_OPENSSL_IS_WOLFSSL
+#  endif // defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
   });
-#endif // !NOTHREADS
+#endif // !defined(NOTHREADS)
 }
 
 void Worker::send(WorkerEvent event) {
@@ -464,10 +503,7 @@ void Worker::process_events() {
   {
     std::lock_guard<std::mutex> g(m_);
 
-    // Process event one at a time.  This is important for
-    // WorkerEventType::NEW_CONNECTION event since accepting large
-    // number of new connections at once may delay time to 1st byte
-    // for existing connections.
+    // Process event one at a time.
 
     if (q_.empty()) {
       ev_timer_stop(loop_, &proc_wev_timer_);
@@ -482,41 +518,7 @@ void Worker::process_events() {
 
   auto config = get_config();
 
-  auto worker_connections = config->conn.upstream.worker_connections;
-
   switch (wev.type) {
-  case WorkerEventType::NEW_CONNECTION: {
-    if (LOG_ENABLED(INFO)) {
-      WLOG(INFO, this) << "WorkerEvent: client_fd=" << wev.client_fd
-                       << ", addrlen=" << wev.client_addrlen;
-    }
-
-    if (worker_stat_.num_connections >= worker_connections) {
-      if (LOG_ENABLED(INFO)) {
-        WLOG(INFO, this) << "Too many connections >= " << worker_connections;
-      }
-
-      close(wev.client_fd);
-
-      break;
-    }
-
-    auto client_handler = tls::accept_connection(
-      this, wev.client_fd, &wev.client_addr.sa, wev.client_addrlen, wev.faddr);
-    if (!client_handler) {
-      if (LOG_ENABLED(INFO)) {
-        WLOG(ERROR, this) << "ClientHandler creation failed";
-      }
-      close(wev.client_fd);
-      break;
-    }
-
-    if (LOG_ENABLED(INFO)) {
-      WLOG(INFO, this) << "CLIENT_HANDLER:" << client_handler << " created";
-    }
-
-    break;
-  }
   case WorkerEventType::REOPEN_LOG:
     WLOG(NOTICE, this) << "Reopening log files: worker process (thread " << this
                        << ")";
@@ -528,6 +530,9 @@ void Worker::process_events() {
     WLOG(NOTICE, this) << "Graceful shutdown commencing";
 
     graceful_shutdown_ = true;
+
+    accept_pending_connection();
+    delete_listener();
 
     if (worker_stat_.num_connections == 0 &&
         worker_stat_.num_close_waits == 0) {
@@ -569,12 +574,43 @@ void Worker::process_events() {
 
     break;
   }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
   default:
     if (LOG_ENABLED(INFO)) {
       WLOG(INFO, this) << "unknown event type " << static_cast<int>(wev.type);
     }
   }
+}
+
+void Worker::enable_listener() {
+  if (LOG_ENABLED(INFO)) {
+    WLOG(INFO, this) << "Enable listeners";
+  }
+
+  for (auto &a : listeners_) {
+    a->enable();
+  }
+}
+
+void Worker::disable_listener() {
+  if (LOG_ENABLED(INFO)) {
+    WLOG(INFO, this) << "Disable listeners";
+  }
+
+  for (auto &a : listeners_) {
+    a->disable();
+  }
+}
+
+void Worker::sleep_listener(ev_tstamp t) {
+  if (t == 0. || ev_is_active(&disable_listener_timer_)) {
+    return;
+  }
+
+  disable_listener();
+
+  ev_timer_set(&disable_listener_timer_, t, 0.);
+  ev_timer_start(loop_, &disable_listener_timer_);
 }
 
 tls::CertLookupTree *Worker::get_cert_lookup_tree() const { return cert_tree_; }
@@ -583,25 +619,25 @@ tls::CertLookupTree *Worker::get_cert_lookup_tree() const { return cert_tree_; }
 tls::CertLookupTree *Worker::get_quic_cert_lookup_tree() const {
   return quic_cert_tree_;
 }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 std::shared_ptr<TicketKeys> Worker::get_ticket_keys() {
 #ifdef HAVE_ATOMIC_STD_SHARED_PTR
   return ticket_keys_.load(std::memory_order_acquire);
-#else  // !HAVE_ATOMIC_STD_SHARED_PTR
+#else  // !defined(HAVE_ATOMIC_STD_SHARED_PTR)
   std::lock_guard<std::mutex> g(ticket_keys_m_);
   return ticket_keys_;
-#endif // !HAVE_ATOMIC_STD_SHARED_PTR
+#endif // !defined(HAVE_ATOMIC_STD_SHARED_PTR)
 }
 
 void Worker::set_ticket_keys(std::shared_ptr<TicketKeys> ticket_keys) {
 #ifdef HAVE_ATOMIC_STD_SHARED_PTR
   // This is single writer
   ticket_keys_.store(std::move(ticket_keys), std::memory_order_release);
-#else  // !HAVE_ATOMIC_STD_SHARED_PTR
+#else  // !defined(HAVE_ATOMIC_STD_SHARED_PTR)
   std::lock_guard<std::mutex> g(ticket_keys_m_);
   ticket_keys_ = std::move(ticket_keys);
-#endif // !HAVE_ATOMIC_STD_SHARED_PTR
+#endif // !defined(HAVE_ATOMIC_STD_SHARED_PTR)
 }
 
 WorkerStat *Worker::get_worker_stat() { return &worker_stat_; }
@@ -614,7 +650,7 @@ SSL_CTX *Worker::get_cl_ssl_ctx() const { return cl_ssl_ctx_; }
 
 #ifdef ENABLE_HTTP3
 SSL_CTX *Worker::get_quic_sv_ssl_ctx() const { return quic_sv_ssl_ctx_; }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 void Worker::set_graceful_shutdown(bool f) { graceful_shutdown_ = f; }
 
@@ -622,15 +658,11 @@ bool Worker::get_graceful_shutdown() const { return graceful_shutdown_; }
 
 MemchunkPool *Worker::get_mcpool() { return &mcpool_; }
 
-MemcachedDispatcher *Worker::get_session_cache_memcached_dispatcher() {
-  return session_cache_memcached_dispatcher_.get();
-}
-
 std::mt19937 &Worker::get_randgen() { return randgen_; }
 
 #ifdef HAVE_MRUBY
 int Worker::create_mruby_context() {
-  mruby_ctx_ = mruby::create_mruby_context(StringRef{get_config()->mruby_file});
+  mruby_ctx_ = mruby::create_mruby_context(get_config()->mruby_file);
   if (!mruby_ctx_) {
     return -1;
   }
@@ -641,7 +673,7 @@ int Worker::create_mruby_context() {
 mruby::MRubyContext *Worker::get_mruby_context() const {
   return mruby_ctx_.get();
 }
-#endif // HAVE_MRUBY
+#endif // defined(HAVE_MRUBY)
 
 std::vector<std::shared_ptr<DownstreamAddrGroup>> &
 Worker::get_downstream_addr_groups() {
@@ -660,11 +692,214 @@ ConnectionHandler *Worker::get_connection_handler() const {
   return conn_handler_;
 }
 
+int Worker::setup_server_socket() {
+  auto config = get_config();
+  auto &apiconf = config->api;
+  auto api_isolation = apiconf.enabled && !config->single_thread;
+
+  for (auto &addr : upstream_addrs_) {
+    if (api_isolation) {
+      if (addr.alt_mode == UpstreamAltMode::API) {
+        if (index_ != 0) {
+          continue;
+        }
+      } else if (index_ == 0) {
+        continue;
+      }
+    }
+
+    if (addr.host_unix) {
+      // Copy file descriptor because AcceptHandler destructor closes
+      // addr.fd.
+      addr.fd = dup(addr.fd);
+      if (addr.fd == -1) {
+        return -1;
+      }
+
+      util::make_socket_closeonexec(addr.fd);
+    } else if (create_tcp_server_socket(addr) != 0) {
+      return -1;
+    }
+
+    listeners_.emplace_back(std::make_unique<AcceptHandler>(this, &addr));
+  }
+
+  return 0;
+}
+
+void Worker::delete_listener() { listeners_.clear(); }
+
+void Worker::accept_pending_connection() {
+  for (auto &l : listeners_) {
+    l->accept_connection();
+  }
+}
+
+int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
+  std::array<char, STRERROR_BUFSIZE> errbuf;
+  int fd = -1;
+  int rv;
+
+  auto &listenerconf = get_config()->conn.listener;
+
+  auto service = util::utos(faddr.port);
+  addrinfo hints{
+    .ai_flags = AI_PASSIVE
+#ifdef AI_ADDRCONFIG
+                | AI_ADDRCONFIG
+#endif // defined(AI_ADDRCONFIG)
+    ,
+    .ai_family = faddr.family,
+    .ai_socktype = SOCK_STREAM,
+  };
+
+  auto node = faddr.host == "*"sv ? nullptr : faddr.host.data();
+
+  addrinfo *res, *rp;
+  rv = getaddrinfo(node, service.c_str(), &hints, &res);
+#ifdef AI_ADDRCONFIG
+  if (rv != 0) {
+    // Retry without AI_ADDRCONFIG
+    hints.ai_flags &= ~AI_ADDRCONFIG;
+    rv = getaddrinfo(node, service.c_str(), &hints, &res);
+  }
+#endif // defined(AI_ADDRCONFIG)
+  if (rv != 0) {
+    LOG(FATAL) << "Unable to get IPv" << (faddr.family == AF_INET ? "4" : "6")
+               << " address for " << faddr.host << ", port " << faddr.port
+               << ": " << gai_strerror(rv);
+    return -1;
+  }
+
+  auto res_d = defer(freeaddrinfo, res);
+
+  std::array<char, NI_MAXHOST> host;
+
+  for (rp = res; rp; rp = rp->ai_next) {
+    rv = getnameinfo(rp->ai_addr, rp->ai_addrlen, host.data(), host.size(),
+                     nullptr, 0, NI_NUMERICHOST);
+
+    if (rv != 0) {
+      LOG(WARN) << "getnameinfo() failed: " << gai_strerror(rv);
+      continue;
+    }
+
+#ifdef SOCK_NONBLOCK
+    fd = socket(rp->ai_family, rp->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC,
+                rp->ai_protocol);
+    if (fd == -1) {
+      auto error = errno;
+      LOG(WARN) << "socket() syscall failed: "
+                << xsi_strerror(error, errbuf.data(), errbuf.size());
+      continue;
+    }
+#else  // !defined(SOCK_NONBLOCK)
+    fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+    if (fd == -1) {
+      auto error = errno;
+      LOG(WARN) << "socket() syscall failed: "
+                << xsi_strerror(error, errbuf.data(), errbuf.size());
+      continue;
+    }
+    util::make_socket_nonblocking(fd);
+    util::make_socket_closeonexec(fd);
+#endif // !defined(SOCK_NONBLOCK)
+    int val = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val,
+                   static_cast<socklen_t>(sizeof(val))) == -1) {
+      auto error = errno;
+      LOG(WARN) << "Failed to set SO_REUSEADDR option to listener socket: "
+                << xsi_strerror(error, errbuf.data(), errbuf.size());
+      close(fd);
+      continue;
+    }
+
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &val,
+                   static_cast<socklen_t>(sizeof(val))) == -1) {
+      auto error = errno;
+      LOG(WARN) << "Failed to set SO_REUSEPORT option to listener socket: "
+                << xsi_strerror(error, errbuf.data(), errbuf.size());
+      close(fd);
+      continue;
+    }
+
+#ifdef IPV6_V6ONLY
+    if (faddr.family == AF_INET6) {
+      if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &val,
+                     static_cast<socklen_t>(sizeof(val))) == -1) {
+        auto error = errno;
+        LOG(WARN) << "Failed to set IPV6_V6ONLY option to listener socket: "
+                  << xsi_strerror(error, errbuf.data(), errbuf.size());
+        close(fd);
+        continue;
+      }
+    }
+#endif // defined(IPV6_V6ONLY)
+
+#ifdef TCP_DEFER_ACCEPT
+    val = 3;
+    if (setsockopt(fd, IPPROTO_TCP, TCP_DEFER_ACCEPT, &val,
+                   static_cast<socklen_t>(sizeof(val))) == -1) {
+      auto error = errno;
+      LOG(WARN) << "Failed to set TCP_DEFER_ACCEPT option to listener socket: "
+                << xsi_strerror(error, errbuf.data(), errbuf.size());
+    }
+#endif // defined(TCP_DEFER_ACCEPT)
+
+    // When we are executing new binary, and the old binary did not
+    // bind privileged port (< 1024) for some reason, binding to those
+    // ports will fail with permission denied error.
+    if (bind(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
+      auto error = errno;
+      LOG(WARN) << "bind() syscall failed: "
+                << xsi_strerror(error, errbuf.data(), errbuf.size());
+      close(fd);
+      continue;
+    }
+
+    if (listenerconf.fastopen > 0) {
+      val = listenerconf.fastopen;
+      if (setsockopt(fd, IPPROTO_TCP, TCP_FASTOPEN, &val,
+                     static_cast<socklen_t>(sizeof(val))) == -1) {
+        auto error = errno;
+        LOG(WARN) << "Failed to set TCP_FASTOPEN option to listener socket: "
+                  << xsi_strerror(error, errbuf.data(), errbuf.size());
+      }
+    }
+
+    if (listen(fd, listenerconf.backlog) == -1) {
+      auto error = errno;
+      LOG(WARN) << "listen() syscall failed: "
+                << xsi_strerror(error, errbuf.data(), errbuf.size());
+      close(fd);
+      continue;
+    }
+
+    break;
+  }
+
+  if (!rp) {
+    LOG(FATAL) << "Listening " << (faddr.family == AF_INET ? "IPv4" : "IPv6")
+               << " socket failed";
+
+    return -1;
+  }
+
+  faddr.fd = fd;
+  faddr.hostport = util::make_http_hostport(
+    mod_config()->balloc, std::string_view{host.data()}, faddr.port);
+
+  LOG(NOTICE) << "Listening on " << faddr.hostport
+              << (faddr.tls ? ", tls" : "");
+
+  return 0;
+}
+
 #ifdef ENABLE_HTTP3
 QUICConnectionHandler *Worker::get_quic_connection_handler() {
   return &quic_conn_handler_;
 }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 DNSTracker *Worker::get_dns_tracker() { return &dns_tracker_; }
 
@@ -698,12 +933,12 @@ uint32_t Worker::compute_sk_index() const {
   auto &apiconf = config->api;
 
   if (!config->single_thread && apiconf.enabled) {
-    return index_ - 1;
+    return static_cast<uint32_t>(index_ - 1);
   }
 
-  return index_;
+  return static_cast<uint32_t>(index_);
 }
-#  endif // HAVE_LIBBPF
+#  endif // defined(HAVE_LIBBPF)
 
 int Worker::setup_quic_server_socket() {
   size_t n = 0;
@@ -844,7 +1079,7 @@ void KeyExpansion(uint8_t *RoundKey, const uint8_t *Key) {
   }
 }
 } // namespace
-#  endif // HAVE_LIBBPF
+#  endif // defined(HAVE_LIBBPF)
 
 int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
   std::array<char, STRERROR_BUFSIZE> errbuf;
@@ -852,15 +1087,17 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
   int rv;
 
   auto service = util::utos(faddr.port);
-  addrinfo hints{};
-  hints.ai_family = faddr.family;
-  hints.ai_socktype = SOCK_DGRAM;
-  hints.ai_flags = AI_PASSIVE;
+  addrinfo hints{
+    .ai_flags = AI_PASSIVE
 #  ifdef AI_ADDRCONFIG
-  hints.ai_flags |= AI_ADDRCONFIG;
-#  endif // AI_ADDRCONFIG
+                | AI_ADDRCONFIG
+#  endif // defined(AI_ADDRCONFIG)
+    ,
+    .ai_family = faddr.family,
+    .ai_socktype = SOCK_DGRAM,
+  };
 
-  auto node = faddr.host == "*"_sr ? nullptr : faddr.host.data();
+  auto node = faddr.host == "*"sv ? nullptr : faddr.host.data();
 
   addrinfo *res, *rp;
   rv = getaddrinfo(node, service.c_str(), &hints, &res);
@@ -870,7 +1107,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
     hints.ai_flags &= ~AI_ADDRCONFIG;
     rv = getaddrinfo(node, service.c_str(), &hints, &res);
   }
-#  endif // AI_ADDRCONFIG
+#  endif // defined(AI_ADDRCONFIG)
   if (rv != 0) {
     LOG(FATAL) << "Unable to get IPv" << (faddr.family == AF_INET ? "4" : "6")
                << " address for " << faddr.host << ", port " << faddr.port
@@ -899,7 +1136,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       continue;
     }
-#  else  // !SOCK_NONBLOCK
+#  else  // !defined(SOCK_NONBLOCK)
     fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
     if (fd == -1) {
       auto error = errno;
@@ -909,7 +1146,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
     }
     util::make_socket_nonblocking(fd);
     util::make_socket_closeonexec(fd);
-#  endif // !SOCK_NONBLOCK
+#  endif // !defined(SOCK_NONBLOCK)
 
     int val = 1;
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val,
@@ -940,7 +1177,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
         close(fd);
         continue;
       }
-#  endif // IPV6_V6ONLY
+#  endif // defined(IPV6_V6ONLY)
 
       if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &val,
                      static_cast<socklen_t>(sizeof(val))) == -1) {
@@ -961,8 +1198,8 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
         continue;
       }
 
-#  if defined(IPV6_MTU_DISCOVER) && defined(IPV6_PMTUDISC_DO)
-      int mtu_disc = IPV6_PMTUDISC_DO;
+#  if defined(IPV6_MTU_DISCOVER) && defined(IPV6_PMTUDISC_PROBE)
+      int mtu_disc = IPV6_PMTUDISC_PROBE;
       if (setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &mtu_disc,
                      static_cast<socklen_t>(sizeof(mtu_disc))) == -1) {
         auto error = errno;
@@ -972,7 +1209,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
         close(fd);
         continue;
       }
-#  endif // defined(IPV6_MTU_DISCOVER) && defined(IP_PMTUDISC_DO)
+#  endif // defined(IPV6_MTU_DISCOVER) && defined(IPV6_PMTUDISC_PROBE)
     } else {
       if (setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &val,
                      static_cast<socklen_t>(sizeof(val))) == -1) {
@@ -992,8 +1229,8 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
         continue;
       }
 
-#  if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DO)
-      int mtu_disc = IP_PMTUDISC_DO;
+#  if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_PROBE)
+      int mtu_disc = IP_PMTUDISC_PROBE;
       if (setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &mtu_disc,
                      static_cast<socklen_t>(sizeof(mtu_disc))) == -1) {
         auto error = errno;
@@ -1002,7 +1239,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
         close(fd);
         continue;
       }
-#  endif // defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DO)
+#  endif // defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_PROBE)
     }
 
 #  ifdef UDP_GRO
@@ -1013,7 +1250,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       close(fd);
       continue;
     }
-#  endif // UDP_GRO
+#  endif // defined(UDP_GRO)
 
     if (bind(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
       auto error = errno;
@@ -1167,7 +1404,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
         return -1;
       }
     }
-#  endif // HAVE_LIBBPF
+#  endif // defined(HAVE_LIBBPF)
 
     break;
   }
@@ -1180,8 +1417,30 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
   }
 
   faddr.fd = fd;
-  faddr.hostport = util::make_http_hostport(mod_config()->balloc,
-                                            StringRef{host.data()}, faddr.port);
+  faddr.hostport = util::make_http_hostport(
+    mod_config()->balloc, std::string_view{host.data()}, faddr.port);
+  memcpy(&faddr.sockaddr, rp->ai_addr, rp->ai_addrlen);
+
+  switch (faddr.family) {
+  case AF_INET: {
+    static constexpr auto inaddr_any = INADDR_ANY;
+
+    faddr.sockaddr_any =
+      memcmp(&inaddr_any, &faddr.sockaddr.in.sin_addr, sizeof(inaddr_any)) == 0;
+
+    break;
+  }
+  case AF_INET6: {
+    static constexpr in6_addr in6addr_any = IN6ADDR_ANY_INIT;
+
+    faddr.sockaddr_any = memcmp(&in6addr_any, &faddr.sockaddr.in6.sin6_addr,
+                                sizeof(in6addr_any)) == 0;
+
+    break;
+  }
+  default:
+    assert(0);
+  }
 
   LOG(NOTICE) << "Listening on " << faddr.hostport << ", quic";
 
@@ -1191,91 +1450,55 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
 const WorkerID &Worker::get_worker_id() const { return worker_id_; }
 
 const UpstreamAddr *Worker::find_quic_upstream_addr(const Address &local_addr) {
-  std::array<char, NI_MAXHOST> host;
-
-  auto rv = getnameinfo(&local_addr.su.sa, local_addr.len, host.data(),
-                        host.size(), nullptr, 0, NI_NUMERICHOST);
-  if (rv != 0) {
-    LOG(ERROR) << "getnameinfo: " << gai_strerror(rv);
-
-    return nullptr;
-  }
-
-  uint16_t port;
-
-  switch (local_addr.su.sa.sa_family) {
-  case AF_INET:
-    port = htons(local_addr.su.in.sin_port);
-
-    break;
-  case AF_INET6:
-    port = htons(local_addr.su.in6.sin6_port);
-
-    break;
-  default:
-    assert(0);
-    abort();
-  }
-
-  std::array<char, util::max_hostport> hostport_buf;
-
-  auto hostport = util::make_http_hostport(std::begin(hostport_buf),
-                                           StringRef{host.data()}, port);
   const UpstreamAddr *fallback_faddr = nullptr;
 
   for (auto &faddr : quic_upstream_addrs_) {
-    if (faddr.hostport == hostport) {
-      return &faddr;
-    }
-
-    if (faddr.port != port || faddr.family != local_addr.su.sa.sa_family) {
+    if (local_addr.su.sa.sa_family != faddr.family) {
       continue;
     }
 
-    if (faddr.port == 443 || faddr.port == 80) {
-      switch (faddr.family) {
-      case AF_INET:
-        if (faddr.hostport == "0.0.0.0"_sr) {
-          fallback_faddr = &faddr;
-        }
-
-        break;
-      case AF_INET6:
-        if (faddr.hostport == "[::]"_sr) {
-          fallback_faddr = &faddr;
-        }
-
-        break;
-      default:
-        assert(0);
+    switch (faddr.family) {
+    case AF_INET: {
+      const auto &addr = faddr.sockaddr.in;
+      if (local_addr.su.in.sin_port != addr.sin_port) {
+        continue;
       }
-    } else {
-      switch (faddr.family) {
-      case AF_INET:
-        if (util::starts_with(faddr.hostport, "0.0.0.0:"_sr)) {
-          fallback_faddr = &faddr;
-        }
 
-        break;
-      case AF_INET6:
-        if (util::starts_with(faddr.hostport, "[::]:"_sr)) {
-          fallback_faddr = &faddr;
-        }
-
-        break;
-      default:
-        assert(0);
+      if (memcmp(&local_addr.su.in.sin_addr, &addr.sin_addr,
+                 sizeof(addr.sin_addr)) == 0) {
+        return &faddr;
       }
+
+      break;
+    }
+    case AF_INET6: {
+      const auto &addr = faddr.sockaddr.in6;
+      if (local_addr.su.in6.sin6_port != addr.sin6_port) {
+        continue;
+      }
+
+      if (memcmp(&local_addr.su.in6.sin6_addr, &addr.sin6_addr,
+                 sizeof(addr.sin6_addr)) == 0) {
+        return &faddr;
+      }
+
+      break;
+    }
+    }
+
+    if (faddr.sockaddr_any) {
+      fallback_faddr = &faddr;
     }
   }
 
   return fallback_faddr;
 }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 namespace {
 size_t match_downstream_addr_group_host(
-  const RouterConfig &routerconf, const StringRef &host, const StringRef &path,
+  const RouterConfig &routerconf, const std::string_view &host,
+  const std::string_view &path,
   const std::vector<std::shared_ptr<DownstreamAddrGroup>> &groups,
   size_t catch_all, BlockAllocator &balloc) {
   const auto &router = routerconf.router;
@@ -1291,18 +1514,19 @@ size_t match_downstream_addr_group_host(
   if (group != -1) {
     if (LOG_ENABLED(INFO)) {
       LOG(INFO) << "Found pattern with query " << host << path
-                << ", matched pattern=" << groups[group]->pattern;
+                << ", matched pattern=" << groups[as_unsigned(group)]->pattern;
     }
-    return group;
+    return as_unsigned(group);
   }
 
   if (!wildcard_patterns.empty() && !host.empty()) {
     auto rev_host_src = make_byte_ref(balloc, host.size() - 1);
-    auto ep =
-      std::copy(std::begin(host) + 1, std::end(host), std::begin(rev_host_src));
-    std::reverse(std::begin(rev_host_src), ep);
-    auto rev_host = StringRef{std::span{std::begin(rev_host_src), ep}};
-
+    auto rev_host =
+      as_string_view(std::ranges::begin(rev_host_src),
+                     std::ranges::reverse_copy(std::ranges::begin(host) + 1,
+                                               std::ranges::end(host),
+                                               std::ranges::begin(rev_host_src))
+                       .out);
     ssize_t best_group = -1;
     const RNode *last_node = nullptr;
 
@@ -1314,16 +1538,18 @@ size_t match_downstream_addr_group_host(
         break;
       }
 
-      rev_host = StringRef{std::begin(rev_host) + nread, std::end(rev_host)};
+      rev_host = std::string_view{std::ranges::begin(rev_host) + nread,
+                                  std::ranges::end(rev_host)};
 
-      auto &wc = wildcard_patterns[wcidx];
-      auto group = wc.router.match(StringRef{}, path);
+      auto &wc = wildcard_patterns[as_unsigned(wcidx)];
+      auto group = wc.router.match(""sv, path);
       if (group != -1) {
         // We sorted wildcard_patterns in a way that first match is the
         // longest host pattern.
         if (LOG_ENABLED(INFO)) {
           LOG(INFO) << "Found wildcard pattern with query " << host << path
-                    << ", matched pattern=" << groups[group]->pattern;
+                    << ", matched pattern="
+                    << groups[as_unsigned(group)]->pattern;
         }
 
         best_group = group;
@@ -1331,17 +1557,17 @@ size_t match_downstream_addr_group_host(
     }
 
     if (best_group != -1) {
-      return best_group;
+      return as_unsigned(best_group);
     }
   }
 
-  group = router.match(""_sr, path);
+  group = router.match(""sv, path);
   if (group != -1) {
     if (LOG_ENABLED(INFO)) {
       LOG(INFO) << "Found pattern with query " << path
-                << ", matched pattern=" << groups[group]->pattern;
+                << ", matched pattern=" << groups[as_unsigned(group)]->pattern;
     }
-    return group;
+    return as_unsigned(group);
   }
 
   if (LOG_ENABLED(INFO)) {
@@ -1352,23 +1578,22 @@ size_t match_downstream_addr_group_host(
 } // namespace
 
 size_t match_downstream_addr_group(
-  const RouterConfig &routerconf, const StringRef &hostport,
-  const StringRef &raw_path,
+  const RouterConfig &routerconf, const std::string_view &hostport,
+  const std::string_view &raw_path,
   const std::vector<std::shared_ptr<DownstreamAddrGroup>> &groups,
   size_t catch_all, BlockAllocator &balloc) {
-  if (std::find(std::begin(hostport), std::end(hostport), '/') !=
-      std::end(hostport)) {
+  if (util::contains(hostport, '/')) {
     // We use '/' specially, and if '/' is included in host, it breaks
     // our code.  Select catch-all case.
     return catch_all;
   }
 
-  auto fragment = std::find(std::begin(raw_path), std::end(raw_path), '#');
-  auto query = std::find(std::begin(raw_path), fragment, '?');
-  auto path = StringRef{std::begin(raw_path), query};
+  auto fragment = std::ranges::find(raw_path, '#');
+  auto query = std::ranges::find(std::ranges::begin(raw_path), fragment, '?');
+  auto path = std::string_view{std::ranges::begin(raw_path), query};
 
   if (path.empty() || path[0] != '/') {
-    path = "/"_sr;
+    path = "/"sv;
   }
 
   if (hostport.empty()) {
@@ -1376,33 +1601,31 @@ size_t match_downstream_addr_group(
                                             catch_all, balloc);
   }
 
-  StringRef host;
+  std::string_view host;
   if (hostport[0] == '[') {
     // assume this is IPv6 numeric address
-    auto p = std::find(std::begin(hostport), std::end(hostport), ']');
-    if (p == std::end(hostport)) {
+    auto p = std::ranges::find(hostport, ']');
+    if (p == std::ranges::end(hostport)) {
       return catch_all;
     }
-    if (p + 1 < std::end(hostport) && *(p + 1) != ':') {
+    if (p + 1 < std::ranges::end(hostport) && *(p + 1) != ':') {
       return catch_all;
     }
-    host = StringRef{std::begin(hostport), p + 1};
+    host = std::string_view{std::ranges::begin(hostport), p + 1};
   } else {
-    auto p = std::find(std::begin(hostport), std::end(hostport), ':');
-    if (p == std::begin(hostport)) {
+    auto p = std::ranges::find(hostport, ':');
+    if (p == std::ranges::begin(hostport)) {
       return catch_all;
     }
-    host = StringRef{std::begin(hostport), p};
+    host = std::string_view{std::ranges::begin(hostport), p};
   }
 
-  if (std::find_if(std::begin(host), std::end(host), [](char c) {
-        return 'A' <= c || c <= 'Z';
-      }) != std::end(host)) {
+  if (std::ranges::find_if(host, [](char c) { return 'A' <= c && c <= 'Z'; }) !=
+      std::ranges::end(host)) {
     auto low_host = make_byte_ref(balloc, host.size() + 1);
-    auto ep = std::copy(std::begin(host), std::end(host), std::begin(low_host));
+    auto ep = util::tolower(host, std::ranges::begin(low_host));
     *ep = '\0';
-    util::inp_strlower(std::begin(low_host), ep);
-    host = StringRef{std::span{std::begin(low_host), ep}};
+    host = as_string_view(std::ranges::begin(low_host), ep);
   }
   return match_downstream_addr_group_host(routerconf, host, path, groups,
                                           catch_all, balloc);
@@ -1440,6 +1663,45 @@ void downstream_failure(DownstreamAddr *addr, const Address *raddr) {
       addr->live_check->schedule();
     }
   }
+}
+
+int Worker::handle_connection(int fd, sockaddr *addr, socklen_t addrlen,
+                              const UpstreamAddr *faddr) {
+  if (LOG_ENABLED(INFO)) {
+    LLOG(INFO, this) << "Accepted connection from "
+                     << util::numeric_name(addr, addrlen) << ", fd=" << fd;
+  }
+
+  auto config = get_config();
+
+  auto max_conns = config->conn.upstream.worker_connections;
+
+  if (worker_stat_.num_connections >= max_conns) {
+    if (LOG_ENABLED(INFO)) {
+      WLOG(INFO, this) << "Too many connections >= " << max_conns;
+    }
+
+    close(fd);
+
+    return -1;
+  }
+
+  auto client_handler = tls::accept_connection(this, fd, addr, addrlen, faddr);
+  if (!client_handler) {
+    if (LOG_ENABLED(INFO)) {
+      WLOG(ERROR, this) << "ClientHandler creation failed";
+    }
+
+    close(fd);
+
+    return -1;
+  }
+
+  if (LOG_ENABLED(INFO)) {
+    WLOG(INFO, this) << "CLIENT_HANDLER:" << client_handler << " created";
+  }
+
+  return 0;
 }
 
 } // namespace shrpx

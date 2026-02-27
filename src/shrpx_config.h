@@ -30,19 +30,19 @@
 #include <sys/types.h>
 #ifdef HAVE_SYS_SOCKET_H
 #  include <sys/socket.h>
-#endif // HAVE_SYS_SOCKET_H
+#endif // defined(HAVE_SYS_SOCKET_H)
 #include <sys/un.h>
 #ifdef HAVE_NETINET_IN_H
 #  include <netinet/in.h>
-#endif // HAVE_NETINET_IN_H
+#endif // defined(HAVE_NETINET_IN_H)
 #ifdef HAVE_ARPA_INET_H
 #  include <arpa/inet.h>
-#endif // HAVE_ARPA_INET_H
+#endif // defined(HAVE_ARPA_INET_H)
 #include <cinttypes>
 #include <cstdio>
 #include <vector>
 #include <memory>
-#include <set>
+#include <unordered_set>
 #include <unordered_map>
 
 #include "ssl_compat.h"
@@ -50,9 +50,9 @@
 #ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
 #  include <wolfssl/options.h>
 #  include <wolfssl/openssl/ssl.h>
-#else // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#else // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 #  include <openssl/ssl.h>
-#endif // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#endif // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 
 #include <ev.h>
 
@@ -60,9 +60,9 @@
 
 #include "shrpx_log.h"
 #include "shrpx_router.h"
-#if ENABLE_HTTP3
+#ifdef ENABLE_HTTP3
 #  include "shrpx_quic.h"
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 #include "template.h"
 #include "http2.h"
 #include "network.h"
@@ -82,290 +82,312 @@ class CertLookupTree;
 
 } // namespace tls
 
-constexpr auto SHRPX_OPT_PRIVATE_KEY_FILE = "private-key-file"_sr;
-constexpr auto SHRPX_OPT_PRIVATE_KEY_PASSWD_FILE = "private-key-passwd-file"_sr;
-constexpr auto SHRPX_OPT_CERTIFICATE_FILE = "certificate-file"_sr;
-constexpr auto SHRPX_OPT_DH_PARAM_FILE = "dh-param-file"_sr;
-constexpr auto SHRPX_OPT_SUBCERT = "subcert"_sr;
-constexpr auto SHRPX_OPT_BACKEND = "backend"_sr;
-constexpr auto SHRPX_OPT_FRONTEND = "frontend"_sr;
-constexpr auto SHRPX_OPT_WORKERS = "workers"_sr;
-constexpr auto SHRPX_OPT_HTTP2_MAX_CONCURRENT_STREAMS =
-  "http2-max-concurrent-streams"_sr;
-constexpr auto SHRPX_OPT_LOG_LEVEL = "log-level"_sr;
-constexpr auto SHRPX_OPT_DAEMON = "daemon"_sr;
-constexpr auto SHRPX_OPT_HTTP2_PROXY = "http2-proxy"_sr;
-constexpr auto SHRPX_OPT_HTTP2_BRIDGE = "http2-bridge"_sr;
-constexpr auto SHRPX_OPT_CLIENT_PROXY = "client-proxy"_sr;
-constexpr auto SHRPX_OPT_ADD_X_FORWARDED_FOR = "add-x-forwarded-for"_sr;
-constexpr auto SHRPX_OPT_STRIP_INCOMING_X_FORWARDED_FOR =
-  "strip-incoming-x-forwarded-for"_sr;
-constexpr auto SHRPX_OPT_NO_VIA = "no-via"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_READ_TIMEOUT =
-  "frontend-http2-read-timeout"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_READ_TIMEOUT = "frontend-read-timeout"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_WRITE_TIMEOUT = "frontend-write-timeout"_sr;
-constexpr auto SHRPX_OPT_BACKEND_READ_TIMEOUT = "backend-read-timeout"_sr;
-constexpr auto SHRPX_OPT_BACKEND_WRITE_TIMEOUT = "backend-write-timeout"_sr;
-constexpr auto SHRPX_OPT_STREAM_READ_TIMEOUT = "stream-read-timeout"_sr;
-constexpr auto SHRPX_OPT_STREAM_WRITE_TIMEOUT = "stream-write-timeout"_sr;
-constexpr auto SHRPX_OPT_ACCESSLOG_FILE = "accesslog-file"_sr;
-constexpr auto SHRPX_OPT_ACCESSLOG_SYSLOG = "accesslog-syslog"_sr;
-constexpr auto SHRPX_OPT_ACCESSLOG_FORMAT = "accesslog-format"_sr;
-constexpr auto SHRPX_OPT_ERRORLOG_FILE = "errorlog-file"_sr;
-constexpr auto SHRPX_OPT_ERRORLOG_SYSLOG = "errorlog-syslog"_sr;
-constexpr auto SHRPX_OPT_BACKEND_KEEP_ALIVE_TIMEOUT =
-  "backend-keep-alive-timeout"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_WINDOW_BITS =
-  "frontend-http2-window-bits"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP2_WINDOW_BITS =
-  "backend-http2-window-bits"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_CONNECTION_WINDOW_BITS =
-  "frontend-http2-connection-window-bits"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP2_CONNECTION_WINDOW_BITS =
-  "backend-http2-connection-window-bits"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_NO_TLS = "frontend-no-tls"_sr;
-constexpr auto SHRPX_OPT_BACKEND_NO_TLS = "backend-no-tls"_sr;
-constexpr auto SHRPX_OPT_BACKEND_TLS_SNI_FIELD = "backend-tls-sni-field"_sr;
-constexpr auto SHRPX_OPT_PID_FILE = "pid-file"_sr;
-constexpr auto SHRPX_OPT_USER = "user"_sr;
-constexpr auto SHRPX_OPT_SYSLOG_FACILITY = "syslog-facility"_sr;
-constexpr auto SHRPX_OPT_BACKLOG = "backlog"_sr;
-constexpr auto SHRPX_OPT_CIPHERS = "ciphers"_sr;
-constexpr auto SHRPX_OPT_CLIENT = "client"_sr;
-constexpr auto SHRPX_OPT_INSECURE = "insecure"_sr;
-constexpr auto SHRPX_OPT_CACERT = "cacert"_sr;
-constexpr auto SHRPX_OPT_BACKEND_IPV4 = "backend-ipv4"_sr;
-constexpr auto SHRPX_OPT_BACKEND_IPV6 = "backend-ipv6"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP_PROXY_URI = "backend-http-proxy-uri"_sr;
-constexpr auto SHRPX_OPT_READ_RATE = "read-rate"_sr;
-constexpr auto SHRPX_OPT_READ_BURST = "read-burst"_sr;
-constexpr auto SHRPX_OPT_WRITE_RATE = "write-rate"_sr;
-constexpr auto SHRPX_OPT_WRITE_BURST = "write-burst"_sr;
-constexpr auto SHRPX_OPT_WORKER_READ_RATE = "worker-read-rate"_sr;
-constexpr auto SHRPX_OPT_WORKER_READ_BURST = "worker-read-burst"_sr;
-constexpr auto SHRPX_OPT_WORKER_WRITE_RATE = "worker-write-rate"_sr;
-constexpr auto SHRPX_OPT_WORKER_WRITE_BURST = "worker-write-burst"_sr;
-constexpr auto SHRPX_OPT_NPN_LIST = "npn-list"_sr;
-constexpr auto SHRPX_OPT_TLS_PROTO_LIST = "tls-proto-list"_sr;
-constexpr auto SHRPX_OPT_VERIFY_CLIENT = "verify-client"_sr;
-constexpr auto SHRPX_OPT_VERIFY_CLIENT_CACERT = "verify-client-cacert"_sr;
-constexpr auto SHRPX_OPT_CLIENT_PRIVATE_KEY_FILE = "client-private-key-file"_sr;
-constexpr auto SHRPX_OPT_CLIENT_CERT_FILE = "client-cert-file"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_DUMP_REQUEST_HEADER =
-  "frontend-http2-dump-request-header"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_DUMP_RESPONSE_HEADER =
-  "frontend-http2-dump-response-header"_sr;
-constexpr auto SHRPX_OPT_HTTP2_NO_COOKIE_CRUMBLING =
-  "http2-no-cookie-crumbling"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_FRAME_DEBUG = "frontend-frame-debug"_sr;
-constexpr auto SHRPX_OPT_PADDING = "padding"_sr;
-constexpr auto SHRPX_OPT_ALTSVC = "altsvc"_sr;
-constexpr auto SHRPX_OPT_ADD_REQUEST_HEADER = "add-request-header"_sr;
-constexpr auto SHRPX_OPT_ADD_RESPONSE_HEADER = "add-response-header"_sr;
-constexpr auto SHRPX_OPT_WORKER_FRONTEND_CONNECTIONS =
-  "worker-frontend-connections"_sr;
-constexpr auto SHRPX_OPT_NO_LOCATION_REWRITE = "no-location-rewrite"_sr;
-constexpr auto SHRPX_OPT_NO_HOST_REWRITE = "no-host-rewrite"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP1_CONNECTIONS_PER_HOST =
-  "backend-http1-connections-per-host"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP1_CONNECTIONS_PER_FRONTEND =
-  "backend-http1-connections-per-frontend"_sr;
-constexpr auto SHRPX_OPT_LISTENER_DISABLE_TIMEOUT =
-  "listener-disable-timeout"_sr;
-constexpr auto SHRPX_OPT_TLS_TICKET_KEY_FILE = "tls-ticket-key-file"_sr;
-constexpr auto SHRPX_OPT_RLIMIT_NOFILE = "rlimit-nofile"_sr;
-constexpr auto SHRPX_OPT_BACKEND_REQUEST_BUFFER = "backend-request-buffer"_sr;
-constexpr auto SHRPX_OPT_BACKEND_RESPONSE_BUFFER = "backend-response-buffer"_sr;
-constexpr auto SHRPX_OPT_NO_SERVER_PUSH = "no-server-push"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP2_CONNECTIONS_PER_WORKER =
-  "backend-http2-connections-per-worker"_sr;
-constexpr auto SHRPX_OPT_FETCH_OCSP_RESPONSE_FILE =
-  "fetch-ocsp-response-file"_sr;
-constexpr auto SHRPX_OPT_OCSP_UPDATE_INTERVAL = "ocsp-update-interval"_sr;
-constexpr auto SHRPX_OPT_NO_OCSP = "no-ocsp"_sr;
-constexpr auto SHRPX_OPT_HEADER_FIELD_BUFFER = "header-field-buffer"_sr;
-constexpr auto SHRPX_OPT_MAX_HEADER_FIELDS = "max-header-fields"_sr;
-constexpr auto SHRPX_OPT_INCLUDE = "include"_sr;
-constexpr auto SHRPX_OPT_TLS_TICKET_KEY_CIPHER = "tls-ticket-key-cipher"_sr;
-constexpr auto SHRPX_OPT_HOST_REWRITE = "host-rewrite"_sr;
-constexpr auto SHRPX_OPT_TLS_SESSION_CACHE_MEMCACHED =
-  "tls-session-cache-memcached"_sr;
-constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED =
-  "tls-ticket-key-memcached"_sr;
-constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_INTERVAL =
-  "tls-ticket-key-memcached-interval"_sr;
-constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_MAX_RETRY =
-  "tls-ticket-key-memcached-max-retry"_sr;
-constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_MAX_FAIL =
-  "tls-ticket-key-memcached-max-fail"_sr;
-constexpr auto SHRPX_OPT_MRUBY_FILE = "mruby-file"_sr;
-constexpr auto SHRPX_OPT_ACCEPT_PROXY_PROTOCOL = "accept-proxy-protocol"_sr;
-constexpr auto SHRPX_OPT_FASTOPEN = "fastopen"_sr;
-constexpr auto SHRPX_OPT_TLS_DYN_REC_WARMUP_THRESHOLD =
-  "tls-dyn-rec-warmup-threshold"_sr;
-constexpr auto SHRPX_OPT_TLS_DYN_REC_IDLE_TIMEOUT =
-  "tls-dyn-rec-idle-timeout"_sr;
-constexpr auto SHRPX_OPT_ADD_FORWARDED = "add-forwarded"_sr;
-constexpr auto SHRPX_OPT_STRIP_INCOMING_FORWARDED =
-  "strip-incoming-forwarded"_sr;
-constexpr auto SHRPX_OPT_FORWARDED_BY = "forwarded-by"_sr;
-constexpr auto SHRPX_OPT_FORWARDED_FOR = "forwarded-for"_sr;
-constexpr auto SHRPX_OPT_REQUEST_HEADER_FIELD_BUFFER =
-  "request-header-field-buffer"_sr;
-constexpr auto SHRPX_OPT_MAX_REQUEST_HEADER_FIELDS =
-  "max-request-header-fields"_sr;
-constexpr auto SHRPX_OPT_RESPONSE_HEADER_FIELD_BUFFER =
-  "response-header-field-buffer"_sr;
-constexpr auto SHRPX_OPT_MAX_RESPONSE_HEADER_FIELDS =
-  "max-response-header-fields"_sr;
-constexpr auto SHRPX_OPT_NO_HTTP2_CIPHER_BLOCK_LIST =
-  "no-http2-cipher-block-list"_sr;
-constexpr auto SHRPX_OPT_NO_HTTP2_CIPHER_BLACK_LIST =
-  "no-http2-cipher-black-list"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP1_TLS = "backend-http1-tls"_sr;
-constexpr auto SHRPX_OPT_TLS_SESSION_CACHE_MEMCACHED_TLS =
-  "tls-session-cache-memcached-tls"_sr;
-constexpr auto SHRPX_OPT_TLS_SESSION_CACHE_MEMCACHED_CERT_FILE =
-  "tls-session-cache-memcached-cert-file"_sr;
-constexpr auto SHRPX_OPT_TLS_SESSION_CACHE_MEMCACHED_PRIVATE_KEY_FILE =
-  "tls-session-cache-memcached-private-key-file"_sr;
-constexpr auto SHRPX_OPT_TLS_SESSION_CACHE_MEMCACHED_ADDRESS_FAMILY =
-  "tls-session-cache-memcached-address-family"_sr;
-constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_TLS =
-  "tls-ticket-key-memcached-tls"_sr;
-constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_CERT_FILE =
-  "tls-ticket-key-memcached-cert-file"_sr;
-constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_PRIVATE_KEY_FILE =
-  "tls-ticket-key-memcached-private-key-file"_sr;
-constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_ADDRESS_FAMILY =
-  "tls-ticket-key-memcached-address-family"_sr;
-constexpr auto SHRPX_OPT_BACKEND_ADDRESS_FAMILY = "backend-address-family"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_MAX_CONCURRENT_STREAMS =
-  "frontend-http2-max-concurrent-streams"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP2_MAX_CONCURRENT_STREAMS =
-  "backend-http2-max-concurrent-streams"_sr;
-constexpr auto SHRPX_OPT_BACKEND_CONNECTIONS_PER_FRONTEND =
-  "backend-connections-per-frontend"_sr;
-constexpr auto SHRPX_OPT_BACKEND_TLS = "backend-tls"_sr;
-constexpr auto SHRPX_OPT_BACKEND_CONNECTIONS_PER_HOST =
-  "backend-connections-per-host"_sr;
-constexpr auto SHRPX_OPT_ERROR_PAGE = "error-page"_sr;
-constexpr auto SHRPX_OPT_NO_KQUEUE = "no-kqueue"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_SETTINGS_TIMEOUT =
-  "frontend-http2-settings-timeout"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP2_SETTINGS_TIMEOUT =
-  "backend-http2-settings-timeout"_sr;
-constexpr auto SHRPX_OPT_API_MAX_REQUEST_BODY = "api-max-request-body"_sr;
-constexpr auto SHRPX_OPT_BACKEND_MAX_BACKOFF = "backend-max-backoff"_sr;
-constexpr auto SHRPX_OPT_SERVER_NAME = "server-name"_sr;
-constexpr auto SHRPX_OPT_NO_SERVER_REWRITE = "no-server-rewrite"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_OPTIMIZE_WRITE_BUFFER_SIZE =
-  "frontend-http2-optimize-write-buffer-size"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_OPTIMIZE_WINDOW_SIZE =
-  "frontend-http2-optimize-window-size"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_WINDOW_SIZE =
-  "frontend-http2-window-size"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_CONNECTION_WINDOW_SIZE =
-  "frontend-http2-connection-window-size"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP2_WINDOW_SIZE =
-  "backend-http2-window-size"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP2_CONNECTION_WINDOW_SIZE =
-  "backend-http2-connection-window-size"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_ENCODER_DYNAMIC_TABLE_SIZE =
-  "frontend-http2-encoder-dynamic-table-size"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_DECODER_DYNAMIC_TABLE_SIZE =
-  "frontend-http2-decoder-dynamic-table-size"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP2_ENCODER_DYNAMIC_TABLE_SIZE =
-  "backend-http2-encoder-dynamic-table-size"_sr;
-constexpr auto SHRPX_OPT_BACKEND_HTTP2_DECODER_DYNAMIC_TABLE_SIZE =
-  "backend-http2-decoder-dynamic-table-size"_sr;
-constexpr auto SHRPX_OPT_ECDH_CURVES = "ecdh-curves"_sr;
-constexpr auto SHRPX_OPT_TLS_SCT_DIR = "tls-sct-dir"_sr;
-constexpr auto SHRPX_OPT_BACKEND_CONNECT_TIMEOUT = "backend-connect-timeout"_sr;
-constexpr auto SHRPX_OPT_DNS_CACHE_TIMEOUT = "dns-cache-timeout"_sr;
-constexpr auto SHRPX_OPT_DNS_LOOKUP_TIMEOUT = "dns-lookup-timeout"_sr;
-constexpr auto SHRPX_OPT_DNS_MAX_TRY = "dns-max-try"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_KEEP_ALIVE_TIMEOUT =
-  "frontend-keep-alive-timeout"_sr;
-constexpr auto SHRPX_OPT_PSK_SECRETS = "psk-secrets"_sr;
-constexpr auto SHRPX_OPT_CLIENT_PSK_SECRETS = "client-psk-secrets"_sr;
-constexpr auto SHRPX_OPT_CLIENT_NO_HTTP2_CIPHER_BLOCK_LIST =
-  "client-no-http2-cipher-block-list"_sr;
-constexpr auto SHRPX_OPT_CLIENT_NO_HTTP2_CIPHER_BLACK_LIST =
-  "client-no-http2-cipher-black-list"_sr;
-constexpr auto SHRPX_OPT_CLIENT_CIPHERS = "client-ciphers"_sr;
-constexpr auto SHRPX_OPT_ACCESSLOG_WRITE_EARLY = "accesslog-write-early"_sr;
-constexpr auto SHRPX_OPT_TLS_MIN_PROTO_VERSION = "tls-min-proto-version"_sr;
-constexpr auto SHRPX_OPT_TLS_MAX_PROTO_VERSION = "tls-max-proto-version"_sr;
-constexpr auto SHRPX_OPT_REDIRECT_HTTPS_PORT = "redirect-https-port"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_MAX_REQUESTS = "frontend-max-requests"_sr;
-constexpr auto SHRPX_OPT_SINGLE_THREAD = "single-thread"_sr;
-constexpr auto SHRPX_OPT_SINGLE_PROCESS = "single-process"_sr;
-constexpr auto SHRPX_OPT_NO_ADD_X_FORWARDED_PROTO =
-  "no-add-x-forwarded-proto"_sr;
-constexpr auto SHRPX_OPT_NO_STRIP_INCOMING_X_FORWARDED_PROTO =
-  "no-strip-incoming-x-forwarded-proto"_sr;
-constexpr auto SHRPX_OPT_OCSP_STARTUP = "ocsp-startup"_sr;
-constexpr auto SHRPX_OPT_NO_VERIFY_OCSP = "no-verify-ocsp"_sr;
-constexpr auto SHRPX_OPT_VERIFY_CLIENT_TOLERATE_EXPIRED =
-  "verify-client-tolerate-expired"_sr;
-constexpr auto SHRPX_OPT_IGNORE_PER_PATTERN_MRUBY_ERROR =
-  "ignore-per-pattern-mruby-error"_sr;
-constexpr auto SHRPX_OPT_TLS_NO_POSTPONE_EARLY_DATA =
-  "tls-no-postpone-early-data"_sr;
-constexpr auto SHRPX_OPT_TLS_MAX_EARLY_DATA = "tls-max-early-data"_sr;
-constexpr auto SHRPX_OPT_TLS13_CIPHERS = "tls13-ciphers"_sr;
-constexpr auto SHRPX_OPT_TLS13_CLIENT_CIPHERS = "tls13-client-ciphers"_sr;
-constexpr auto SHRPX_OPT_NO_STRIP_INCOMING_EARLY_DATA =
-  "no-strip-incoming-early-data"_sr;
-constexpr auto SHRPX_OPT_QUIC_BPF_PROGRAM_FILE = "quic-bpf-program-file"_sr;
-constexpr auto SHRPX_OPT_NO_QUIC_BPF = "no-quic-bpf"_sr;
-constexpr auto SHRPX_OPT_HTTP2_ALTSVC = "http2-altsvc"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP3_READ_TIMEOUT =
-  "frontend-http3-read-timeout"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_QUIC_IDLE_TIMEOUT =
-  "frontend-quic-idle-timeout"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_QUIC_DEBUG_LOG = "frontend-quic-debug-log"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP3_WINDOW_SIZE =
-  "frontend-http3-window-size"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP3_CONNECTION_WINDOW_SIZE =
-  "frontend-http3-connection-window-size"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP3_MAX_WINDOW_SIZE =
-  "frontend-http3-max-window-size"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP3_MAX_CONNECTION_WINDOW_SIZE =
-  "frontend-http3-max-connection-window-size"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP3_MAX_CONCURRENT_STREAMS =
-  "frontend-http3-max-concurrent-streams"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_QUIC_EARLY_DATA =
-  "frontend-quic-early-data"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_QUIC_QLOG_DIR = "frontend-quic-qlog-dir"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_QUIC_REQUIRE_TOKEN =
-  "frontend-quic-require-token"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_QUIC_CONGESTION_CONTROLLER =
-  "frontend-quic-congestion-controller"_sr;
-constexpr auto SHRPX_OPT_QUIC_SERVER_ID = "quic-server-id"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_QUIC_SECRET_FILE =
-  "frontend-quic-secret-file"_sr;
-constexpr auto SHRPX_OPT_RLIMIT_MEMLOCK = "rlimit-memlock"_sr;
-constexpr auto SHRPX_OPT_MAX_WORKER_PROCESSES = "max-worker-processes"_sr;
-constexpr auto SHRPX_OPT_WORKER_PROCESS_GRACE_SHUTDOWN_PERIOD =
-  "worker-process-grace-shutdown-period"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_QUIC_INITIAL_RTT =
-  "frontend-quic-initial-rtt"_sr;
-constexpr auto SHRPX_OPT_REQUIRE_HTTP_SCHEME = "require-http-scheme"_sr;
-constexpr auto SHRPX_OPT_TLS_KTLS = "tls-ktls"_sr;
-constexpr auto SHRPX_OPT_ALPN_LIST = "alpn-list"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HEADER_TIMEOUT = "frontend-header-timeout"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP2_IDLE_TIMEOUT =
-  "frontend-http2-idle-timeout"_sr;
-constexpr auto SHRPX_OPT_FRONTEND_HTTP3_IDLE_TIMEOUT =
-  "frontend-http3-idle-timeout"_sr;
+inline constexpr auto SHRPX_OPT_PRIVATE_KEY_FILE = "private-key-file"sv;
+inline constexpr auto SHRPX_OPT_PRIVATE_KEY_PASSWD_FILE =
+  "private-key-passwd-file"sv;
+inline constexpr auto SHRPX_OPT_CERTIFICATE_FILE = "certificate-file"sv;
+inline constexpr auto SHRPX_OPT_DH_PARAM_FILE = "dh-param-file"sv;
+inline constexpr auto SHRPX_OPT_SUBCERT = "subcert"sv;
+inline constexpr auto SHRPX_OPT_BACKEND = "backend"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND = "frontend"sv;
+inline constexpr auto SHRPX_OPT_WORKERS = "workers"sv;
+inline constexpr auto SHRPX_OPT_HTTP2_MAX_CONCURRENT_STREAMS =
+  "http2-max-concurrent-streams"sv;
+inline constexpr auto SHRPX_OPT_LOG_LEVEL = "log-level"sv;
+inline constexpr auto SHRPX_OPT_DAEMON = "daemon"sv;
+inline constexpr auto SHRPX_OPT_HTTP2_PROXY = "http2-proxy"sv;
+inline constexpr auto SHRPX_OPT_HTTP2_BRIDGE = "http2-bridge"sv;
+inline constexpr auto SHRPX_OPT_CLIENT_PROXY = "client-proxy"sv;
+inline constexpr auto SHRPX_OPT_ADD_X_FORWARDED_FOR = "add-x-forwarded-for"sv;
+inline constexpr auto SHRPX_OPT_STRIP_INCOMING_X_FORWARDED_FOR =
+  "strip-incoming-x-forwarded-for"sv;
+inline constexpr auto SHRPX_OPT_NO_VIA = "no-via"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_READ_TIMEOUT =
+  "frontend-http2-read-timeout"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_READ_TIMEOUT =
+  "frontend-read-timeout"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_WRITE_TIMEOUT =
+  "frontend-write-timeout"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_READ_TIMEOUT = "backend-read-timeout"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_WRITE_TIMEOUT =
+  "backend-write-timeout"sv;
+inline constexpr auto SHRPX_OPT_STREAM_READ_TIMEOUT = "stream-read-timeout"sv;
+inline constexpr auto SHRPX_OPT_STREAM_WRITE_TIMEOUT = "stream-write-timeout"sv;
+inline constexpr auto SHRPX_OPT_ACCESSLOG_FILE = "accesslog-file"sv;
+inline constexpr auto SHRPX_OPT_ACCESSLOG_SYSLOG = "accesslog-syslog"sv;
+inline constexpr auto SHRPX_OPT_ACCESSLOG_FORMAT = "accesslog-format"sv;
+inline constexpr auto SHRPX_OPT_ERRORLOG_FILE = "errorlog-file"sv;
+inline constexpr auto SHRPX_OPT_ERRORLOG_SYSLOG = "errorlog-syslog"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_KEEP_ALIVE_TIMEOUT =
+  "backend-keep-alive-timeout"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_WINDOW_BITS =
+  "frontend-http2-window-bits"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP2_WINDOW_BITS =
+  "backend-http2-window-bits"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_CONNECTION_WINDOW_BITS =
+  "frontend-http2-connection-window-bits"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP2_CONNECTION_WINDOW_BITS =
+  "backend-http2-connection-window-bits"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_NO_TLS = "frontend-no-tls"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_NO_TLS = "backend-no-tls"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_TLS_SNI_FIELD =
+  "backend-tls-sni-field"sv;
+inline constexpr auto SHRPX_OPT_PID_FILE = "pid-file"sv;
+inline constexpr auto SHRPX_OPT_USER = "user"sv;
+inline constexpr auto SHRPX_OPT_SYSLOG_FACILITY = "syslog-facility"sv;
+inline constexpr auto SHRPX_OPT_BACKLOG = "backlog"sv;
+inline constexpr auto SHRPX_OPT_CIPHERS = "ciphers"sv;
+inline constexpr auto SHRPX_OPT_CLIENT = "client"sv;
+inline constexpr auto SHRPX_OPT_INSECURE = "insecure"sv;
+inline constexpr auto SHRPX_OPT_CACERT = "cacert"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_IPV4 = "backend-ipv4"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_IPV6 = "backend-ipv6"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP_PROXY_URI =
+  "backend-http-proxy-uri"sv;
+inline constexpr auto SHRPX_OPT_READ_RATE = "read-rate"sv;
+inline constexpr auto SHRPX_OPT_READ_BURST = "read-burst"sv;
+inline constexpr auto SHRPX_OPT_WRITE_RATE = "write-rate"sv;
+inline constexpr auto SHRPX_OPT_WRITE_BURST = "write-burst"sv;
+inline constexpr auto SHRPX_OPT_WORKER_READ_RATE = "worker-read-rate"sv;
+inline constexpr auto SHRPX_OPT_WORKER_READ_BURST = "worker-read-burst"sv;
+inline constexpr auto SHRPX_OPT_WORKER_WRITE_RATE = "worker-write-rate"sv;
+inline constexpr auto SHRPX_OPT_WORKER_WRITE_BURST = "worker-write-burst"sv;
+inline constexpr auto SHRPX_OPT_NPN_LIST = "npn-list"sv;
+inline constexpr auto SHRPX_OPT_TLS_PROTO_LIST = "tls-proto-list"sv;
+inline constexpr auto SHRPX_OPT_VERIFY_CLIENT = "verify-client"sv;
+inline constexpr auto SHRPX_OPT_VERIFY_CLIENT_CACERT = "verify-client-cacert"sv;
+inline constexpr auto SHRPX_OPT_CLIENT_PRIVATE_KEY_FILE =
+  "client-private-key-file"sv;
+inline constexpr auto SHRPX_OPT_CLIENT_CERT_FILE = "client-cert-file"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_DUMP_REQUEST_HEADER =
+  "frontend-http2-dump-request-header"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_DUMP_RESPONSE_HEADER =
+  "frontend-http2-dump-response-header"sv;
+inline constexpr auto SHRPX_OPT_HTTP2_NO_COOKIE_CRUMBLING =
+  "http2-no-cookie-crumbling"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_FRAME_DEBUG = "frontend-frame-debug"sv;
+inline constexpr auto SHRPX_OPT_PADDING = "padding"sv;
+inline constexpr auto SHRPX_OPT_ALTSVC = "altsvc"sv;
+inline constexpr auto SHRPX_OPT_ADD_REQUEST_HEADER = "add-request-header"sv;
+inline constexpr auto SHRPX_OPT_ADD_RESPONSE_HEADER = "add-response-header"sv;
+inline constexpr auto SHRPX_OPT_WORKER_FRONTEND_CONNECTIONS =
+  "worker-frontend-connections"sv;
+inline constexpr auto SHRPX_OPT_NO_LOCATION_REWRITE = "no-location-rewrite"sv;
+inline constexpr auto SHRPX_OPT_NO_HOST_REWRITE = "no-host-rewrite"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP1_CONNECTIONS_PER_HOST =
+  "backend-http1-connections-per-host"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP1_CONNECTIONS_PER_FRONTEND =
+  "backend-http1-connections-per-frontend"sv;
+inline constexpr auto SHRPX_OPT_LISTENER_DISABLE_TIMEOUT =
+  "listener-disable-timeout"sv;
+inline constexpr auto SHRPX_OPT_TLS_TICKET_KEY_FILE = "tls-ticket-key-file"sv;
+inline constexpr auto SHRPX_OPT_RLIMIT_NOFILE = "rlimit-nofile"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_REQUEST_BUFFER =
+  "backend-request-buffer"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_RESPONSE_BUFFER =
+  "backend-response-buffer"sv;
+inline constexpr auto SHRPX_OPT_NO_SERVER_PUSH = "no-server-push"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP2_CONNECTIONS_PER_WORKER =
+  "backend-http2-connections-per-worker"sv;
+inline constexpr auto SHRPX_OPT_FETCH_OCSP_RESPONSE_FILE =
+  "fetch-ocsp-response-file"sv;
+inline constexpr auto SHRPX_OPT_OCSP_UPDATE_INTERVAL = "ocsp-update-interval"sv;
+inline constexpr auto SHRPX_OPT_NO_OCSP = "no-ocsp"sv;
+inline constexpr auto SHRPX_OPT_HEADER_FIELD_BUFFER = "header-field-buffer"sv;
+inline constexpr auto SHRPX_OPT_MAX_HEADER_FIELDS = "max-header-fields"sv;
+inline constexpr auto SHRPX_OPT_INCLUDE = "include"sv;
+inline constexpr auto SHRPX_OPT_TLS_TICKET_KEY_CIPHER =
+  "tls-ticket-key-cipher"sv;
+inline constexpr auto SHRPX_OPT_HOST_REWRITE = "host-rewrite"sv;
+inline constexpr auto SHRPX_OPT_TLS_SESSION_CACHE_MEMCACHED =
+  "tls-session-cache-memcached"sv;
+inline constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED =
+  "tls-ticket-key-memcached"sv;
+inline constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_INTERVAL =
+  "tls-ticket-key-memcached-interval"sv;
+inline constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_MAX_RETRY =
+  "tls-ticket-key-memcached-max-retry"sv;
+inline constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_MAX_FAIL =
+  "tls-ticket-key-memcached-max-fail"sv;
+inline constexpr auto SHRPX_OPT_MRUBY_FILE = "mruby-file"sv;
+inline constexpr auto SHRPX_OPT_ACCEPT_PROXY_PROTOCOL =
+  "accept-proxy-protocol"sv;
+inline constexpr auto SHRPX_OPT_FASTOPEN = "fastopen"sv;
+inline constexpr auto SHRPX_OPT_TLS_DYN_REC_WARMUP_THRESHOLD =
+  "tls-dyn-rec-warmup-threshold"sv;
+inline constexpr auto SHRPX_OPT_TLS_DYN_REC_IDLE_TIMEOUT =
+  "tls-dyn-rec-idle-timeout"sv;
+inline constexpr auto SHRPX_OPT_ADD_FORWARDED = "add-forwarded"sv;
+inline constexpr auto SHRPX_OPT_STRIP_INCOMING_FORWARDED =
+  "strip-incoming-forwarded"sv;
+inline constexpr auto SHRPX_OPT_FORWARDED_BY = "forwarded-by"sv;
+inline constexpr auto SHRPX_OPT_FORWARDED_FOR = "forwarded-for"sv;
+inline constexpr auto SHRPX_OPT_REQUEST_HEADER_FIELD_BUFFER =
+  "request-header-field-buffer"sv;
+inline constexpr auto SHRPX_OPT_MAX_REQUEST_HEADER_FIELDS =
+  "max-request-header-fields"sv;
+inline constexpr auto SHRPX_OPT_RESPONSE_HEADER_FIELD_BUFFER =
+  "response-header-field-buffer"sv;
+inline constexpr auto SHRPX_OPT_MAX_RESPONSE_HEADER_FIELDS =
+  "max-response-header-fields"sv;
+inline constexpr auto SHRPX_OPT_NO_HTTP2_CIPHER_BLOCK_LIST =
+  "no-http2-cipher-block-list"sv;
+inline constexpr auto SHRPX_OPT_NO_HTTP2_CIPHER_BLACK_LIST =
+  "no-http2-cipher-black-list"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP1_TLS = "backend-http1-tls"sv;
+inline constexpr auto SHRPX_OPT_TLS_SESSION_CACHE_MEMCACHED_TLS =
+  "tls-session-cache-memcached-tls"sv;
+inline constexpr auto SHRPX_OPT_TLS_SESSION_CACHE_MEMCACHED_CERT_FILE =
+  "tls-session-cache-memcached-cert-file"sv;
+inline constexpr auto SHRPX_OPT_TLS_SESSION_CACHE_MEMCACHED_PRIVATE_KEY_FILE =
+  "tls-session-cache-memcached-private-key-file"sv;
+inline constexpr auto SHRPX_OPT_TLS_SESSION_CACHE_MEMCACHED_ADDRESS_FAMILY =
+  "tls-session-cache-memcached-address-family"sv;
+inline constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_TLS =
+  "tls-ticket-key-memcached-tls"sv;
+inline constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_CERT_FILE =
+  "tls-ticket-key-memcached-cert-file"sv;
+inline constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_PRIVATE_KEY_FILE =
+  "tls-ticket-key-memcached-private-key-file"sv;
+inline constexpr auto SHRPX_OPT_TLS_TICKET_KEY_MEMCACHED_ADDRESS_FAMILY =
+  "tls-ticket-key-memcached-address-family"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_ADDRESS_FAMILY =
+  "backend-address-family"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_MAX_CONCURRENT_STREAMS =
+  "frontend-http2-max-concurrent-streams"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP2_MAX_CONCURRENT_STREAMS =
+  "backend-http2-max-concurrent-streams"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_CONNECTIONS_PER_FRONTEND =
+  "backend-connections-per-frontend"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_TLS = "backend-tls"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_CONNECTIONS_PER_HOST =
+  "backend-connections-per-host"sv;
+inline constexpr auto SHRPX_OPT_ERROR_PAGE = "error-page"sv;
+inline constexpr auto SHRPX_OPT_NO_KQUEUE = "no-kqueue"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_SETTINGS_TIMEOUT =
+  "frontend-http2-settings-timeout"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP2_SETTINGS_TIMEOUT =
+  "backend-http2-settings-timeout"sv;
+inline constexpr auto SHRPX_OPT_API_MAX_REQUEST_BODY = "api-max-request-body"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_MAX_BACKOFF = "backend-max-backoff"sv;
+inline constexpr auto SHRPX_OPT_SERVER_NAME = "server-name"sv;
+inline constexpr auto SHRPX_OPT_NO_SERVER_REWRITE = "no-server-rewrite"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_OPTIMIZE_WRITE_BUFFER_SIZE =
+  "frontend-http2-optimize-write-buffer-size"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_OPTIMIZE_WINDOW_SIZE =
+  "frontend-http2-optimize-window-size"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_WINDOW_SIZE =
+  "frontend-http2-window-size"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_CONNECTION_WINDOW_SIZE =
+  "frontend-http2-connection-window-size"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP2_WINDOW_SIZE =
+  "backend-http2-window-size"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP2_CONNECTION_WINDOW_SIZE =
+  "backend-http2-connection-window-size"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_ENCODER_DYNAMIC_TABLE_SIZE =
+  "frontend-http2-encoder-dynamic-table-size"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_DECODER_DYNAMIC_TABLE_SIZE =
+  "frontend-http2-decoder-dynamic-table-size"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP2_ENCODER_DYNAMIC_TABLE_SIZE =
+  "backend-http2-encoder-dynamic-table-size"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_HTTP2_DECODER_DYNAMIC_TABLE_SIZE =
+  "backend-http2-decoder-dynamic-table-size"sv;
+inline constexpr auto SHRPX_OPT_ECDH_CURVES = "ecdh-curves"sv;
+inline constexpr auto SHRPX_OPT_TLS_SCT_DIR = "tls-sct-dir"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_CONNECT_TIMEOUT =
+  "backend-connect-timeout"sv;
+inline constexpr auto SHRPX_OPT_DNS_CACHE_TIMEOUT = "dns-cache-timeout"sv;
+inline constexpr auto SHRPX_OPT_DNS_LOOKUP_TIMEOUT = "dns-lookup-timeout"sv;
+inline constexpr auto SHRPX_OPT_DNS_MAX_TRY = "dns-max-try"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_KEEP_ALIVE_TIMEOUT =
+  "frontend-keep-alive-timeout"sv;
+inline constexpr auto SHRPX_OPT_PSK_SECRETS = "psk-secrets"sv;
+inline constexpr auto SHRPX_OPT_CLIENT_PSK_SECRETS = "client-psk-secrets"sv;
+inline constexpr auto SHRPX_OPT_CLIENT_NO_HTTP2_CIPHER_BLOCK_LIST =
+  "client-no-http2-cipher-block-list"sv;
+inline constexpr auto SHRPX_OPT_CLIENT_NO_HTTP2_CIPHER_BLACK_LIST =
+  "client-no-http2-cipher-black-list"sv;
+inline constexpr auto SHRPX_OPT_CLIENT_CIPHERS = "client-ciphers"sv;
+inline constexpr auto SHRPX_OPT_ACCESSLOG_WRITE_EARLY =
+  "accesslog-write-early"sv;
+inline constexpr auto SHRPX_OPT_TLS_MIN_PROTO_VERSION =
+  "tls-min-proto-version"sv;
+inline constexpr auto SHRPX_OPT_TLS_MAX_PROTO_VERSION =
+  "tls-max-proto-version"sv;
+inline constexpr auto SHRPX_OPT_REDIRECT_HTTPS_PORT = "redirect-https-port"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_MAX_REQUESTS =
+  "frontend-max-requests"sv;
+inline constexpr auto SHRPX_OPT_SINGLE_THREAD = "single-thread"sv;
+inline constexpr auto SHRPX_OPT_SINGLE_PROCESS = "single-process"sv;
+inline constexpr auto SHRPX_OPT_NO_ADD_X_FORWARDED_PROTO =
+  "no-add-x-forwarded-proto"sv;
+inline constexpr auto SHRPX_OPT_NO_STRIP_INCOMING_X_FORWARDED_PROTO =
+  "no-strip-incoming-x-forwarded-proto"sv;
+inline constexpr auto SHRPX_OPT_OCSP_STARTUP = "ocsp-startup"sv;
+inline constexpr auto SHRPX_OPT_NO_VERIFY_OCSP = "no-verify-ocsp"sv;
+inline constexpr auto SHRPX_OPT_VERIFY_CLIENT_TOLERATE_EXPIRED =
+  "verify-client-tolerate-expired"sv;
+inline constexpr auto SHRPX_OPT_IGNORE_PER_PATTERN_MRUBY_ERROR =
+  "ignore-per-pattern-mruby-error"sv;
+inline constexpr auto SHRPX_OPT_TLS_NO_POSTPONE_EARLY_DATA =
+  "tls-no-postpone-early-data"sv;
+inline constexpr auto SHRPX_OPT_TLS_MAX_EARLY_DATA = "tls-max-early-data"sv;
+inline constexpr auto SHRPX_OPT_TLS13_CIPHERS = "tls13-ciphers"sv;
+inline constexpr auto SHRPX_OPT_TLS13_CLIENT_CIPHERS = "tls13-client-ciphers"sv;
+inline constexpr auto SHRPX_OPT_NO_STRIP_INCOMING_EARLY_DATA =
+  "no-strip-incoming-early-data"sv;
+inline constexpr auto SHRPX_OPT_QUIC_BPF_PROGRAM_FILE =
+  "quic-bpf-program-file"sv;
+inline constexpr auto SHRPX_OPT_NO_QUIC_BPF = "no-quic-bpf"sv;
+inline constexpr auto SHRPX_OPT_HTTP2_ALTSVC = "http2-altsvc"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP3_READ_TIMEOUT =
+  "frontend-http3-read-timeout"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_QUIC_IDLE_TIMEOUT =
+  "frontend-quic-idle-timeout"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_QUIC_DEBUG_LOG =
+  "frontend-quic-debug-log"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP3_WINDOW_SIZE =
+  "frontend-http3-window-size"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP3_CONNECTION_WINDOW_SIZE =
+  "frontend-http3-connection-window-size"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP3_MAX_WINDOW_SIZE =
+  "frontend-http3-max-window-size"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP3_MAX_CONNECTION_WINDOW_SIZE =
+  "frontend-http3-max-connection-window-size"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP3_MAX_CONCURRENT_STREAMS =
+  "frontend-http3-max-concurrent-streams"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_QUIC_EARLY_DATA =
+  "frontend-quic-early-data"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_QUIC_QLOG_DIR =
+  "frontend-quic-qlog-dir"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_QUIC_REQUIRE_TOKEN =
+  "frontend-quic-require-token"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_QUIC_CONGESTION_CONTROLLER =
+  "frontend-quic-congestion-controller"sv;
+inline constexpr auto SHRPX_OPT_QUIC_SERVER_ID = "quic-server-id"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_QUIC_SECRET_FILE =
+  "frontend-quic-secret-file"sv;
+inline constexpr auto SHRPX_OPT_RLIMIT_MEMLOCK = "rlimit-memlock"sv;
+inline constexpr auto SHRPX_OPT_MAX_WORKER_PROCESSES = "max-worker-processes"sv;
+inline constexpr auto SHRPX_OPT_WORKER_PROCESS_GRACE_SHUTDOWN_PERIOD =
+  "worker-process-grace-shutdown-period"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_QUIC_INITIAL_RTT =
+  "frontend-quic-initial-rtt"sv;
+inline constexpr auto SHRPX_OPT_REQUIRE_HTTP_SCHEME = "require-http-scheme"sv;
+inline constexpr auto SHRPX_OPT_TLS_KTLS = "tls-ktls"sv;
+inline constexpr auto SHRPX_OPT_ALPN_LIST = "alpn-list"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HEADER_TIMEOUT =
+  "frontend-header-timeout"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP2_IDLE_TIMEOUT =
+  "frontend-http2-idle-timeout"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_HTTP3_IDLE_TIMEOUT =
+  "frontend-http3-idle-timeout"sv;
+inline constexpr auto SHRPX_OPT_GROUPS = "groups"sv;
 
-constexpr size_t SHRPX_OBFUSCATED_NODE_LENGTH = 8;
+inline constexpr size_t SHRPX_OBFUSCATED_NODE_LENGTH = 8;
 
-constexpr auto DEFAULT_DOWNSTREAM_HOST = "127.0.0.1"_sr;
-constexpr int16_t DEFAULT_DOWNSTREAM_PORT = 80;
+inline constexpr auto DEFAULT_DOWNSTREAM_HOST = "127.0.0.1"sv;
+inline constexpr int16_t DEFAULT_DOWNSTREAM_PORT = 80;
 
 enum class Proto {
   NONE,
@@ -409,9 +431,9 @@ struct AffinityConfig {
   SessionAffinity type;
   struct {
     // Name of a cookie to use.
-    StringRef name;
+    std::string_view name;
     // Path which a cookie is applied to.
-    StringRef path;
+    std::string_view path;
     // Secure attribute
     SessionAffinityCookieSecure secure;
     // Affinity Stickiness
@@ -433,7 +455,7 @@ enum class ForwardedNode {
 };
 
 struct AltSvc {
-  StringRef protocol_id, host, origin, service, params;
+  std::string_view protocol_id, host, origin, service, params;
 
   uint16_t port;
 };
@@ -453,11 +475,14 @@ struct UpstreamAddr {
   // The frontend address (e.g., FQDN, hostname, IP address).  If
   // |host_unix| is true, this is UNIX domain socket path.  This must
   // be NULL terminated string.
-  StringRef host;
+  std::string_view host;
   // For TCP socket, this is <IP address>:<PORT>.  For IPv6 address,
   // address is surrounded by square brackets.  If socket is UNIX
   // domain socket, this is "localhost".
-  StringRef hostport;
+  std::string_view hostport;
+  // Binary representation of this address.  Only filled if quic is
+  // true.
+  sockaddr_union sockaddr;
   // frontend port.  0 if |host_unix| is true.
   uint16_t port;
   // For TCP socket, this is either AF_INET or AF_INET6.  For UNIX
@@ -475,6 +500,8 @@ struct UpstreamAddr {
   // true if client is supposed to send PROXY protocol v1 header.
   bool accept_proxy_protocol;
   bool quic;
+  // true if sockaddr contains wildcard address.
+  bool sockaddr_any;
   int fd;
 };
 
@@ -483,14 +510,14 @@ struct DownstreamAddrConfig {
   Address addr;
   // backend address.  If |host_unix| is true, this is UNIX domain
   // socket path.  This must be NULL terminated string.
-  StringRef host;
+  std::string_view host;
   // <HOST>:<PORT>.  This does not treat 80 and 443 specially.  If
   // |host_unix| is true, this is "localhost".
-  StringRef hostport;
+  std::string_view hostport;
   // hostname sent as SNI field
-  StringRef sni;
+  std::string_view sni;
   // name of group which this address belongs to.
-  StringRef group;
+  std::string_view group;
   size_t fall;
   size_t rise;
   // weight of this address inside a weight group.  Its range is [1,
@@ -528,15 +555,15 @@ struct AffinityHash {
 };
 
 struct DownstreamAddrGroupConfig {
-  DownstreamAddrGroupConfig(const StringRef &pattern)
+  DownstreamAddrGroupConfig(const std::string_view &pattern)
     : pattern(pattern),
       affinity{SessionAffinity::NONE},
       redirect_if_not_tls(false),
       dnf{false},
       timeout{} {}
 
-  StringRef pattern;
-  StringRef mruby_file;
+  std::string_view pattern;
+  std::string_view mruby_file;
   std::vector<DownstreamAddrConfig> addrs;
   // Bunch of session affinity hash.  Only used if affinity ==
   // SessionAffinity::IP.
@@ -578,14 +605,14 @@ struct TicketKeys {
 };
 
 struct TLSCertificate {
-  TLSCertificate(StringRef private_key_file, StringRef cert_file,
+  TLSCertificate(std::string_view private_key_file, std::string_view cert_file,
                  std::vector<uint8_t> sct_data)
     : private_key_file(std::move(private_key_file)),
       cert_file(std::move(cert_file)),
       sct_data(std::move(sct_data)) {}
 
-  StringRef private_key_file;
-  StringRef cert_file;
+  std::string_view private_key_file;
+  std::string_view cert_file;
   std::vector<uint8_t> sct_data;
 };
 
@@ -609,14 +636,14 @@ struct QUICKeyingMaterial {
 struct QUICKeyingMaterials {
   std::vector<QUICKeyingMaterial> keying_materials;
 };
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 struct HttpProxy {
   Address addr;
   // host in http proxy URI
-  StringRef host;
+  std::string_view host;
   // userinfo in http proxy URI, not percent-encoded form
-  StringRef userinfo;
+  std::string_view userinfo;
   // port in http proxy URI
   uint16_t port;
 };
@@ -629,10 +656,10 @@ struct TLSConfig {
       uint16_t port;
       // Hostname of memcached server.  This is also used as SNI field
       // if TLS is enabled.
-      StringRef host;
+      std::string_view host;
       // Client private key and certificate for authentication
-      StringRef private_key_file;
-      StringRef cert_file;
+      std::string_view private_key_file;
+      std::string_view cert_file;
       ev_tstamp interval;
       // Maximum number of retries when getting TLS ticket key from
       // mamcached, due to network error.
@@ -645,29 +672,11 @@ struct TLSConfig {
       int family;
       bool tls;
     } memcached;
-    std::vector<StringRef> files;
+    std::vector<std::string_view> files;
     const EVP_CIPHER *cipher;
     // true if --tls-ticket-key-cipher is used
     bool cipher_given;
   } ticket;
-
-  // Session cache related configurations
-  struct {
-    struct {
-      Address addr;
-      uint16_t port;
-      // Hostname of memcached server.  This is also used as SNI field
-      // if TLS is enabled.
-      StringRef host;
-      // Client private key and certificate for authentication
-      StringRef private_key_file;
-      StringRef cert_file;
-      // Address family of memcached connection.  One of either
-      // AF_INET, AF_INET6 or AF_UNSPEC.
-      int family;
-      bool tls;
-    } memcached;
-  } session_cache;
 
   // Dynamic record sizing configurations
   struct {
@@ -675,20 +684,11 @@ struct TLSConfig {
     ev_tstamp idle_timeout;
   } dyn_rec;
 
-  // OCSP related configurations
-  struct {
-    ev_tstamp update_interval;
-    StringRef fetch_ocsp_response_file;
-    bool disabled;
-    bool startup;
-    bool no_verify;
-  } ocsp;
-
   // Client verification configurations
   struct {
     // Path to file containing CA certificate solely used for client
     // certificate validation
-    StringRef cacert;
+    std::string_view cacert;
     bool enabled;
     // true if we accept an expired client certificate.
     bool tolerate_expired;
@@ -699,42 +699,41 @@ struct TLSConfig {
     // Client PSK configuration
     struct {
       // identity must be NULL terminated string.
-      StringRef identity;
-      StringRef secret;
+      std::string_view identity;
+      std::string_view secret;
     } psk;
-    StringRef private_key_file;
-    StringRef cert_file;
-    StringRef ciphers;
-    StringRef tls13_ciphers;
+    std::string_view private_key_file;
+    std::string_view cert_file;
+    std::string_view ciphers;
+    std::string_view tls13_ciphers;
     bool no_http2_cipher_block_list;
   } client;
 
   // PSK secrets.  The key is identity, and the associated value is
   // its secret.
-  std::map<StringRef, StringRef> psk_secrets;
+  std::unordered_map<std::string_view, std::string_view> psk_secrets;
   // The list of additional TLS certificate pair
   std::vector<TLSCertificate> subcerts;
   std::vector<unsigned char> alpn_prefs;
   // list of supported ALPN protocol strings in the order of
   // preference.
-  std::vector<StringRef> alpn_list;
+  std::vector<std::string_view> alpn_list;
   // list of supported SSL/TLS protocol strings.
-  std::vector<StringRef> tls_proto_list;
+  std::vector<std::string_view> tls_proto_list;
   std::vector<uint8_t> sct_data;
-  BIO_METHOD *bio_method;
   // Bit mask to disable SSL/TLS protocol versions.  This will be
   // passed to SSL_CTX_set_options().
-  long int tls_proto_mask;
-  StringRef backend_sni_name;
+  nghttp2_ssl_op_type tls_proto_mask;
+  std::string_view backend_sni_name;
   std::chrono::seconds session_timeout;
-  StringRef private_key_file;
-  StringRef private_key_passwd;
-  StringRef cert_file;
-  StringRef dh_param_file;
-  StringRef ciphers;
-  StringRef tls13_ciphers;
-  StringRef ecdh_curves;
-  StringRef cacert;
+  std::string_view private_key_file;
+  std::string_view private_key_passwd;
+  std::string_view cert_file;
+  std::string_view dh_param_file;
+  std::string_view ciphers;
+  std::string_view tls13_ciphers;
+  std::string_view groups;
+  std::string_view cacert;
   // The maximum amount of 0-RTT data that server accepts.
   uint32_t max_early_data;
   // The minimum and maximum TLS version.  These values are defined in
@@ -759,16 +758,16 @@ struct QUICConfig {
       bool log;
     } debug;
     struct {
-      StringRef dir;
+      std::string_view dir;
     } qlog;
     ngtcp2_cc_algo congestion_controller;
     bool early_data;
     bool require_token;
-    StringRef secret_file;
+    std::string_view secret_file;
     ev_tstamp initial_rtt;
   } upstream;
   struct {
-    StringRef prog_file;
+    std::string_view prog_file;
     bool disabled;
   } bpf;
   uint32_t server_id;
@@ -783,7 +782,7 @@ struct Http3Config {
     int32_t max_connection_window_size;
   } upstream;
 };
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 // custom error page
 struct ErrorPage {
@@ -798,7 +797,7 @@ struct HttpConfig {
     // obfuscated value used in "by" parameter of Forwarded header
     // field.  This is only used when user defined static obfuscated
     // string is provided.
-    StringRef by_obfuscated;
+    std::string_view by_obfuscated;
     // bitwise-OR of one or more of shrpx_forwarded_param values.
     uint32_t params;
     // type of value recorded in "by" parameter of Forwarded header
@@ -825,17 +824,17 @@ struct HttpConfig {
   } timeout;
   std::vector<AltSvc> altsvcs;
   // altsvcs serialized in a wire format.
-  StringRef altsvc_header_value;
+  std::string_view altsvc_header_value;
   std::vector<AltSvc> http2_altsvcs;
   // http2_altsvcs serialized in a wire format.
-  StringRef http2_altsvc_header_value;
+  std::string_view http2_altsvc_header_value;
   std::vector<ErrorPage> error_pages;
   HeaderRefs add_request_headers;
   HeaderRefs add_response_headers;
-  StringRef server_name;
+  std::string_view server_name;
   // Port number which appears in Location header field when https
   // redirect is made.
-  StringRef redirect_https_port;
+  std::string_view redirect_https_port;
   size_t request_header_field_buffer;
   size_t max_request_header_fields;
   size_t response_header_field_buffer;
@@ -852,8 +851,8 @@ struct Http2Config {
   struct {
     struct {
       struct {
-        StringRef request_header_file;
-        StringRef response_header_file;
+        std::string_view request_header_file;
+        std::string_view response_header_file;
         FILE *request_header;
         FILE *response_header;
       } dump;
@@ -896,7 +895,7 @@ struct Http2Config {
 struct LoggingConfig {
   struct {
     std::vector<LogFragment> format;
-    StringRef file;
+    std::string_view file;
     // Send accesslog to syslog, ignoring accesslog_file.
     bool syslog;
     // Write accesslog when response headers are received from
@@ -904,7 +903,7 @@ struct LoggingConfig {
     bool write_early;
   } access;
   struct {
-    StringRef file;
+    std::string_view file;
     // Send errorlog to syslog, ignoring errorlog_file.
     bool syslog;
   } error;
@@ -921,11 +920,11 @@ struct RateLimitConfig {
 // field.  router includes all path patterns sharing the same wildcard
 // host.
 struct WildcardPattern {
-  WildcardPattern(const StringRef &host) : host(host) {}
+  WildcardPattern(const std::string_view &host) : host(host) {}
 
   // This might not be NULL terminated.  Currently it is only used for
   // comparison.
-  StringRef host;
+  std::string_view host;
   Router router;
 };
 
@@ -1003,7 +1002,7 @@ struct ConnectionConfig {
   struct {
     std::vector<UpstreamAddr> addrs;
   } quic_listener;
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
   struct {
     struct {
@@ -1050,7 +1049,7 @@ struct Config {
       tls{},
 #ifdef ENABLE_HTTP3
       quic{},
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
       logging{},
       conn{},
       api{},
@@ -1091,15 +1090,15 @@ struct Config {
 #ifdef ENABLE_HTTP3
   QUICConfig quic;
   Http3Config http3;
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
   LoggingConfig logging;
   ConnectionConfig conn;
   APIConfig api;
   DNSConfig dns;
-  StringRef pid_file;
-  StringRef conf_path;
-  StringRef user;
-  StringRef mruby_file;
+  std::string_view pid_file;
+  std::string_view conf_path;
+  std::string_view user;
+  std::string_view mruby_file;
   // The revision of configuration which is opaque string, and changes
   // on each configuration reloading.  This does not change on
   // backendconfig API call.  This value is returned in health check
@@ -1124,7 +1123,7 @@ struct Config {
   // Ignore mruby compile error for per-pattern mruby script.
   bool ignore_per_pattern_mruby_error;
   // flags passed to ev_default_loop() and ev_loop_new()
-  int ev_loop_flags;
+  uint32_t ev_loop_flags;
   size_t max_worker_processes;
   ev_tstamp worker_process_grace_shutdown_period;
 };
@@ -1242,6 +1241,7 @@ enum {
   SHRPX_OPTID_FRONTEND_QUIC_SECRET_FILE,
   SHRPX_OPTID_FRONTEND_READ_TIMEOUT,
   SHRPX_OPTID_FRONTEND_WRITE_TIMEOUT,
+  SHRPX_OPTID_GROUPS,
   SHRPX_OPTID_HEADER_FIELD_BUFFER,
   SHRPX_OPTID_HOST_REWRITE,
   SHRPX_OPTID_HTTP2_ALTSVC,
@@ -1343,7 +1343,7 @@ enum {
 };
 
 // Looks up token for given option name |name|.
-int option_lookup_token(const StringRef &name);
+int option_lookup_token(const std::string_view &name);
 
 // Parses option name |opt| and value |optarg|.  The results are
 // stored into the object pointed by |config|. This function returns 0
@@ -1353,38 +1353,42 @@ int option_lookup_token(const StringRef &name);
 // pattern of backend, and its index in DownstreamConfig::addr_groups.
 // It is introduced to speed up loading configuration file with lots
 // of backends.
-int parse_config(Config *config, const StringRef &opt, const StringRef &optarg,
-                 std::set<StringRef> &included_set,
-                 std::map<StringRef, size_t> &pattern_addr_indexer);
+int parse_config(
+  Config *config, const std::string_view &opt, const std::string_view &optarg,
+  std::unordered_set<std::string_view> &included_set,
+  std::unordered_map<std::string_view, size_t> &pattern_addr_indexer);
 
 // Similar to parse_config() above, but additional |optid| which
 // should be the return value of option_lookup_token(opt).
-int parse_config(Config *config, int optid, const StringRef &opt,
-                 const StringRef &optarg, std::set<StringRef> &included_set,
-                 std::map<StringRef, size_t> &pattern_addr_indexer);
+int parse_config(
+  Config *config, int optid, const std::string_view &opt,
+  const std::string_view &optarg,
+  std::unordered_set<std::string_view> &included_set,
+  std::unordered_map<std::string_view, size_t> &pattern_addr_indexer);
 
 // Loads configurations from |filename| and stores them in |config|.
 // This function returns 0 if it succeeds, or -1.  See parse_config()
 // for |include_set|.
-int load_config(Config *config, const char *filename,
-                std::set<StringRef> &include_set,
-                std::map<StringRef, size_t> &pattern_addr_indexer);
+int load_config(
+  Config *config, const char *filename,
+  std::unordered_set<std::string_view> &include_set,
+  std::unordered_map<std::string_view, size_t> &pattern_addr_indexer);
 
 // Parses header field in |optarg|.  We expect header field is formed
 // like "NAME: VALUE".  We require that NAME is non empty string.  ":"
 // is allowed at the start of the NAME, but NAME == ":" is not
 // allowed.  This function returns pair of NAME and VALUE.
 HeaderRefs::value_type parse_header(BlockAllocator &balloc,
-                                    const StringRef &optarg);
+                                    const std::string_view &optarg);
 
 std::vector<LogFragment> parse_log_format(BlockAllocator &balloc,
-                                          const StringRef &optarg);
+                                          const std::string_view &optarg);
 
 // Returns string for syslog |facility|.
-StringRef str_syslog_facility(int facility);
+std::string_view str_syslog_facility(int facility);
 
 // Returns integer value of syslog |facility| string.
-int int_syslog_facility(const StringRef &strfacility);
+int int_syslog_facility(const std::string_view &strfacility);
 
 FILE *open_file_for_write(const char *filename);
 
@@ -1393,16 +1397,16 @@ FILE *open_file_for_write(const char *filename);
 // expected file size.  This function returns TicketKey if it
 // succeeds, or nullptr.
 std::unique_ptr<TicketKeys>
-read_tls_ticket_key_file(const std::vector<StringRef> &files,
+read_tls_ticket_key_file(const std::vector<std::string_view> &files,
                          const EVP_CIPHER *cipher, const EVP_MD *hmac);
 
 #ifdef ENABLE_HTTP3
 std::shared_ptr<QUICKeyingMaterials>
-read_quic_secret_file(const StringRef &path);
-#endif // ENABLE_HTTP3
+read_quic_secret_file(const std::string_view &path);
+#endif // defined(ENABLE_HTTP3)
 
 // Returns string representation of |proto|.
-StringRef strproto(Proto proto);
+std::string_view strproto(Proto proto);
 
 int configure_downstream_group(Config *config, bool http2_proxy,
                                bool numeric_addr_only,
@@ -1413,4 +1417,4 @@ int resolve_hostname(Address *addr, const char *hostname, uint16_t port,
 
 } // namespace shrpx
 
-#endif // SHRPX_CONFIG_H
+#endif // !defined(SHRPX_CONFIG_H)

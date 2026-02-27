@@ -159,13 +159,15 @@ OPTIONS
 
     Don't send content-length header field.
 
+.. option:: --groups=<GROUPS>
+
+    Specify the supported groups.
+
+    Default: ``X25519:P-256:P-384:P-521``
+
 .. option:: --ktls
 
     Enable ktls.
-
-.. option:: --no-rfc7540-pri
-
-    Disable RFC7540 priorities.
 
 .. option:: --version
 

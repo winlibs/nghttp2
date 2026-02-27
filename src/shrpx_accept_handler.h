@@ -31,12 +31,12 @@
 
 namespace shrpx {
 
-class ConnectionHandler;
+class Worker;
 struct UpstreamAddr;
 
 class AcceptHandler {
 public:
-  AcceptHandler(const UpstreamAddr *faddr, ConnectionHandler *h);
+  AcceptHandler(Worker *worker, const UpstreamAddr *faddr);
   ~AcceptHandler();
   void accept_connection();
   void enable();
@@ -45,10 +45,10 @@ public:
 
 private:
   ev_io wev_;
-  ConnectionHandler *conn_hnr_;
+  Worker *worker_;
   const UpstreamAddr *faddr_;
 };
 
 } // namespace shrpx
 
-#endif // SHRPX_ACCEPT_HANDLER_H
+#endif // !defined(SHRPX_ACCEPT_HANDLER_H)

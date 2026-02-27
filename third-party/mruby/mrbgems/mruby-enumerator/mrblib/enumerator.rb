@@ -117,7 +117,7 @@ class Enumerator
   def initialize(obj=NONE, meth=:each, *args, **kwd, &block)
     if block
       obj = Generator.new(&block)
-    elsif obj == NONE
+    elsif NONE.equal?(obj)
       raise ArgumentError, "wrong number of arguments (given 0, expected 1+)"
     end
 
@@ -595,7 +595,7 @@ class Enumerator
   def Enumerator.produce(init=NONE, &block)
     raise ArgumentError, "no block given" if block.nil?
     Enumerator.new do |y|
-      if init == NONE
+      if NONE.equal?(init)
         val = nil
       else
         val = init
@@ -659,8 +659,8 @@ module Kernel
   #       # => returns an Enumerator when called without a block
   #     enum.first(4) # => [1, 1, 1, 2]
   #
-  def to_enum(meth=:each, *args)
-    Enumerator.new self, meth, *args
+  def to_enum(meth=:each, *args, **kwd)
+    Enumerator.new self, meth, *args, **kwd
   end
   alias enum_for to_enum
 end
@@ -700,5 +700,143 @@ module Enumerable
     end
 
     result
+  end
+
+  ##
+  #  call-seq:
+  #    enum.chunk                 -> enumerator
+  #    enum.chunk { |arr| block } -> enumerator
+  #
+  #  Each element in the returned enumerator is a 2-element array consisting of:
+  #
+  #  - A value returned by the block.
+  #  - An array ("chunk") containing the element for which that value was returned,
+  #    and all following elements for which the block returned the same value:
+  #
+  #  So that:
+  #
+  #  - Each block return value that is different from its predecessor
+  #    begins a new chunk.
+  #  - Each block return value that is the same as its predecessor
+  #    continues the same chunk.
+  #
+  #  Example:
+  #
+  #     e = (0..10).chunk {|i| (i / 3).floor } # => #<Enumerator: ...>
+  #     # The enumerator elements.
+  #     e.next # => [0, [0, 1, 2]]
+  #     e.next # => [1, [3, 4, 5]]
+  #     e.next # => [2, [6, 7, 8]]
+  #     e.next # => [3, [9, 10]]
+  #
+  #  You can use the special symbol <tt>:_alone</tt> to force an element
+  #  into its own separate chuck:
+  #
+  #     a = [0, 0, 1, 1]
+  #     e = a.chunk{|i| i.even? ? :_alone : true }
+  #     e.to_a # => [[:_alone, [0]], [:_alone, [0]], [true, [1, 1]]]
+  #
+  #  You can use the special symbol <tt>:_separator</tt> or +nil+
+  #  to force an element to be ignored (not included in any chunk):
+  #
+  #     a = [0, 0, -1, 1, 1]
+  #     e = a.chunk{|i| i < 0 ? :_separator : true }
+  #     e.to_a # => [[true, [0, 0]], [true, [1, 1]]]
+  def chunk(&block)
+    return to_enum :chunk unless block
+
+    enum = self
+    Enumerator.new do |y|
+      last_value, arr = nil, []
+      enum.each do |element|
+        value = block.call(element)
+        case value
+        when :_alone
+          y.yield [last_value, arr] if arr.size > 0
+          y.yield [value, [element]]
+          last_value, arr = nil, []
+        when :_separator, nil
+          y.yield [last_value, arr] if arr.size > 0
+          last_value, arr = nil, []
+        when last_value
+          arr << element
+        else
+          raise 'symbols beginning with an underscore are reserved' if value.is_a?(Symbol) && value.to_s[0] == '_'
+          y.yield [last_value, arr] if arr.size > 0
+          last_value, arr = value, [element]
+        end
+      end
+      y.yield [last_value, arr] if arr.size > 0
+    end
+  end
+
+
+  ##
+  #  call-seq:
+  #     enum.chunk_while {|elt_before, elt_after| bool } -> an_enumerator
+  #
+  # Creates an enumerator for each chunked elements.
+  # The beginnings of chunks are defined by the block.
+  #
+  # This method splits each chunk using adjacent elements,
+  # _elt_before_ and _elt_after_,
+  # in the receiver enumerator.
+  # This method split chunks between _elt_before_ and _elt_after_ where
+  # the block returns <code>false</code>.
+  #
+  # The block is called the length of the receiver enumerator minus one.
+  #
+  # The result enumerator yields the chunked elements as an array.
+  # So +each+ method can be called as follows:
+  #
+  #   enum.chunk_while { |elt_before, elt_after| bool }.each { |ary| ... }
+  #
+  # Other methods of the Enumerator class and Enumerable module,
+  # such as +to_a+, +map+, etc., are also usable.
+  #
+  # For example, one-by-one increasing subsequence can be chunked as follows:
+  #
+  #   a = [1,2,4,9,10,11,12,15,16,19,20,21]
+  #   b = a.chunk_while {|i, j| i+1 == j }
+  #   p b.to_a #=> [[1, 2], [4], [9, 10, 11, 12], [15, 16], [19, 20, 21]]
+  #   c = b.map {|a| a.length < 3 ? a : "#{a.first}-#{a.last}" }
+  #   p c #=> [[1, 2], [4], "9-12", [15, 16], "19-21"]
+  #   d = c.join(",")
+  #   p d #=> "1,2,4,9-12,15,16,19-21"
+  #
+  # Increasing (non-decreasing) subsequence can be chunked as follows:
+  #
+  #   a = [0, 9, 2, 2, 3, 2, 7, 5, 9, 5]
+  #   p a.chunk_while {|i, j| i <= j }.to_a
+  #  #=> [[0, 9], [2, 2, 3], [2, 7], [5, 9], [5]]
+  #
+  # Adjacent evens and odds can be chunked as follows:
+  # (Enumerable#chunk is another way to do it.)
+  #
+  #   a = [7, 5, 9, 2, 0, 7, 9, 4, 2, 0]
+  #   p a.chunk_while {|i, j| i.even? == j.even? }.to_a
+  #   #=> [[7, 5, 9], [2, 0], [7, 9], [4, 2, 0]]
+  #
+  # Enumerable#slice_when does the same, except splitting when the block
+  # returns <code>true</code> instead of <code>false</code>.
+  #
+  def chunk_while(&block)
+    enum = self
+    Enumerator.new do |y|
+      n = 0
+      last_value, arr = nil, []
+      enum.each do |element|
+        if n > 0
+          unless block.call(last_value, element)
+            y.yield arr
+            arr = []
+          end
+        end
+        arr.push(element)
+        n += 1
+        last_value = element
+      end
+      y.yield arr if arr.size > 0
+    end
   end
 end

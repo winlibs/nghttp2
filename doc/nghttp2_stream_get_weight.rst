@@ -14,8 +14,6 @@ Synopsis
     
       Deprecated.  :rfc:`7540` priorities are deprecated by
       :rfc:`9113`.  Consider migrating to :rfc:`9218` extensible
-      prioritization scheme.  In the future release after the end of
-      2024, this function will always return
-      :macro:`NGHTTP2_DEFAULT_WEIGHT`.
+      prioritization scheme.
     
-    Returns dependency weight to the parent stream of *stream*.
+    This function always returns :macro:`NGHTTP2_DEFAULT_WEIGHT`.

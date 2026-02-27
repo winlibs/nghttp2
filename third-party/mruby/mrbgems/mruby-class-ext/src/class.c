@@ -1,17 +1,18 @@
-#include "mruby.h"
-#include "mruby/class.h"
-#include "mruby/string.h"
-#include "mruby/array.h"
-#include "mruby/proc.h"
-#include "mruby/variable.h"
-#include "mruby/presym.h"
+#include <mruby.h>
+#include <mruby/class.h>
+#include <mruby/string.h>
+#include <mruby/array.h>
+#include <mruby/proc.h>
+#include <mruby/variable.h>
+#include <mruby/internal.h>
+#include <mruby/presym.h>
 
 static mrb_value
 mod_name(mrb_state *mrb, mrb_value self)
 {
   mrb_value name =  mrb_class_path(mrb, mrb_class_ptr(self));
   if (mrb_string_p(name)) {
-    MRB_SET_FROZEN_FLAG(mrb_basic_ptr(name));
+    mrb_basic_ptr(name)->frozen = 1;
   }
   return name;
 }
@@ -44,19 +45,7 @@ mod_singleton_class_p(mrb_state *mrb, mrb_value self)
 static mrb_value
 mod_module_exec(mrb_state *mrb, mrb_value self)
 {
-  const mrb_value *argv;
-  mrb_int argc;
-  mrb_value blk;
-  struct RClass *c;
-
-  mrb_get_args(mrb, "*&!", &argv, &argc, &blk);
-
-  c = mrb_class_ptr(self);
-  if (mrb->c->ci->cci > 0) {
-    return mrb_yield_with_class(mrb, blk, argc, argv, self, c);
-  }
-  mrb_vm_ci_target_class_set(mrb->c->ci, c);
-  return mrb_yield_cont(mrb, blk, self, argc, argv);
+  return mrb_object_exec(mrb, self, mrb_class_ptr(self));
 }
 
 struct subclass_args {
@@ -97,11 +86,8 @@ add_subclasses(mrb_state *mrb, struct RBasic *obj, void *data)
 static mrb_value
 class_subclasses(mrb_state *mrb, mrb_value self)
 {
-  struct RClass *c;
-  mrb_value ary;
-
-  c = mrb_class_ptr(self);
-  ary = mrb_ary_new(mrb);
+  struct RClass *c = mrb_class_ptr(self);
+  mrb_value ary = mrb_ary_new(mrb);
 
   if (c->flags & MRB_FL_CLASS_IS_INHERITED) {
     struct subclass_args arg = {c, ary};
@@ -128,9 +114,7 @@ class_subclasses(mrb_state *mrb, mrb_value self)
 static mrb_value
 class_attached_object(mrb_state *mrb, mrb_value self)
 {
-  struct RClass *c;
-
-  c = mrb_class_ptr(self);
+  struct RClass *c = mrb_class_ptr(self);
   if (c->tt != MRB_TT_SCLASS) {
     mrb_raise(mrb, E_TYPE_ERROR, "not a singleton class");
   }
@@ -142,14 +126,14 @@ mrb_mruby_class_ext_gem_init(mrb_state *mrb)
 {
   struct RClass *mod = mrb->module_class;
 
-  mrb_define_method(mrb, mod, "name", mod_name, MRB_ARGS_NONE());
-  mrb_define_method(mrb, mod, "singleton_class?", mod_singleton_class_p, MRB_ARGS_NONE());
-  mrb_define_method(mrb, mod, "module_exec", mod_module_exec, MRB_ARGS_ANY()|MRB_ARGS_BLOCK());
-  mrb_define_method(mrb, mod, "class_exec", mod_module_exec, MRB_ARGS_ANY()|MRB_ARGS_BLOCK());
+  mrb_define_method_id(mrb, mod, MRB_SYM(name), mod_name, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, mod, MRB_SYM_Q(singleton_class), mod_singleton_class_p, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, mod, MRB_SYM(module_exec), mod_module_exec, MRB_ARGS_ANY()|MRB_ARGS_BLOCK());
+  mrb_define_method_id(mrb, mod, MRB_SYM(class_exec), mod_module_exec, MRB_ARGS_ANY()|MRB_ARGS_BLOCK());
 
   struct RClass *cls = mrb->class_class;
-  mrb_define_method(mrb, cls, "subclasses", class_subclasses, MRB_ARGS_NONE());
-  mrb_define_method(mrb, cls, "attached_object", class_attached_object, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, cls, MRB_SYM(subclasses), class_subclasses, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, cls, MRB_SYM(attached_object), class_attached_object, MRB_ARGS_NONE());
 }
 
 void

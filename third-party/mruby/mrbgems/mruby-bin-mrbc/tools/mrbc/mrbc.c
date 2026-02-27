@@ -24,10 +24,9 @@ struct mrbc_args {
   mrb_bool dump_struct  : 1;
   mrb_bool check_syntax : 1;
   mrb_bool verbose      : 1;
-  mrb_bool remove_lv    : 1;
   mrb_bool no_ext_ops   : 1;
   mrb_bool no_optimize  : 1;
-  uint8_t flags         : 2;
+  uint8_t flags         : 3;
 };
 
 static void
@@ -165,7 +164,7 @@ parse_args(mrb_state *mrb, int argc, char **argv, struct mrbc_args *args)
           exit(EXIT_SUCCESS);
         }
         else if (strcmp(argv[i] + 2, "remove-lv") == 0) {
-          args->remove_lv = TRUE;
+          args->flags |= MRB_DUMP_NO_LVAR;
           break;
         }
         else if (strcmp(argv[i] + 2, "no-ext-ops") == 0) {
@@ -246,7 +245,7 @@ load_file(mrb_state *mrb, struct mrbc_args *args)
   args->idx++;
   if (args->idx < args->argc) {
     need_close = FALSE;
-    mrb_ccontext_partial_hook(mrb, c, partial_hook, (void*)args);
+    mrb_ccontext_partial_hook(c, partial_hook, (void*)args);
   }
 
   result = mrb_load_file_cxt(mrb, infile, c);
@@ -259,14 +258,11 @@ load_file(mrb_state *mrb, struct mrbc_args *args)
 }
 
 static int
-dump_file(mrb_state *mrb, FILE *wfp, const char *outfile, struct RProc *proc, struct mrbc_args *args)
+dump_file(mrb_state *mrb, FILE *wfp, const char *outfile, const struct RProc *proc, struct mrbc_args *args)
 {
   int n = MRB_DUMP_OK;
   const mrb_irep *irep = proc->body.irep;
 
-  if (args->remove_lv) {
-    mrb_irep_remove_lv(mrb, (mrb_irep*)irep);
-  }
   if (args->initname) {
     if (args->dump_struct) {
       n = mrb_dump_irep_cstruct(mrb, irep, args->flags, wfp, args->initname);
@@ -290,7 +286,7 @@ dump_file(mrb_state *mrb, FILE *wfp, const char *outfile, struct RProc *proc, st
 int
 main(int argc, char **argv)
 {
-  mrb_state *mrb = mrb_open_core(NULL, NULL);
+  mrb_state *mrb = mrb_open_core();
   int n, result;
   struct mrbc_args args;
   FILE *wfp;

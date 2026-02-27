@@ -83,9 +83,9 @@ OPTIONS
 .. option:: -w, --window-bits=<N>
 
     Sets the stream level initial window size to (2\*\*<N>)-1.
-    For QUIC, <N> is capped to 26 (roughly 64MiB).
-
-    Default: ``30``
+    For  QUIC, <N>  is  capped to  26  (roughly 64MiB).   It
+    defaults  to  24 (16MiB)  for  QUIC,  and 30  for  other
+    protocols.
 
 .. option:: -W, --connection-window-bits=<N>
 
@@ -221,7 +221,7 @@ OPTIONS
     by a single comma only  and any white spaces are treated
     as a part of protocol string.
 
-    Default: ``h2,h2-16,h2-14,http/1.1``
+    Default: ``h2,http/1.1``
 
 .. option:: --h1
 
@@ -331,7 +331,7 @@ requests
     The number of requests completed.
   succeeded
     The number of requests completed successfully.  Only HTTP status
-    code 2xx or3xx are considered as success.
+    code 2xx or 3xx are considered as success.
   failed
     The number of requests failed, including HTTP level failures
     (non-successful HTTP status code).

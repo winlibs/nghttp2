@@ -142,11 +142,15 @@ create_proc_from_string(mrb_state *mrb, const char *s, mrb_int len, mrb_value bi
 static mrb_value
 exec_irep(mrb_state *mrb, mrb_value self, struct RProc *proc)
 {
+  mrb_callinfo *ci = mrb->c->ci;
+
   /* no argument passed from eval() */
-  mrb->c->ci->n = 0;
-  mrb->c->ci->nk = 0;
+  ci->n = 0;
+  ci->nk = 0;
+  /* clear visibility */
+  MRB_CI_SET_VISIBILITY_BREAK(ci);
   /* clear block */
-  mrb->c->ci->stack[1] = mrb_nil_value();
+  ci->stack[1] = mrb_nil_value();
   return mrb_exec_irep(mrb, self, proc);
 }
 
@@ -215,14 +219,10 @@ static mrb_value
 binding_eval_prepare_body(mrb_state *mrb, void *opaque)
 {
   struct binding_eval_prepare_body *p = (struct binding_eval_prepare_body*)opaque;
-
-  const struct RProc *proc = mrb_binding_extract_proc(mrb, p->binding);
-  mrb_assert(!MRB_PROC_CFUNC_P(proc));
-  p->cxt->upper = proc;
   binding_eval_error_check(mrb, p->pstate, p->file);
 
   struct expand_lvspace args = {
-    (mrb_irep*)proc->body.irep,
+    (mrb_irep*)p->cxt->upper->body.irep,
     mrb_binding_extract_env(mrb, p->binding),
     0,
     { 0 }
@@ -239,10 +239,13 @@ static void
 binding_eval_prepare(mrb_state *mrb, mrb_value binding, const char *expr, mrb_int exprlen, const char *file)
 {
   struct binding_eval_prepare_body d = { binding };
+  const struct RProc *proc = mrb_binding_extract_proc(mrb, binding);
+  mrb_assert(!MRB_PROC_CFUNC_P(proc));
 
   d.cxt = mrb_ccontext_new(mrb);
   d.file = mrb_ccontext_filename(mrb, d.cxt, file ? file : "(eval)");
   d.cxt->capture_errors = TRUE;
+  d.cxt->upper = proc;
   d.pstate = mrb_parse_nstring(mrb, expr, exprlen, d.cxt);
 
   mrb_bool error;
@@ -342,13 +345,13 @@ mrb_binding_eval(mrb_state *mrb, mrb_value binding)
 void
 mrb_mruby_eval_gem_init(mrb_state* mrb)
 {
-  mrb_define_module_function(mrb, mrb->kernel_module, "eval", f_eval, MRB_ARGS_ARG(1, 3));
+  mrb_define_private_method_id(mrb, mrb->kernel_module, MRB_SYM(eval), f_eval, MRB_ARGS_ARG(1, 3));
   mrb_define_method_id(mrb, mrb_class_get_id(mrb, MRB_SYM(BasicObject)), MRB_SYM(instance_eval), f_instance_eval, MRB_ARGS_OPT(3)|MRB_ARGS_BLOCK());
-  mrb_define_method_id(mrb, mrb_class_get_id(mrb, MRB_SYM(Module)), MRB_SYM(module_eval), f_class_eval, MRB_ARGS_OPT(3)|MRB_ARGS_BLOCK());
-  mrb_define_method_id(mrb, mrb_class_get_id(mrb, MRB_SYM(Module)), MRB_SYM(class_eval), f_class_eval, MRB_ARGS_OPT(3)|MRB_ARGS_BLOCK());
+  mrb_define_method_id(mrb, mrb->module_class, MRB_SYM(module_eval), f_class_eval, MRB_ARGS_OPT(3)|MRB_ARGS_BLOCK());
+  mrb_define_method_id(mrb, mrb->module_class, MRB_SYM(class_eval), f_class_eval, MRB_ARGS_OPT(3)|MRB_ARGS_BLOCK());
 
   struct RClass *binding = mrb_class_get_id(mrb, MRB_SYM(Binding));
-  mrb_define_method(mrb, binding, "eval", mrb_binding_eval, MRB_ARGS_ANY());
+  mrb_define_method_id(mrb, binding, MRB_SYM(eval), mrb_binding_eval, MRB_ARGS_ANY());
 }
 
 void

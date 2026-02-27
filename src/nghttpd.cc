@@ -24,13 +24,9 @@
  */
 #include "nghttp2_config.h"
 
-#ifdef __sgi
-#  define daemon _daemonize
-#endif
-
 #ifdef HAVE_UNISTD_H
 #  include <unistd.h>
-#endif // HAVE_UNISTD_H
+#endif // defined(HAVE_UNISTD_H)
 #include <signal.h>
 #include <getopt.h>
 
@@ -176,9 +172,11 @@ Options:
       << config.mime_types_file << R"(
   --no-content-length
               Don't send content-length header field.
+  --groups=<GROUPS>
+              Specify the supported groups.
+              Default: )"
+      << config.groups << R"(
   --ktls      Enable ktls.
-  --no-rfc7540-pri
-              Disable RFC7540 priorities.
   --version   Display version information and exit.
   -h, --help  Display this help and exit.
 
@@ -225,6 +223,7 @@ int main(int argc, char **argv) {
       {"encoder-header-table-size", required_argument, &flag, 11},
       {"ktls", no_argument, &flag, 12},
       {"no-rfc7540-pri", no_argument, &flag, 13},
+      {"groups", required_argument, &flag, 14},
       {nullptr, 0, nullptr, 0}};
     int option_index = 0;
     int c = getopt_long(argc, argv, "DVb:c:d:ehm:n:p:va:w:W:", long_options,
@@ -248,7 +247,7 @@ int main(int argc, char **argv) {
         std::cerr << "-b: Bad option value: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.padding = *n;
+      config.padding = static_cast<size_t>(*n);
       break;
     }
     case 'd':
@@ -264,21 +263,21 @@ int main(int argc, char **argv) {
         std::cerr << "-m: invalid argument: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.max_concurrent_streams = *n;
+      config.max_concurrent_streams = static_cast<size_t>(*n);
       break;
     }
     case 'n': {
 #ifdef NOTHREADS
       std::cerr << "-n: WARNING: Threading disabled at build time, "
                 << "no threads created." << std::endl;
-#else
+#else  // !defined(NOTHREADS)
       auto n = util::parse_uint(optarg);
       if (!n) {
         std::cerr << "-n: Bad option value: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.num_worker = *n;
-#endif // NOTHREADS
+      config.num_worker = static_cast<size_t>(*n);
+#endif // !defined(NOTHREADS)
       break;
     }
     case 'h':
@@ -317,9 +316,9 @@ int main(int argc, char **argv) {
       }
 
       if (c == 'w') {
-        config.window_bits = *n;
+        config.window_bits = static_cast<int>(*n);
       } else {
-        config.connection_window_bits = *n;
+        config.connection_window_bits = static_cast<int>(*n);
       }
 
       break;
@@ -352,13 +351,13 @@ int main(int argc, char **argv) {
       case 6: {
         // trailer option
         auto header = optarg;
-        auto value = strchr(optarg, ':');
-        if (!value) {
+        auto name_end = strchr(optarg, ':');
+        if (!name_end) {
           std::cerr << "--trailer: invalid header: " << optarg << std::endl;
           exit(EXIT_FAILURE);
         }
-        *value = 0;
-        value++;
+        *name_end = 0;
+        auto value = name_end + 1;
         while (isspace(*value)) {
           value++;
         }
@@ -369,8 +368,8 @@ int main(int argc, char **argv) {
                     << std::endl;
           exit(EXIT_FAILURE);
         }
+        util::tolower(header, name_end, header);
         config.trailer.emplace_back(header, value, false);
-        util::inp_strlower(config.trailer.back().name);
         break;
       }
       case 7:
@@ -413,7 +412,12 @@ int main(int argc, char **argv) {
         break;
       case 13:
         // no-rfc7540-pri option
-        config.no_rfc7540_pri = true;
+        std::cerr << "[WARNING]: --no-rfc7540-pri option has been deprecated."
+                  << std::endl;
+        break;
+      case 14:
+        // groups option
+        config.groups = optarg;
         break;
       }
       break;
@@ -434,7 +438,7 @@ int main(int argc, char **argv) {
       std::cerr << "<PORT>: Bad value: " << portStr << std::endl;
       exit(EXIT_FAILURE);
     }
-    config.port = *n;
+    config.port = static_cast<uint16_t>(*n);
   }
 
   if (!config.no_tls) {
@@ -448,11 +452,7 @@ int main(int argc, char **argv) {
       std::cerr << "-d option must be specified when -D is used." << std::endl;
       exit(EXIT_FAILURE);
     }
-#ifdef __sgi
-    if (daemon(0, 0, 0, 0) == -1) {
-#else
     if (util::daemonize(0, 0) == -1) {
-#endif
       perror("daemon");
       exit(EXIT_FAILURE);
     }
@@ -480,7 +480,7 @@ int main(int argc, char **argv) {
 
   set_color_output(color || isatty(fileno(stdout)));
 
-  struct sigaction act {};
+  struct sigaction act{};
   act.sa_handler = SIG_IGN;
   sigaction(SIGPIPE, &act, nullptr);
 

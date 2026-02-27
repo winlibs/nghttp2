@@ -34,9 +34,9 @@ struct iovec {
   void *iov_base; /* Pointer to data.  */
   size_t iov_len; /* Length of data.  */
 };
-#else // !_WIN32
+#else // !defined(_WIN32)
 #  include <sys/uio.h>
-#endif // !_WIN32
+#endif // !defined(_WIN32)
 
 #include <cassert>
 #include <cstring>
@@ -60,10 +60,15 @@ namespace nghttp2 {
 
 template <size_t N> struct Memchunk {
   Memchunk(Memchunk *next_chunk)
-    : pos(std::begin(buf)), last(pos), knext(next_chunk), next(nullptr) {}
-  size_t len() const { return last - pos; }
-  size_t left() const { return std::end(buf) - last; }
-  void reset() { pos = last = std::begin(buf); }
+    : pos(std::ranges::begin(buf)),
+      last(pos),
+      knext(next_chunk),
+      next(nullptr) {}
+  size_t len() const { return as_unsigned(last - pos); }
+  size_t left() const {
+    return static_cast<size_t>(std::ranges::end(buf) - last);
+  }
+  void reset() { pos = last = std::ranges::begin(buf); }
   std::array<uint8_t, N> buf;
   uint8_t *pos, *last;
   Memchunk *knext;
@@ -157,33 +162,31 @@ template <typename Memchunk> struct Memchunks {
       m = next;
     }
   }
-  size_t append(char c) {
+  void append(char c) {
     if (!tail) {
       head = tail = pool->get();
     } else if (tail->left() == 0) {
       tail->next = pool->get();
       tail = tail->next;
     }
-    *tail->last++ = c;
+    *tail->last++ = as_unsigned(c);
     ++len;
-    return 1;
   }
-  size_t append(const void *src, size_t count) {
-    if (count == 0) {
-      return 0;
+  template <std::input_iterator I> void append(I first, I last) {
+    if (first == last) {
+      return;
     }
-
-    auto first = static_cast<const uint8_t *>(src);
-    auto last = first + count;
 
     if (!tail) {
       head = tail = pool->get();
     }
 
     for (;;) {
-      auto n = std::min(static_cast<size_t>(last - first), tail->left());
-      tail->last = std::copy_n(first, n, tail->last);
-      first += n;
+      auto n = std::min(static_cast<size_t>(std::ranges::distance(first, last)),
+                        tail->left());
+      auto iores = std::ranges::copy_n(first, as_signed(n), tail->last);
+      first = iores.in;
+      tail->last = iores.out;
       len += n;
       if (first == last) {
         break;
@@ -193,15 +196,39 @@ template <typename Memchunk> struct Memchunks {
       tail = tail->next;
     }
 
-    return count;
+    return;
   }
-  template <size_t N> size_t append(const char (&s)[N]) {
-    return append(s, N - 1);
+  void append(const void *src, size_t count) {
+    auto s = static_cast<const uint8_t *>(src);
+    append(s, s + count);
   }
-  size_t append(const std::string &s) { return append(s.c_str(), s.size()); }
-  size_t append(const StringRef &s) { return append(s.data(), s.size()); }
-  size_t append(const ImmutableString &s) {
-    return append(s.c_str(), s.size());
+  template <std::ranges::input_range R>
+  requires(!std::is_array_v<std::remove_cvref_t<R>>)
+  void append(R &&r) {
+    append(std::ranges::begin(r), std::ranges::end(r));
+  }
+  // first ensures that at least |max_count| bytes are available to
+  // store in the current buffer, assuming that the chunk size of the
+  // underlying Memchunk is at least |max_count| bytes.  Then call
+  // |f|(tail->last) to write data into buffer directly.  |f| must not
+  // write more than |max_count| bytes.  It must return the position
+  // of the buffer past the last position written.
+  template <typename F>
+  requires(std::invocable<F &, uint8_t *> &&
+           std::is_same_v<std::invoke_result_t<F &, uint8_t *>, uint8_t *>)
+  void append(size_t max_count, F f) {
+    if (!tail) {
+      head = tail = pool->get();
+    } else if (tail->left() < max_count) {
+      tail->next = pool->get();
+      tail = tail->next;
+    }
+
+    assert(tail->left() >= max_count);
+
+    auto last = f(tail->last);
+    len += static_cast<size_t>(last - tail->last);
+    tail->last = last;
   }
   size_t copy(Memchunks &dest) {
     auto m = head;
@@ -228,8 +255,9 @@ template <typename Memchunk> struct Memchunks {
       auto n = std::min(static_cast<size_t>(last - first), m->len());
 
       assert(m->len());
-      first = std::copy_n(m->pos, n, first);
-      m->pos += n;
+      auto iores = std::ranges::copy_n(m->pos, as_signed(n), first);
+      m->pos = iores.in;
+      first = iores.out;
       len -= n;
       if (m->len() > 0) {
         break;
@@ -242,7 +270,7 @@ template <typename Memchunk> struct Memchunks {
       tail = nullptr;
     }
 
-    return first - static_cast<uint8_t *>(dest);
+    return as_unsigned(first - static_cast<uint8_t *>(dest));
   }
   size_t remove(Memchunks &dest, size_t count) {
     assert(mark == nullptr);
@@ -378,7 +406,7 @@ template <typename Memchunk> struct Memchunks {
     if (mark) {
       if (mark_pos != mark->last) {
         iov[0].iov_base = mark_pos;
-        iov[0].iov_len = mark->len() - (mark_pos - mark->pos);
+        iov[0].iov_len = mark->len() - as_unsigned(mark_pos - mark->pos);
 
         mark_pos = mark->last;
         mark_offset += iov[0].iov_len;
@@ -423,130 +451,9 @@ template <typename Memchunk> struct Memchunks {
   size_t mark_offset;
 };
 
-// Wrapper around Memchunks to offer "peeking" functionality.
-template <typename Memchunk> struct PeekMemchunks {
-  PeekMemchunks(Pool<Memchunk> *pool)
-    : memchunks(pool),
-      cur(nullptr),
-      cur_pos(nullptr),
-      cur_last(nullptr),
-      len(0),
-      peeking(true) {}
-  PeekMemchunks(const PeekMemchunks &) = delete;
-  PeekMemchunks(PeekMemchunks &&other) noexcept
-    : memchunks{std::move(other.memchunks)},
-      cur{std::exchange(other.cur, nullptr)},
-      cur_pos{std::exchange(other.cur_pos, nullptr)},
-      cur_last{std::exchange(other.cur_last, nullptr)},
-      len{std::exchange(other.len, 0)},
-      peeking{std::exchange(other.peeking, true)} {}
-  PeekMemchunks &operator=(const PeekMemchunks &) = delete;
-  PeekMemchunks &operator=(PeekMemchunks &&other) noexcept {
-    if (this == &other) {
-      return *this;
-    }
-
-    memchunks = std::move(other.memchunks);
-    cur = std::exchange(other.cur, nullptr);
-    cur_pos = std::exchange(other.cur_pos, nullptr);
-    cur_last = std::exchange(other.cur_last, nullptr);
-    len = std::exchange(other.len, 0);
-    peeking = std::exchange(other.peeking, true);
-
-    return *this;
-  }
-  size_t append(const void *src, size_t count) {
-    count = memchunks.append(src, count);
-    len += count;
-    return count;
-  }
-  size_t remove(void *dest, size_t count) {
-    if (!peeking) {
-      count = memchunks.remove(dest, count);
-      len -= count;
-      return count;
-    }
-
-    if (count == 0 || len == 0) {
-      return 0;
-    }
-
-    if (!cur) {
-      cur = memchunks.head;
-      cur_pos = cur->pos;
-    }
-
-    // cur_last could be updated in append
-    cur_last = cur->last;
-
-    if (cur_pos == cur_last) {
-      assert(cur->next);
-      cur = cur->next;
-    }
-
-    auto first = static_cast<uint8_t *>(dest);
-    auto last = first + count;
-
-    for (;;) {
-      auto n = std::min(last - first, cur_last - cur_pos);
-
-      first = std::copy_n(cur_pos, n, first);
-      cur_pos += n;
-      len -= n;
-
-      if (first == last) {
-        break;
-      }
-      assert(cur_pos == cur_last);
-      if (!cur->next) {
-        break;
-      }
-      cur = cur->next;
-      cur_pos = cur->pos;
-      cur_last = cur->last;
-    }
-    return first - static_cast<uint8_t *>(dest);
-  }
-  size_t rleft() const { return len; }
-  size_t rleft_buffered() const { return memchunks.rleft(); }
-  void disable_peek(bool drain) {
-    if (!peeking) {
-      return;
-    }
-    if (drain) {
-      auto n = rleft_buffered() - rleft();
-      memchunks.drain(n);
-      assert(len == memchunks.rleft());
-    } else {
-      len = memchunks.rleft();
-    }
-    cur = nullptr;
-    cur_pos = cur_last = nullptr;
-    peeking = false;
-  }
-  void reset() {
-    memchunks.reset();
-    cur = nullptr;
-    cur_pos = cur_last = nullptr;
-    len = 0;
-    peeking = true;
-  }
-  Memchunks<Memchunk> memchunks;
-  // Pointer to the Memchunk currently we are reading/writing.
-  Memchunk *cur;
-  // Region inside cur, we have processed to cur_pos.
-  uint8_t *cur_pos, *cur_last;
-  // This is the length we have left unprocessed.  len <=
-  // memchunk.rleft() must hold.
-  size_t len;
-  // true if peeking is enabled.  Initially it is true.
-  bool peeking;
-};
-
 using Memchunk16K = Memchunk<16_k>;
 using MemchunkPool = Pool<Memchunk16K>;
 using DefaultMemchunks = Memchunks<Memchunk16K>;
-using DefaultPeekMemchunks = PeekMemchunks<Memchunk16K>;
 
 inline int limit_iovec(struct iovec *iov, int iovcnt, size_t max) {
   if (max == 0) {
@@ -628,7 +535,7 @@ template <typename Memchunk> struct MemchunkBuffer {
   size_t write(const void *src, size_t count) {
     count = std::min(count, wleft());
     auto p = static_cast<const uint8_t *>(src);
-    chunk->last = std::copy_n(p, count, chunk->last);
+    chunk->last = std::ranges::copy_n(p, count, chunk->last).out;
     return count;
   }
   size_t write(size_t count) {
@@ -643,13 +550,14 @@ template <typename Memchunk> struct MemchunkBuffer {
   }
   size_t drain_reset(size_t count) {
     count = std::min(count, rleft());
-    std::copy(chunk->pos + count, chunk->last, std::begin(chunk->buf));
-    chunk->last = std::begin(chunk->buf) + (chunk->last - (chunk->pos + count));
-    chunk->pos = std::begin(chunk->buf);
+    chunk->last = std::ranges::copy(chunk->pos + count, chunk->last,
+                                    std::ranges::begin(chunk->buf))
+                    .out;
+    chunk->pos = std::ranges::begin(chunk->buf);
     return count;
   }
   void reset() { chunk->reset(); }
-  uint8_t *begin() { return std::begin(chunk->buf); }
+  uint8_t *begin() { return std::ranges::begin(chunk->buf); }
   uint8_t &operator[](size_t n) { return chunk->buf[n]; }
   const uint8_t &operator[](size_t n) const { return chunk->buf[n]; }
 
@@ -661,4 +569,4 @@ using DefaultMemchunkBuffer = MemchunkBuffer<Memchunk16K>;
 
 } // namespace nghttp2
 
-#endif // MEMCHUNK_H
+#endif // !defined(MEMCHUNK_H)

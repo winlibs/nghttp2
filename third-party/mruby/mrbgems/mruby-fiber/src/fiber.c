@@ -16,12 +16,9 @@
 #define CINFO_RESUMED 3
 
 static mrb_value
-fiber_init_fiber(mrb_state *mrb, struct RFiber *f, const struct RProc *p)
+init_fiber(mrb_state *mrb, struct RFiber *f, const struct RProc *p)
 {
   static const struct mrb_context mrb_context_zero = { 0 };
-  struct mrb_context *c;
-  mrb_callinfo *ci;
-  size_t slen;
 
   if (f->cxt) {
     mrb_raise(mrb, E_RUNTIME_ERROR, "cannot initialize twice");
@@ -30,12 +27,12 @@ fiber_init_fiber(mrb_state *mrb, struct RFiber *f, const struct RProc *p)
     mrb_raise(mrb, E_FIBER_ERROR, "tried to create Fiber from C defined method");
   }
 
-  c = (struct mrb_context*)mrb_malloc(mrb, sizeof(struct mrb_context));
+  struct mrb_context *c = (struct mrb_context*)mrb_malloc(mrb, sizeof(struct mrb_context));
   *c = mrb_context_zero;
   f->cxt = c;
 
   /* initialize VM stack */
-  slen = FIBER_STACK_INIT_SIZE;
+  size_t slen = FIBER_STACK_INIT_SIZE;
   if (p->body.irep->nregs > slen) {
     slen += p->body.irep->nregs;
   }
@@ -43,12 +40,12 @@ fiber_init_fiber(mrb_state *mrb, struct RFiber *f, const struct RProc *p)
   c->stend = c->stbase + slen;
 
   {
-    mrb_value *p = c->stbase;
-    mrb_value *pend = c->stend;
+    mrb_value *s = c->stbase + 1;
+    mrb_value *send = c->stend;
 
-    while (p < pend) {
-      SET_NIL_VALUE(*p);
-      p++;
+    while (s < send) {
+      SET_NIL_VALUE(*s);
+      s++;
     }
   }
 
@@ -56,12 +53,14 @@ fiber_init_fiber(mrb_state *mrb, struct RFiber *f, const struct RProc *p)
   c->stbase[0] = mrb->c->ci->stack[0];
 
   /* initialize callinfo stack */
-  c->cibase = (mrb_callinfo*)mrb_calloc(mrb, FIBER_CI_INIT_SIZE, sizeof(mrb_callinfo));
+  static const mrb_callinfo ci_zero = { 0 };
+  c->cibase = (mrb_callinfo*)mrb_malloc(mrb, FIBER_CI_INIT_SIZE * sizeof(mrb_callinfo));
   c->ciend = c->cibase + FIBER_CI_INIT_SIZE;
   c->ci = c->cibase;
+  c->cibase[0] = ci_zero;
 
   /* adjust return callinfo */
-  ci = c->ci;
+  mrb_callinfo *ci = c->ci;
   mrb_vm_ci_target_class_set(ci, MRB_PROC_TARGET_CLASS(p));
   mrb_vm_ci_proc_set(ci, p);
   mrb_field_write_barrier(mrb, (struct RBasic*)f, (struct RBasic*)p);
@@ -132,7 +131,7 @@ fiber_init(mrb_state *mrb, mrb_value self)
 {
   mrb_value blk;
   mrb_get_args(mrb, "&!", &blk);
-  return fiber_init_fiber(mrb, fiber_ptr(self), mrb_proc_ptr(blk));
+  return init_fiber(mrb, fiber_ptr(self), mrb_proc_ptr(blk));
 }
 
 static struct mrb_context*
@@ -156,7 +155,7 @@ fiber_result(mrb_state *mrb, const mrb_value *a, mrb_int len)
 }
 
 /* mark return from context modifying method */
-#define MARK_CONTEXT_MODIFY(c) (c)->ci->u.target_class = NULL
+#define MARK_CONTEXT_MODIFY(c) (c)->ci->u.keep_context = NULL
 
 static void
 fiber_check_cfunc(mrb_state *mrb, struct mrb_context *c)
@@ -216,15 +215,13 @@ fiber_switch(mrb_state *mrb, mrb_value self, mrb_int len, const mrb_value *a, mr
 {
   struct mrb_context *c = fiber_check(mrb, self);
   struct mrb_context *old_c = mrb->c;
-  enum mrb_fiber_state status;
   mrb_value value;
 
   if (resume && c == mrb->c) {
     return fiber_error(mrb, "attempt to resume the current fiber");
   }
 
-  fiber_check_cfunc(mrb, c);
-  status = c->status;
+  enum mrb_fiber_state status = c->status;
   switch (status) {
   case MRB_FIBER_TRANSFERRED:
     if (resume) {
@@ -241,6 +238,7 @@ fiber_switch(mrb_state *mrb, mrb_value self, mrb_int len, const mrb_value *a, mr
   default:
     break;
   }
+  fiber_check_cfunc(mrb, c);
   if (resume) {
     old_c->status = MRB_FIBER_RESUMED;
     c->prev = mrb->c;
@@ -252,8 +250,6 @@ fiber_switch(mrb_state *mrb, mrb_value self, mrb_int len, const mrb_value *a, mr
   }
   fiber_switch_context(mrb, c);
   if (status == MRB_FIBER_CREATED) {
-    mrb_value *b, *e;
-
     if (!c->ci->proc) {
       return fiber_error(mrb, "double resume (current)");
     }
@@ -267,8 +263,10 @@ fiber_switch(mrb_state *mrb, mrb_value self, mrb_int len, const mrb_value *a, mr
     }
     else {
       mrb_stack_extend(mrb, len+2); /* for receiver and (optional) block */
-      b = c->stbase+1;
-      e = b + len;
+
+      mrb_value *b = c->stbase+1;
+      mrb_value *e = b + len;
+
       while (b<e) {
         *b++ = *a++;
       }
@@ -394,8 +392,9 @@ fiber_to_s(mrb_state *mrb, mrb_value self)
 
   const char *file;
   int32_t line;
-  const struct RProc *p = f->cxt->cibase->proc;
-  if (f->cxt->status != MRB_FIBER_TERMINATED && !MRB_PROC_CFUNC_P(p) && !MRB_PROC_ALIAS_P(p) &&
+  const struct RProc *p;
+  if (f->cxt->status != MRB_FIBER_TERMINATED &&
+      !MRB_PROC_CFUNC_P(p = f->cxt->cibase->proc) && !MRB_PROC_ALIAS_P(p) &&
       mrb_debug_get_position(mrb, p->body.irep, 0, &line, &file)) {
     mrb_str_cat_lit(mrb, s, " ");
     mrb_str_cat_cstr(mrb, s, file);
@@ -541,29 +540,27 @@ mrb_fiber_new(mrb_state *mrb, const struct RProc *p)
   }
 
   struct RFiber *f = MRB_OBJ_ALLOC(mrb, MRB_TT_FIBER, c);
-  return fiber_init_fiber(mrb, f, p);
+  return init_fiber(mrb, f, p);
 }
 
 void
 mrb_mruby_fiber_gem_init(mrb_state* mrb)
 {
-  struct RClass *c;
-
-  c = mrb_define_class(mrb, "Fiber", mrb->object_class);
+  struct RClass *c = mrb_define_class_id(mrb, MRB_SYM(Fiber), mrb->object_class);
   MRB_SET_INSTANCE_TT(c, MRB_TT_FIBER);
 
-  mrb_define_method(mrb, c, "initialize", fiber_init,    MRB_ARGS_NONE()|MRB_ARGS_BLOCK());
-  mrb_define_method(mrb, c, "resume",     fiber_resume,  MRB_ARGS_ANY());
-  mrb_define_method(mrb, c, "transfer",   fiber_transfer, MRB_ARGS_ANY());
-  mrb_define_method(mrb, c, "alive?",     fiber_alive_p, MRB_ARGS_NONE());
-  mrb_define_method(mrb, c, "==",         fiber_eq,      MRB_ARGS_REQ(1));
-  mrb_define_method(mrb, c, "to_s",       fiber_to_s,    MRB_ARGS_NONE());
-  mrb_define_alias(mrb, c, "inspect", "to_s");
+  mrb_define_method_id(mrb, c, MRB_SYM(initialize), fiber_init,     MRB_ARGS_NONE()|MRB_ARGS_BLOCK());
+  mrb_define_method_id(mrb, c, MRB_SYM(resume),     fiber_resume,   MRB_ARGS_ANY());
+  mrb_define_method_id(mrb, c, MRB_SYM(transfer),   fiber_transfer, MRB_ARGS_ANY());
+  mrb_define_method_id(mrb, c, MRB_SYM_Q(alive),    fiber_alive_p,  MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, c, MRB_OPSYM(eq),       fiber_eq,       MRB_ARGS_REQ(1));
+  mrb_define_method_id(mrb, c, MRB_SYM(to_s),       fiber_to_s,     MRB_ARGS_NONE());
+  mrb_define_alias_id(mrb, c, MRB_SYM(inspect), MRB_SYM(to_s));
 
-  mrb_define_class_method(mrb, c, "yield", fiber_yield, MRB_ARGS_ANY());
-  mrb_define_class_method(mrb, c, "current", fiber_current, MRB_ARGS_NONE());
+  mrb_define_class_method_id(mrb, c, MRB_SYM(yield), fiber_yield, MRB_ARGS_ANY());
+  mrb_define_class_method_id(mrb, c, MRB_SYM(current), fiber_current, MRB_ARGS_NONE());
 
-  mrb_define_class(mrb, "FiberError", E_STANDARD_ERROR);
+  mrb_define_class_id(mrb, MRB_SYM(FiberError), E_STANDARD_ERROR);
 }
 
 void

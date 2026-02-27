@@ -4,14 +4,14 @@
 ** See Copyright Notice in mruby.h
 */
 
-#include "mruby.h"
-#include "mruby/class.h"
-#include "mruby/data.h"
-#include "mruby/error.h"
-#include "mruby/string.h"
-#include "mruby/presym.h"
+#include <mruby.h>
+#include <mruby/class.h>
+#include <mruby/data.h>
+#include <mruby/error.h>
+#include <mruby/string.h>
+#include <mruby/presym.h>
 #include <sys/types.h>
-#if defined(_WIN32) || defined(_WIN64)
+#if defined(_WIN32)
   #define MAXPATHLEN 1024
  #if !defined(PATH_MAX)
   #define PATH_MAX MAX_PATH
@@ -173,7 +173,7 @@ mrb_dir_chdir(mrb_state *mrb, mrb_value klass)
 static mrb_value
 mrb_dir_chroot(mrb_state *mrb, mrb_value self)
 {
-#if defined(_WIN32) || defined(_WIN64) || defined(__ANDROID__) || defined(__MSDOS__)
+#if defined(_WIN32) || defined(__ANDROID__) || defined(__MSDOS__)
   mrb_raise(mrb, E_NOTIMP_ERROR, "chroot() unreliable on your system");
   return mrb_fixnum_value(0);
 #else
@@ -259,7 +259,7 @@ mrb_dir_rewind(mrb_state *mrb, mrb_value self)
 static mrb_value
 mrb_dir_seek(mrb_state *mrb, mrb_value self)
 {
-  #if defined(_WIN32) || defined(_WIN64) || defined(__ANDROID__)
+  #if defined(_WIN32) || defined(__ANDROID__)
   mrb_raise(mrb, E_NOTIMP_ERROR, "dirseek() unreliable on your system");
   return self;
   #else
@@ -280,7 +280,7 @@ mrb_dir_seek(mrb_state *mrb, mrb_value self)
 static mrb_value
 mrb_dir_tell(mrb_state *mrb, mrb_value self)
 {
-#if defined(_WIN32) || defined(_WIN64) || defined(__ANDROID__)
+#if defined(_WIN32) || defined(__ANDROID__)
   mrb_raise(mrb, E_NOTIMP_ERROR, "dirtell() unreliable on your system");
   return mrb_fixnum_value(0);
 #else
@@ -302,24 +302,24 @@ mrb_mruby_dir_gem_init(mrb_state *mrb)
 {
   struct RClass *d;
 
-  d = mrb_define_class(mrb, "Dir", mrb->object_class);
+  d = mrb_define_class_id(mrb, MRB_SYM(Dir), mrb->object_class);
   MRB_SET_INSTANCE_TT(d, MRB_TT_DATA);
-  mrb_define_class_method(mrb, d, "delete", mrb_dir_delete, MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, d, "exist?", mrb_dir_existp, MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, d, "getwd",  mrb_dir_getwd,  MRB_ARGS_NONE());
-  mrb_define_class_method(mrb, d, "mkdir",  mrb_dir_mkdir,  MRB_ARGS_REQ(1)|MRB_ARGS_OPT(1));
-  mrb_define_class_method(mrb, d, "_chdir", mrb_dir_chdir,  MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, d, "chroot", mrb_dir_chroot, MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, d, "empty?", mrb_dir_empty, MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, d, MRB_SYM(delete),  mrb_dir_delete, MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, d, MRB_SYM_Q(exist), mrb_dir_existp, MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, d, MRB_SYM(getwd),   mrb_dir_getwd,  MRB_ARGS_NONE());
+  mrb_define_class_method_id(mrb, d, MRB_SYM(mkdir),   mrb_dir_mkdir,  MRB_ARGS_REQ(1)|MRB_ARGS_OPT(1));
+  mrb_define_class_method_id(mrb, d, MRB_SYM(_chdir),  mrb_dir_chdir,  MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, d, MRB_SYM(chroot),  mrb_dir_chroot, MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, d, MRB_SYM_Q(empty), mrb_dir_empty, MRB_ARGS_REQ(1));
 
-  mrb_define_method(mrb, d, "close",      mrb_dir_close,  MRB_ARGS_NONE());
-  mrb_define_method(mrb, d, "initialize", mrb_dir_init,   MRB_ARGS_REQ(1));
-  mrb_define_method(mrb, d, "read",       mrb_dir_read,   MRB_ARGS_NONE());
-  mrb_define_method(mrb, d, "rewind",     mrb_dir_rewind, MRB_ARGS_NONE());
-  mrb_define_method(mrb, d, "seek",       mrb_dir_seek,   MRB_ARGS_REQ(1));
-  mrb_define_method(mrb, d, "tell",       mrb_dir_tell,   MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, d, MRB_SYM(close),      mrb_dir_close,  MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, d, MRB_SYM(initialize), mrb_dir_init,   MRB_ARGS_REQ(1));
+  mrb_define_method_id(mrb, d, MRB_SYM(read),       mrb_dir_read,   MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, d, MRB_SYM(rewind),     mrb_dir_rewind, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, d, MRB_SYM(seek),       mrb_dir_seek,   MRB_ARGS_REQ(1));
+  mrb_define_method_id(mrb, d, MRB_SYM(tell),       mrb_dir_tell,   MRB_ARGS_NONE());
 
-  mrb_define_class(mrb, "IOError", E_STANDARD_ERROR);
+  mrb_define_class_id(mrb, MRB_SYM(IOError), E_STANDARD_ERROR);
 }
 
 void

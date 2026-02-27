@@ -2,13 +2,21 @@ class Dir
   include Enumerable
 
   def each(&block)
+    return to_enum(:each) unless block
     while s = self.read
       block.call(s)
     end
     self
   end
 
-  alias each_child each
+  def each_child(&block)
+    return to_enum(:each_child) unless block
+    while s = self.read
+      block.call(s) unless s == "." || s == ".."
+    end
+    self
+  end
+
   alias pos tell
   alias pos= seek
 
@@ -22,9 +30,19 @@ class Dir
       end
       a
     end
-    alias children entries
+
+    def children(path)
+      a = []
+      self.open(path) do |d|
+        while s = d.read
+          a << s unless s == "." || s == ".."
+        end
+      end
+      a
+    end
 
     def foreach(path, &block)
+      return to_enum(:foreach, path) unless block
       self.open(path) do |d|
         d.each(&block)
       end

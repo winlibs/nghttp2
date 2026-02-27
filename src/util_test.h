@@ -27,7 +27,7 @@
 
 #ifdef HAVE_CONFIG_H
 #  include <config.h>
-#endif // HAVE_CONFIG_H
+#endif // defined(HAVE_CONFIG_H)
 
 #define MUNIT_ENABLE_ASSERT_ALIASES
 
@@ -39,7 +39,7 @@ extern const MunitSuite util_suite;
 
 munit_void_test_decl(test_util_streq)
 munit_void_test_decl(test_util_strieq)
-munit_void_test_decl(test_util_inp_strlower)
+munit_void_test_decl(test_util_tolower)
 munit_void_test_decl(test_util_to_base64)
 munit_void_test_decl(test_util_to_token68)
 munit_void_test_decl(test_util_percent_encode_token)
@@ -49,6 +49,7 @@ munit_void_test_decl(test_util_utox)
 munit_void_test_decl(test_util_http_date)
 munit_void_test_decl(test_util_select_h2)
 munit_void_test_decl(test_util_ipv6_numeric_addr)
+munit_void_test_decl(test_util_count_digit)
 munit_void_test_decl(test_util_utos)
 munit_void_test_decl(test_util_make_string_ref_uint)
 munit_void_test_decl(test_util_utos_unit)
@@ -68,13 +69,25 @@ munit_void_test_decl(test_util_make_http_hostport)
 munit_void_test_decl(test_util_make_hostport)
 munit_void_test_decl(test_util_random_alpha_digit)
 munit_void_test_decl(test_util_format_hex)
+munit_void_test_decl(test_util_format_upper_hex)
 munit_void_test_decl(test_util_is_hex_string)
 munit_void_test_decl(test_util_decode_hex)
 munit_void_test_decl(test_util_extract_host)
 munit_void_test_decl(test_util_split_hostport)
 munit_void_test_decl(test_util_split_str)
 munit_void_test_decl(test_util_rstrip)
+munit_void_test_decl(test_util_contains)
+munit_void_test_decl(test_util_hex_to_uint)
+munit_void_test_decl(test_util_is_alpha)
+munit_void_test_decl(test_util_is_digit)
+munit_void_test_decl(test_util_is_hex_digit)
+munit_void_test_decl(test_util_in_rfc3986_unreserved_chars)
+munit_void_test_decl(test_util_in_rfc3986_sub_delims)
+munit_void_test_decl(test_util_in_token)
+munit_void_test_decl(test_util_in_attr_char)
+munit_void_test_decl(test_util_upcase)
+munit_void_test_decl(test_util_to_numeric_addr)
 
 } // namespace shrpx
 
-#endif // UTIL_TEST_H
+#endif // !defined(UTIL_TEST_H)

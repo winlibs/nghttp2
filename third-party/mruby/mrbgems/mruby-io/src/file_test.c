@@ -2,17 +2,18 @@
 ** file_test.c - FileTest class
 */
 
-#include "mruby.h"
-#include "mruby/class.h"
-#include "mruby/data.h"
-#include "mruby/string.h"
-#include "mruby/ext/io.h"
-#include "mruby/error.h"
+#include <mruby.h>
+#include <mruby/class.h>
+#include <mruby/data.h>
+#include <mruby/string.h>
+#include <mruby/ext/io.h>
+#include <mruby/error.h>
+#include <mruby/presym.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#if defined(_WIN32) || defined(_WIN64)
+#if defined(_WIN32)
   #define LSTAT stat
   #include <winsock.h>
 #else
@@ -38,7 +39,7 @@ extern struct mrb_data_type mrb_io_type;
 static int
 mrb_stat0(mrb_state *mrb, mrb_value obj, struct stat *st, int do_lstat)
 {
-  if (mrb_obj_is_kind_of(mrb, obj, mrb_class_get(mrb, "IO"))) {
+  if (mrb_obj_is_kind_of(mrb, obj, mrb_class_get_id(mrb, MRB_SYM(IO)))) {
     struct mrb_io *fptr;
     fptr = (struct mrb_io*)mrb_data_get_ptr(mrb, obj, &mrb_io_type);
 
@@ -118,7 +119,7 @@ mrb_filetest_s_directory_p(mrb_state *mrb, mrb_value klass)
 static mrb_value
 mrb_filetest_s_pipe_p(mrb_state *mrb, mrb_value klass)
 {
-#if defined(_WIN32) || defined(_WIN64)
+#if defined(_WIN32)
   mrb_raise(mrb, E_NOTIMP_ERROR, "pipe is not supported on this platform");
 #else
 #ifdef S_IFIFO
@@ -149,7 +150,7 @@ mrb_filetest_s_pipe_p(mrb_state *mrb, mrb_value klass)
 static mrb_value
 mrb_filetest_s_symlink_p(mrb_state *mrb, mrb_value klass)
 {
-#if defined(_WIN32) || defined(_WIN64)
+#if defined(_WIN32)
   mrb_raise(mrb, E_NOTIMP_ERROR, "symlink is not supported on this platform");
 #else
 #ifndef S_ISLNK
@@ -190,7 +191,7 @@ mrb_filetest_s_symlink_p(mrb_state *mrb, mrb_value klass)
 static mrb_value
 mrb_filetest_s_socket_p(mrb_state *mrb, mrb_value klass)
 {
-#if defined(_WIN32) || defined(_WIN64)
+#if defined(_WIN32)
   mrb_raise(mrb, E_NOTIMP_ERROR, "socket is not supported on this platform");
 #else
 #ifndef S_ISSOCK
@@ -337,16 +338,16 @@ mrb_init_file_test(mrb_state *mrb)
 {
   struct RClass *f;
 
-  f = mrb_define_class(mrb, "FileTest", mrb->object_class);
+  f = mrb_define_module_id(mrb, MRB_SYM(FileTest));
 
-  mrb_define_class_method(mrb, f, "directory?", mrb_filetest_s_directory_p, MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, f, "exist?",     mrb_filetest_s_exist_p,     MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, f, "exists?",    mrb_filetest_s_exist_p,     MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, f, "file?",      mrb_filetest_s_file_p,      MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, f, "pipe?",      mrb_filetest_s_pipe_p,      MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, f, "size",       mrb_filetest_s_size,        MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, f, "size?",      mrb_filetest_s_size_p,      MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, f, "socket?",    mrb_filetest_s_socket_p,    MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, f, "symlink?",   mrb_filetest_s_symlink_p,   MRB_ARGS_REQ(1));
-  mrb_define_class_method(mrb, f, "zero?",      mrb_filetest_s_zero_p,      MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, f, MRB_SYM_Q(directory), mrb_filetest_s_directory_p, MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, f, MRB_SYM_Q(exist),     mrb_filetest_s_exist_p,     MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, f, MRB_SYM_Q(exists),    mrb_filetest_s_exist_p,     MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, f, MRB_SYM_Q(file),      mrb_filetest_s_file_p,      MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, f, MRB_SYM_Q(pipe),      mrb_filetest_s_pipe_p,      MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, f, MRB_SYM(size),        mrb_filetest_s_size,        MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, f, MRB_SYM_Q(size),      mrb_filetest_s_size_p,      MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, f, MRB_SYM_Q(socket),    mrb_filetest_s_socket_p,    MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, f, MRB_SYM_Q(symlink),   mrb_filetest_s_symlink_p,   MRB_ARGS_REQ(1));
+  mrb_define_class_method_id(mrb, f, MRB_SYM_Q(zero),      mrb_filetest_s_zero_p,      MRB_ARGS_REQ(1));
 }

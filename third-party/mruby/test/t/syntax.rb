@@ -71,6 +71,63 @@ assert('break', '11.5.2.4.3') do
     end
   end
   assert_equal [1,2,3,4], a
+
+  a = []
+  begin
+    while true
+      a.push 1
+      break
+      a.push "NG"
+    end
+  ensure
+    a.push 2
+  end
+  assert_equal [1, 2], a
+
+  a = []
+  begin
+    while true
+      a.push 1
+      break
+    end
+    a.push 2
+  ensure
+    a.push 3
+  end
+  assert_equal [1, 2, 3], a
+
+  a = []
+  begin
+    while true
+      begin
+        a.push 1
+        break
+      ensure
+        a.push 2
+      end
+      a.push "NG"
+    end
+  ensure
+    a.push 3
+  end
+  assert_equal [1, 2, 3], a
+
+  a = []
+  begin
+    while true
+      begin
+        a.push 1
+        break
+      ensure
+        a.push 2
+      end
+      a.push "NG"
+    end
+    a.push 3
+  ensure
+    a.push 4
+  end
+  assert_equal [1, 2, 3, 4], a
 end
 
 assert('redo', '11.5.2.4.5') do
@@ -95,6 +152,43 @@ assert('redo', '11.5.2.4.5') do
     a.push(n)
   end
   assert_equal [1,3,4], a
+
+  a = []
+  limit = 3
+  e = RuntimeError.new("!")
+  for i in 0...3
+    begin
+      limit -= 1
+      break unless limit > 0
+      a.push i * 3 + 1
+      raise e
+    rescue
+      a.push i * 3 + 2
+      redo
+    ensure
+      a.push i * 3 + 3
+    end
+  end
+  assert_equal [1, 2, 3, 1, 2, 3, 3], a
+
+  a = []
+  limit = 3
+  e = RuntimeError.new("!")
+  for i in 0...3
+    a.push i * 4 + 1
+    begin
+      limit -= 1
+      break unless limit > 0
+      a.push i * 4 + 2
+      raise e
+    rescue
+      a.push i * 4 + 3
+      redo
+    ensure
+      a.push i * 4 + 4
+    end
+  end
+  assert_equal [1, 2, 3, 4, 1, 2, 3, 4, 1, 4], a
 end
 
 assert('Abbreviated variable assignment', '11.4.2.3.2') do
@@ -711,11 +805,28 @@ end
 assert('numbered parameters') do
   assert_equal(15, [1,2,3,4,5].reduce {_1+_2})
   assert_equal(45, Proc.new do _1 + _2 + _3 + _4 + _5 + _6 + _7 + _8 + _9 end.call(*[1, 2, 3, 4, 5, 6, 7, 8, 9]))
+  assert_equal(5, -> { _1 }.call(5))
 end
 
 assert('_0 is not numbered parameter') do
   _0 = :l
   assert_equal(:l, ->{_0}.call)
+end
+
+assert('numbered parameters in symbol name (https://github.com/mruby/mruby/issues/5295)') do
+  assert_equal([:_1], Array.new(1) {:_1})
+end
+
+assert('numbered parameters as hash key') do
+  h = {_1: 3}
+  assert_equal(3, h[:_1])
+  assert_equal(7, -> { _1 }.call(7))
+end
+
+assert('numbered parameters as singleton') do
+  o = Object.new
+  lambda { def _1.a(b) = "a#{b}" }.call(o)
+  assert_equal('ab', o.a('b'))
 end
 
 assert('argument forwarding') do

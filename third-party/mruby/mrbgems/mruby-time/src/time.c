@@ -221,6 +221,12 @@ fixable_time_t_p(time_t v)
   return TRUE;
 }
 
+static void
+time_out_of_range(mrb_state *mrb, mrb_value obj)
+{
+  mrb_raisef(mrb, E_ARGUMENT_ERROR, "%v out of Time range", obj);
+}
+
 static time_t
 mrb_to_time_t(mrb_state *mrb, mrb_value obj, time_t *usec)
 {
@@ -234,18 +240,18 @@ mrb_to_time_t(mrb_state *mrb, mrb_value obj, time_t *usec)
 
         mrb_check_num_exact(mrb, f);
         if (f >= ((mrb_float)MRB_TIME_MAX-1.0) || f < ((mrb_float)MRB_TIME_MIN+1.0)) {
-          goto out_of_range;
+          time_out_of_range(mrb, obj);
         }
 
         if (usec) {
           double tt = floor(f);
-          if (!isfinite(tt)) goto out_of_range;
+          if (!isfinite(tt)) time_out_of_range(mrb, obj);
           t = (time_t)tt;
           *usec = (time_t)trunc((f - tt) * 1.0e+6);
         }
         else {
           double tt = round(f);
-          if (!isfinite(tt)) goto out_of_range;
+          if (!isfinite(tt)) time_out_of_range(mrb, obj);
           t = (time_t)tt;
         }
       }
@@ -279,7 +285,7 @@ mrb_to_time_t(mrb_state *mrb, mrb_value obj, time_t *usec)
 
         if ((MRB_INT_MAX > MRB_TIME_MAX && i > 0 && (time_t)i > MRB_TIME_MAX) ||
             (0 > MRB_TIME_MIN && MRB_TIME_MIN > MRB_INT_MIN && MRB_TIME_MIN > i)) {
-          goto out_of_range;
+          time_out_of_range(mrb, obj);
         }
 
         t = (time_t)i;
@@ -293,12 +299,6 @@ mrb_to_time_t(mrb_state *mrb, mrb_value obj, time_t *usec)
   }
 
   return t;
-
-out_of_range:
-  mrb_raisef(mrb, E_ARGUMENT_ERROR, "%v out of Time range", obj);
-
-  /* not reached */
-  return 0;
 }
 
 static mrb_value
@@ -327,8 +327,8 @@ time_value_from_time_t(mrb_state *mrb, time_t t)
 static struct mrb_time*
 time_update_datetime(mrb_state *mrb, struct mrb_time *self, int dealloc)
 {
-  struct tm *aid;
   time_t t = self->sec;
+  struct tm *aid;
 
   if (self->timezone == MRB_TIMEZONE_UTC) {
     aid = gmtime_r(&t, &self->datetime);
@@ -338,7 +338,7 @@ time_update_datetime(mrb_state *mrb, struct mrb_time *self, int dealloc)
   }
   if (!aid) {
     if (dealloc) mrb_free(mrb, self);
-    mrb_raisef(mrb, E_ARGUMENT_ERROR, "%v out of Time range", time_value_from_time_t(mrb, t));
+    time_out_of_range(mrb, time_value_from_time_t(mrb, t));
     /* not reached */
     return NULL;
   }
@@ -359,11 +359,10 @@ time_wrap(mrb_state *mrb, struct RClass *tc, struct mrb_time *tm)
 static struct mrb_time*
 time_alloc_time(mrb_state *mrb, time_t sec, time_t usec, enum mrb_timezone timezone)
 {
-  struct mrb_time *tm;
-
-  tm = (struct mrb_time*)mrb_malloc(mrb, sizeof(struct mrb_time));
+  struct mrb_time *tm = (struct mrb_time*)mrb_malloc(mrb, sizeof(struct mrb_time));
   tm->sec  = sec;
   tm->usec = usec;
+
   if (!MRB_TIME_T_UINT && tm->usec < 0) {
     long sec2 = (long)NDIV(tm->usec,1000000); /* negative div */
     tm->usec -= sec2 * 1000000;
@@ -407,7 +406,6 @@ static struct mrb_time*
 current_mrb_time(mrb_state *mrb)
 {
   struct mrb_time tmzero = {0};
-  struct mrb_time *tm;
   time_t sec, usec;
 
 #if defined(TIME_UTC) && !defined(__ANDROID__)
@@ -448,7 +446,8 @@ current_mrb_time(mrb_state *mrb)
     usec = tv.tv_usec;
   }
 #endif
-  tm = (struct mrb_time*)mrb_malloc(mrb, sizeof(*tm));
+
+  struct mrb_time *tm = (struct mrb_time*)mrb_malloc(mrb, sizeof(*tm));
   *tm = tmzero;
   tm->sec = sec; tm->usec = usec;
   tm->timezone = MRB_TIMEZONE_LOCAL;
@@ -465,7 +464,7 @@ time_now(mrb_state *mrb, mrb_value self)
 }
 
 MRB_API mrb_value
-time_at(mrb_state *mrb, time_t sec, time_t usec, enum mrb_timezone zone)
+mrb_time_at(mrb_state *mrb, time_t sec, time_t usec, enum mrb_timezone zone)
 {
   return time_make_time(mrb, mrb_class_get_id(mrb, MRB_SYM(Time)), sec, usec, zone);
 }
@@ -488,7 +487,6 @@ time_mktime(mrb_state *mrb, mrb_int ayear, mrb_int amonth, mrb_int aday,
   mrb_int ahour, mrb_int amin, mrb_int asec, mrb_int ausec,
   enum mrb_timezone timezone)
 {
-  time_t nowsecs;
   struct tm nowtime = { 0 };
 
 #if MRB_INT_MAX > INT_MAX
@@ -522,7 +520,8 @@ time_mktime(mrb_state *mrb, mrb_int ayear, mrb_int amonth, mrb_int aday,
   else {
     mk = mktime;
   }
-  nowsecs = (*mk)(&nowtime);
+
+  time_t nowsecs = (*mk)(&nowtime);
   if (nowsecs == (time_t)-1) {
     nowtime.tm_sec += 1;        /* maybe Epoch-1 sec */
     nowsecs = (*mk)(&nowtime);
@@ -565,9 +564,7 @@ time_local(mrb_state *mrb, mrb_value self)
 static struct mrb_time*
 time_get_ptr(mrb_state *mrb, mrb_value time)
 {
-  struct mrb_time *tm;
-
-  tm = DATA_GET_PTR(mrb, time, &time_type, struct mrb_time);
+  struct mrb_time *tm = DATA_GET_PTR(mrb, time, &time_type, struct mrb_time);
   if (!tm) {
     mrb_raise(mrb, E_ARGUMENT_ERROR, "uninitialized time");
   }
@@ -578,12 +575,9 @@ static mrb_value
 time_eq(mrb_state *mrb, mrb_value self)
 {
   mrb_value other = mrb_get_arg1(mrb);
-  struct mrb_time *tm1, *tm2;
-  mrb_bool eq_p;
-
-  tm1 = DATA_GET_PTR(mrb, self, &time_type, struct mrb_time);
-  tm2 = DATA_CHECK_GET_PTR(mrb, other, &time_type, struct mrb_time);
-  eq_p = tm1 && tm2 && tm1->sec == tm2->sec && tm1->usec == tm2->usec;
+  struct mrb_time *tm1 = DATA_GET_PTR(mrb, self, &time_type, struct mrb_time);
+  struct mrb_time *tm2 = DATA_CHECK_GET_PTR(mrb, other, &time_type, struct mrb_time);
+  mrb_bool eq_p = tm1 && tm2 && tm1->sec == tm2->sec && tm1->usec == tm2->usec;
 
   return mrb_bool_value(eq_p);
 }
@@ -592,10 +586,9 @@ static mrb_value
 time_cmp(mrb_state *mrb, mrb_value self)
 {
   mrb_value other = mrb_get_arg1(mrb);
-  struct mrb_time *tm1, *tm2;
+  struct mrb_time *tm1 = DATA_GET_PTR(mrb, self, &time_type, struct mrb_time);
+  struct mrb_time *tm2 = DATA_CHECK_GET_PTR(mrb, other, &time_type, struct mrb_time);
 
-  tm1 = DATA_GET_PTR(mrb, self, &time_type, struct mrb_time);
-  tm2 = DATA_CHECK_GET_PTR(mrb, other, &time_type, struct mrb_time);
   if (!tm1 || !tm2) return mrb_nil_value();
   if (tm1->sec > tm2->sec) {
     return mrb_fixnum_value(1);
@@ -623,10 +616,9 @@ static mrb_value
 time_plus(mrb_state *mrb, mrb_value self)
 {
   mrb_value o = mrb_get_arg1(mrb);
-  struct mrb_time *tm;
   time_t sec, usec;
 
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   sec = mrb_to_time_t(mrb, o, &usec);
 #ifdef MRB_HAVE_TYPE_GENERIC_CHECKED_ARITHMETIC_BUILTINS
   if (__builtin_add_overflow(tm->sec, sec, &sec)) {
@@ -652,10 +644,9 @@ static mrb_value
 time_minus(mrb_state *mrb, mrb_value self)
 {
   mrb_value other = mrb_get_arg1(mrb);
-  struct mrb_time *tm, *tm2;
+  struct mrb_time *tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm2 = DATA_CHECK_GET_PTR(mrb, other, &time_type, struct mrb_time);
 
-  tm = time_get_ptr(mrb, self);
-  tm2 = DATA_CHECK_GET_PTR(mrb, other, &time_type, struct mrb_time);
   if (tm2) {
 #ifndef MRB_NO_FLOAT
     mrb_float f;
@@ -698,9 +689,7 @@ time_minus(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_wday(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_fixnum_value(tm->datetime.tm_wday);
 }
 
@@ -709,9 +698,7 @@ time_wday(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_yday(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_fixnum_value(tm->datetime.tm_yday + 1);
 }
 
@@ -720,9 +707,7 @@ time_yday(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_year(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_fixnum_value(tm->datetime.tm_year + 1900);
 }
 
@@ -790,9 +775,7 @@ time_asctime(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_day(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_fixnum_value(tm->datetime.tm_mday);
 }
 
@@ -802,9 +785,7 @@ time_day(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_dst_p(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_bool_value(tm->datetime.tm_isdst);
 }
 
@@ -814,10 +795,8 @@ time_dst_p(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_getutc(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm, *tm2;
-
-  tm = time_get_ptr(mrb, self);
-  tm2 = (struct mrb_time*)mrb_malloc(mrb, sizeof(*tm));
+  struct mrb_time *tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm2 = (struct mrb_time*)mrb_malloc(mrb, sizeof(*tm));
   *tm2 = *tm;
   tm2->timezone = MRB_TIMEZONE_UTC;
   time_update_datetime(mrb, tm2, TRUE);
@@ -829,10 +808,8 @@ time_getutc(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_getlocal(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm, *tm2;
-
-  tm = time_get_ptr(mrb, self);
-  tm2 = (struct mrb_time*)mrb_malloc(mrb, sizeof(*tm));
+  struct mrb_time *tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm2 = (struct mrb_time*)mrb_malloc(mrb, sizeof(*tm));
   *tm2 = *tm;
   tm2->timezone = MRB_TIMEZONE_LOCAL;
   time_update_datetime(mrb, tm2, TRUE);
@@ -844,9 +821,7 @@ time_getlocal(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_hour(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_fixnum_value(tm->datetime.tm_hour);
 }
 
@@ -857,12 +832,11 @@ time_init(mrb_state *mrb, mrb_value self)
 {
   mrb_int ayear = 0, amonth = 1, aday = 1, ahour = 0,
   amin = 0, asec = 0, ausec = 0;
-  mrb_int n;
-  struct mrb_time *tm;
 
-  n = mrb_get_args(mrb, "|iiiiiii",
-       &ayear, &amonth, &aday, &ahour, &amin, &asec, &ausec);
-  tm = (struct mrb_time*)DATA_PTR(self);
+  mrb_int n = mrb_get_args(mrb, "|iiiiiii",
+                           &ayear, &amonth, &aday, &ahour, &amin, &asec, &ausec);
+  struct mrb_time *tm = (struct mrb_time*)DATA_PTR(self);
+
   if (tm) {
     mrb_free(mrb, tm);
   }
@@ -884,14 +858,14 @@ static mrb_value
 time_init_copy(mrb_state *mrb, mrb_value copy)
 {
   mrb_value src = mrb_get_arg1(mrb);
-  struct mrb_time *t1, *t2;
 
   if (mrb_obj_equal(mrb, copy, src)) return copy;
   if (!mrb_obj_is_instance_of(mrb, src, mrb_obj_class(mrb, copy))) {
     mrb_raise(mrb, E_TYPE_ERROR, "wrong argument class");
   }
-  t1 = (struct mrb_time*)DATA_PTR(copy);
-  t2 = (struct mrb_time*)DATA_PTR(src);
+  struct mrb_time *t1 = (struct mrb_time*)DATA_PTR(copy);
+  struct mrb_time *t2 = (struct mrb_time*)DATA_PTR(src);
+
   if (!t2) {
     mrb_raise(mrb, E_ARGUMENT_ERROR, "uninitialized time");
   }
@@ -908,9 +882,7 @@ time_init_copy(mrb_state *mrb, mrb_value copy)
 static mrb_value
 time_localtime(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   tm->timezone = MRB_TIMEZONE_LOCAL;
   time_update_datetime(mrb, tm, FALSE);
   return self;
@@ -921,9 +893,7 @@ time_localtime(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_mday(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_fixnum_value(tm->datetime.tm_mday);
 }
 
@@ -932,9 +902,7 @@ time_mday(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_min(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_fixnum_value(tm->datetime.tm_min);
 }
 
@@ -943,9 +911,7 @@ time_min(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_mon(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_fixnum_value(tm->datetime.tm_mon + 1);
 }
 
@@ -954,9 +920,7 @@ time_mon(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_sec(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_fixnum_value(tm->datetime.tm_sec);
 }
 
@@ -966,9 +930,7 @@ time_sec(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_to_f(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_float_value(mrb, (mrb_float)tm->sec + (mrb_float)tm->usec/1.0e6);
 }
 #endif
@@ -978,9 +940,7 @@ time_to_f(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_to_i(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return time_value_from_time_t(mrb, tm->sec);
 }
 
@@ -989,9 +949,7 @@ time_to_i(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_usec(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_fixnum_value((mrb_int)tm->usec);
 }
 
@@ -1000,9 +958,7 @@ time_usec(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_utc(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   tm->timezone = MRB_TIMEZONE_UTC;
   time_update_datetime(mrb, tm, FALSE);
   return self;
@@ -1013,9 +969,7 @@ time_utc(mrb_state *mrb, mrb_value self)
 static mrb_value
 time_utc_p(mrb_state *mrb, mrb_value self)
 {
-  struct mrb_time *tm;
-
-  tm = time_get_ptr(mrb, self);
+  struct mrb_time *tm = time_get_ptr(mrb, self);
   return mrb_bool_value(tm->timezone == MRB_TIMEZONE_UTC);
 }
 
@@ -1097,66 +1051,65 @@ time_saturday(mrb_state *mrb, mrb_value self)
 void
 mrb_mruby_time_gem_init(mrb_state* mrb)
 {
-  struct RClass *tc;
   /* ISO 15.2.19.2 */
-  tc = mrb_define_class(mrb, "Time", mrb->object_class);
+  struct RClass *tc = mrb_define_class_id(mrb, MRB_SYM(Time), mrb->object_class);
   MRB_SET_INSTANCE_TT(tc, MRB_TT_CDATA);
-  mrb_include_module(mrb, tc, mrb_module_get(mrb, "Comparable"));
-  mrb_define_class_method(mrb, tc, "at", time_at_m, MRB_ARGS_ARG(1, 1));    /* 15.2.19.6.1 */
-  mrb_define_class_method(mrb, tc, "gm", time_gm, MRB_ARGS_ARG(1,6));       /* 15.2.19.6.2 */
-  mrb_define_class_method(mrb, tc, "local", time_local, MRB_ARGS_ARG(1,6)); /* 15.2.19.6.3 */
-  mrb_define_class_method(mrb, tc, "mktime", time_local, MRB_ARGS_ARG(1,6));/* 15.2.19.6.4 */
-  mrb_define_class_method(mrb, tc, "now", time_now, MRB_ARGS_NONE());       /* 15.2.19.6.5 */
-  mrb_define_class_method(mrb, tc, "utc", time_gm, MRB_ARGS_ARG(1,6));      /* 15.2.19.6.6 */
+  mrb_include_module(mrb, tc, mrb_module_get_id(mrb, MRB_SYM(Comparable)));
+  mrb_define_class_method_id(mrb, tc, MRB_SYM(at), time_at_m, MRB_ARGS_ARG(1, 1));    /* 15.2.19.6.1 */
+  mrb_define_class_method_id(mrb, tc, MRB_SYM(gm), time_gm, MRB_ARGS_ARG(1,6));       /* 15.2.19.6.2 */
+  mrb_define_class_method_id(mrb, tc, MRB_SYM(local), time_local, MRB_ARGS_ARG(1,6)); /* 15.2.19.6.3 */
+  mrb_define_class_method_id(mrb, tc, MRB_SYM(mktime), time_local, MRB_ARGS_ARG(1,6));/* 15.2.19.6.4 */
+  mrb_define_class_method_id(mrb, tc, MRB_SYM(now), time_now, MRB_ARGS_NONE());       /* 15.2.19.6.5 */
+  mrb_define_class_method_id(mrb, tc, MRB_SYM(utc), time_gm, MRB_ARGS_ARG(1,6));      /* 15.2.19.6.6 */
 
-  mrb_define_method(mrb, tc, "hash"   , time_hash   , MRB_ARGS_NONE());
-  mrb_define_method(mrb, tc, "eql?"   , time_eq     , MRB_ARGS_REQ(1));
-  mrb_define_method(mrb, tc, "=="     , time_eq     , MRB_ARGS_REQ(1));
-  mrb_define_method(mrb, tc, "<=>"    , time_cmp    , MRB_ARGS_REQ(1)); /* 15.2.19.7.1 */
-  mrb_define_method(mrb, tc, "+"      , time_plus   , MRB_ARGS_REQ(1)); /* 15.2.19.7.2 */
-  mrb_define_method(mrb, tc, "-"      , time_minus  , MRB_ARGS_REQ(1)); /* 15.2.19.7.3 */
-  mrb_define_method(mrb, tc, "to_s"   , time_to_s   , MRB_ARGS_NONE());
-  mrb_define_method(mrb, tc, "inspect", time_to_s   , MRB_ARGS_NONE());
-  mrb_define_method(mrb, tc, "asctime", time_asctime, MRB_ARGS_NONE()); /* 15.2.19.7.4 */
-  mrb_define_method(mrb, tc, "ctime"  , time_asctime, MRB_ARGS_NONE()); /* 15.2.19.7.5 */
-  mrb_define_method(mrb, tc, "day"    , time_day    , MRB_ARGS_NONE()); /* 15.2.19.7.6 */
-  mrb_define_method(mrb, tc, "dst?"   , time_dst_p  , MRB_ARGS_NONE()); /* 15.2.19.7.7 */
-  mrb_define_method(mrb, tc, "getgm"  , time_getutc , MRB_ARGS_NONE()); /* 15.2.19.7.8 */
-  mrb_define_method(mrb, tc, "getlocal",time_getlocal,MRB_ARGS_NONE()); /* 15.2.19.7.9 */
-  mrb_define_method(mrb, tc, "getutc" , time_getutc , MRB_ARGS_NONE()); /* 15.2.19.7.10 */
-  mrb_define_method(mrb, tc, "gmt?"   , time_utc_p  , MRB_ARGS_NONE()); /* 15.2.19.7.11 */
-  mrb_define_method(mrb, tc, "gmtime" , time_utc    , MRB_ARGS_NONE()); /* 15.2.19.7.13 */
-  mrb_define_method(mrb, tc, "hour"   , time_hour, MRB_ARGS_NONE());    /* 15.2.19.7.15 */
-  mrb_define_method(mrb, tc, "localtime", time_localtime, MRB_ARGS_NONE()); /* 15.2.19.7.18 */
-  mrb_define_method(mrb, tc, "mday"   , time_mday, MRB_ARGS_NONE());    /* 15.2.19.7.19 */
-  mrb_define_method(mrb, tc, "min"    , time_min, MRB_ARGS_NONE());     /* 15.2.19.7.20 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(hash), time_hash   , MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, tc, MRB_SYM_Q(eql), time_eq     , MRB_ARGS_REQ(1));
+  mrb_define_method_id(mrb, tc, MRB_OPSYM(eq), time_eq     , MRB_ARGS_REQ(1));
+  mrb_define_method_id(mrb, tc, MRB_OPSYM(cmp), time_cmp    , MRB_ARGS_REQ(1)); /* 15.2.19.7.1 */
+  mrb_define_method_id(mrb, tc, MRB_OPSYM(add), time_plus   , MRB_ARGS_REQ(1)); /* 15.2.19.7.2 */
+  mrb_define_method_id(mrb, tc, MRB_OPSYM(sub), time_minus  , MRB_ARGS_REQ(1)); /* 15.2.19.7.3 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(to_s), time_to_s   , MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, tc, MRB_SYM(inspect), time_to_s   , MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, tc, MRB_SYM(asctime), time_asctime, MRB_ARGS_NONE()); /* 15.2.19.7.4 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(ctime), time_asctime, MRB_ARGS_NONE()); /* 15.2.19.7.5 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(day), time_day    , MRB_ARGS_NONE()); /* 15.2.19.7.6 */
+  mrb_define_method_id(mrb, tc, MRB_SYM_Q(dst), time_dst_p  , MRB_ARGS_NONE()); /* 15.2.19.7.7 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(getgm), time_getutc , MRB_ARGS_NONE()); /* 15.2.19.7.8 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(getlocal),time_getlocal,MRB_ARGS_NONE()); /* 15.2.19.7.9 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(getutc), time_getutc , MRB_ARGS_NONE()); /* 15.2.19.7.10 */
+  mrb_define_method_id(mrb, tc, MRB_SYM_Q(gmt), time_utc_p  , MRB_ARGS_NONE()); /* 15.2.19.7.11 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(gmtime), time_utc    , MRB_ARGS_NONE()); /* 15.2.19.7.13 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(hour), time_hour, MRB_ARGS_NONE());    /* 15.2.19.7.15 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(localtime), time_localtime, MRB_ARGS_NONE()); /* 15.2.19.7.18 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(mday), time_mday, MRB_ARGS_NONE());    /* 15.2.19.7.19 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(min), time_min, MRB_ARGS_NONE());     /* 15.2.19.7.20 */
 
-  mrb_define_method(mrb, tc, "mon"  , time_mon, MRB_ARGS_NONE());       /* 15.2.19.7.21 */
-  mrb_define_method(mrb, tc, "month", time_mon, MRB_ARGS_NONE());       /* 15.2.19.7.22 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(mon), time_mon, MRB_ARGS_NONE());       /* 15.2.19.7.21 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(month), time_mon, MRB_ARGS_NONE());       /* 15.2.19.7.22 */
 
-  mrb_define_method(mrb, tc, "sec" , time_sec, MRB_ARGS_NONE());        /* 15.2.19.7.23 */
-  mrb_define_method(mrb, tc, "to_i", time_to_i, MRB_ARGS_NONE());       /* 15.2.19.7.25 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(sec), time_sec, MRB_ARGS_NONE());        /* 15.2.19.7.23 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(to_i), time_to_i, MRB_ARGS_NONE());       /* 15.2.19.7.25 */
 #ifndef MRB_NO_FLOAT
-  mrb_define_method(mrb, tc, "to_f", time_to_f, MRB_ARGS_NONE());       /* 15.2.19.7.24 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(to_f), time_to_f, MRB_ARGS_NONE());       /* 15.2.19.7.24 */
 #endif
-  mrb_define_method(mrb, tc, "usec", time_usec, MRB_ARGS_NONE());       /* 15.2.19.7.26 */
-  mrb_define_method(mrb, tc, "utc" , time_utc, MRB_ARGS_NONE());        /* 15.2.19.7.27 */
-  mrb_define_method(mrb, tc, "utc?", time_utc_p,MRB_ARGS_NONE());       /* 15.2.19.7.28 */
-  mrb_define_method(mrb, tc, "wday", time_wday, MRB_ARGS_NONE());       /* 15.2.19.7.30 */
-  mrb_define_method(mrb, tc, "yday", time_yday, MRB_ARGS_NONE());       /* 15.2.19.7.31 */
-  mrb_define_method(mrb, tc, "year", time_year, MRB_ARGS_NONE());       /* 15.2.19.7.32 */
-  mrb_define_method(mrb, tc, "zone", time_zone, MRB_ARGS_NONE());       /* 15.2.19.7.33 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(usec), time_usec, MRB_ARGS_NONE());       /* 15.2.19.7.26 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(utc), time_utc, MRB_ARGS_NONE());        /* 15.2.19.7.27 */
+  mrb_define_method_id(mrb, tc, MRB_SYM_Q(utc), time_utc_p,MRB_ARGS_NONE());       /* 15.2.19.7.28 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(wday), time_wday, MRB_ARGS_NONE());       /* 15.2.19.7.30 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(yday), time_yday, MRB_ARGS_NONE());       /* 15.2.19.7.31 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(year), time_year, MRB_ARGS_NONE());       /* 15.2.19.7.32 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(zone), time_zone, MRB_ARGS_NONE());       /* 15.2.19.7.33 */
 
-  mrb_define_method(mrb, tc, "initialize", time_init, MRB_ARGS_REQ(1)); /* 15.2.19.7.16 */
-  mrb_define_method(mrb, tc, "initialize_copy", time_init_copy, MRB_ARGS_REQ(1)); /* 15.2.19.7.17 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(initialize), time_init, MRB_ARGS_REQ(1)); /* 15.2.19.7.16 */
+  mrb_define_method_id(mrb, tc, MRB_SYM(initialize_copy), time_init_copy, MRB_ARGS_REQ(1)); /* 15.2.19.7.17 */
 
-  mrb_define_method(mrb, tc, "sunday?", time_sunday, MRB_ARGS_NONE());
-  mrb_define_method(mrb, tc, "monday?", time_monday, MRB_ARGS_NONE());
-  mrb_define_method(mrb, tc, "tuesday?", time_tuesday, MRB_ARGS_NONE());
-  mrb_define_method(mrb, tc, "wednesday?", time_wednesday, MRB_ARGS_NONE());
-  mrb_define_method(mrb, tc, "thursday?", time_thursday, MRB_ARGS_NONE());
-  mrb_define_method(mrb, tc, "friday?", time_friday, MRB_ARGS_NONE());
-  mrb_define_method(mrb, tc, "saturday?", time_saturday, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, tc, MRB_SYM_Q(sunday), time_sunday, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, tc, MRB_SYM_Q(monday), time_monday, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, tc, MRB_SYM_Q(tuesday), time_tuesday, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, tc, MRB_SYM_Q(wednesday), time_wednesday, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, tc, MRB_SYM_Q(thursday), time_thursday, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, tc, MRB_SYM_Q(friday), time_friday, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, tc, MRB_SYM_Q(saturday), time_saturday, MRB_ARGS_NONE());
 
   /*
     methods not available:

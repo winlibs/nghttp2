@@ -15,11 +15,11 @@
 extern "C" {
 #endif
 
-#if defined(MRB_WITHOUT_IO_PREAD_PWRITE)
-# undef MRB_WITH_IO_PREAD_PWRITE
-#elif !defined(MRB_WITH_IO_PREAD_PWRITE)
-# if defined(__unix__) || defined(__MACH__)
-#  define MRB_WITH_IO_PREAD_PWRITE
+#if defined(MRB_NO_IO_PREAD_PWRITE) || defined(MRB_WITHOUT_IO_PREAD_PWRITE)
+# undef MRB_USE_IO_PREAD_PWRITE
+#elif !defined(MRB_USE_IO_PREAD_PWRITE)
+# if defined(__unix__) || defined(__MACH__) || defined(MRB_WITH_IO_PREAD_PWRITE)
+#  define MRB_USE_IO_PREAD_PWRITE
 # endif
 #endif
 
@@ -32,15 +32,17 @@ struct mrb_io_buf {
 };
 
 struct mrb_io {
-  int fd;   /* file descriptor, or -1 */
-  int fd2;  /* file descriptor to write if it's different from fd, or -1 */
-  int pid;  /* child's pid (for pipes)  */
-  struct mrb_io_buf *buf;
   unsigned int readable:1,
                writable:1,
                eof:1,
                sync:1,
-               is_socket:1;
+               is_socket:1,
+               close_fd:1,
+               close_fd2:1;
+  int fd;   /* file descriptor, or -1 */
+  int fd2;  /* file descriptor to write if it's different from fd, or -1 */
+  int pid;  /* child's pid (for pipes)  */
+  struct mrb_io_buf *buf;
 };
 
 #define MRB_O_RDONLY            0x0000
@@ -63,8 +65,8 @@ struct mrb_io {
 #define MRB_O_DSYNC             0x00008000
 #define MRB_O_RSYNC             0x00010000
 
-#define E_IO_ERROR              (mrb_exc_get(mrb, "IOError"))
-#define E_EOF_ERROR             (mrb_exc_get(mrb, "EOFError"))
+#define E_IO_ERROR              mrb_exc_get_id(mrb, MRB_ERROR_SYM(IOError))
+#define E_EOF_ERROR             mrb_exc_get_id(mrb, MRB_ERROR_SYM(EOFError))
 
 int mrb_io_fileno(mrb_state *mrb, mrb_value io);
 

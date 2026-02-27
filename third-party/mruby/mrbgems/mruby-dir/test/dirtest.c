@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(_WIN32) || defined(_WIN64)
+#if defined(_WIN32)
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -31,9 +31,9 @@ int closedir(DIR *dir);
 #include <dirent.h>
 #endif
 
-#include "mruby.h"
-#include "mruby/string.h"
-#include "mruby/variable.h"
+#include <mruby.h>
+#include <mruby/string.h>
+#include <mruby/variable.h>
 
 static void
 make_dir(mrb_state *mrb, const char *name, const char *up)
@@ -60,7 +60,7 @@ mrb_dirtest_setup(mrb_state *mrb, mrb_value klass)
   mrb_cv_set(mrb, klass, mrb_intern_cstr(mrb, "pwd"), mrb_str_new_cstr(mrb, buf));
 
   /* create sandbox */
-#if defined(_WIN32) || defined(_WIN64)
+#if defined(_WIN32)
   snprintf(buf, sizeof(buf), "%s\\mruby-dir-test.XXXXXX", _getcwd(NULL,0));
   if ((_mktemp(buf) == NULL) || mkdir(buf,0) != 0) {
     mrb_raisef(mrb, E_RUNTIME_ERROR, "mkdtemp(%s) failed", buf);

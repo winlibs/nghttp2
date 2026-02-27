@@ -19,6 +19,7 @@
  * macros.
  *
  *   MRB_OPSYM(xor)  //=> ^      (Operator)
+ *   MRB_GVSYM(xor)  //=> $xor   (Global Variable)
  *   MRB_CVSYM(xor)  //=> @@xor  (Class Variable)
  *   MRB_IVSYM(xor)  //=> @xor   (Instance Variable)
  *   MRB_SYM_B(xor)  //=> xor!   (Method with Bang)
@@ -29,7 +30,7 @@
  * For `MRB_OPSYM`, specify the names corresponding to operators (see
  * `MRuby::Presym::OPERATORS` in `lib/mruby/presym.rb` for the names that
  * can be specified for it). Other than that, describe only word characters
- * excluding leading and ending punctuations.
+ * excluding leading and ending punctuation.
  *
  * These macros are expanded to `mrb_intern_lit` if presym is disabled,
  * therefore the mruby state variable is required. The above macros can be

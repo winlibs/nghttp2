@@ -35,13 +35,14 @@ namespace shrpx {
 
 namespace http {
 
-StringRef create_error_html(BlockAllocator &balloc, unsigned int http_status) {
+std::string_view create_error_html(BlockAllocator &balloc,
+                                   unsigned int http_status) {
   auto &httpconf = get_config()->http;
 
   const auto &error_pages = httpconf.error_pages;
   for (const auto &page : error_pages) {
     if (page.http_status == 0 || page.http_status == http_status) {
-      return StringRef{std::span{page.content}};
+      return as_string_view(page.content);
     }
   }
 
@@ -49,15 +50,16 @@ StringRef create_error_html(BlockAllocator &balloc, unsigned int http_status) {
   auto reason_phrase = http2::get_reason_phrase(http_status);
 
   return concat_string_ref(
-    balloc, R"(<!DOCTYPE html><html lang="en"><title>)"_sr, status_string,
-    " "_sr, reason_phrase, "</title><body><h1>"_sr, status_string, " "_sr,
-    reason_phrase, "</h1><footer>"_sr, httpconf.server_name,
-    "</footer></body></html>"_sr);
+    balloc, R"(<!DOCTYPE html><html lang="en"><title>)"sv, status_string, " "sv,
+    reason_phrase, "</title><body><h1>"sv, status_string, " "sv, reason_phrase,
+    "</h1><footer>"sv, httpconf.server_name, "</footer></body></html>"sv);
 }
 
-StringRef create_forwarded(BlockAllocator &balloc, int params,
-                           const StringRef &node_by, const StringRef &node_for,
-                           const StringRef &host, const StringRef &proto) {
+std::string_view create_forwarded(BlockAllocator &balloc, uint32_t params,
+                                  const std::string_view &node_by,
+                                  const std::string_view &node_for,
+                                  const std::string_view &host,
+                                  const std::string_view &proto) {
   size_t len = 0;
   if ((params & FORWARDED_BY) && !node_by.empty()) {
     len += str_size("by=\"") + node_by.size() + str_size("\";");
@@ -73,7 +75,7 @@ StringRef create_forwarded(BlockAllocator &balloc, int params,
   }
 
   auto iov = make_byte_ref(balloc, len + 1);
-  auto p = std::begin(iov);
+  auto p = std::ranges::begin(iov);
 
   if ((params & FORWARDED_BY) && !node_by.empty()) {
     // This must be quoted-string unless it is obfuscated version
@@ -81,101 +83,109 @@ StringRef create_forwarded(BlockAllocator &balloc, int params,
     // "localhost" for UNIX domain socket), since ':' is not allowed
     // in token.  ':' is used to separate host and port.
     if (node_by[0] == '_' || node_by[0] == 'l') {
-      p = util::copy_lit(p, "by=");
-      p = std::copy(std::begin(node_by), std::end(node_by), p);
-      p = util::copy_lit(p, ";");
+      p = std::ranges::copy("by="sv, p).out;
+      p = std::ranges::copy(node_by, p).out;
+      *p++ = ';';
     } else {
-      p = util::copy_lit(p, "by=\"");
-      p = std::copy(std::begin(node_by), std::end(node_by), p);
-      p = util::copy_lit(p, "\";");
+      p = std::ranges::copy("by=\""sv, p).out;
+      p = std::ranges::copy(node_by, p).out;
+      p = std::ranges::copy("\";"sv, p).out;
     }
   }
   if ((params & FORWARDED_FOR) && !node_for.empty()) {
     // We only quote IPv6 literal address only, which starts with '['.
     if (node_for[0] == '[') {
-      p = util::copy_lit(p, "for=\"");
-      p = std::copy(std::begin(node_for), std::end(node_for), p);
-      p = util::copy_lit(p, "\";");
+      p = std::ranges::copy("for=\""sv, p).out;
+      p = std::ranges::copy(node_for, p).out;
+      p = std::ranges::copy("\";"sv, p).out;
     } else {
-      p = util::copy_lit(p, "for=");
-      p = std::copy(std::begin(node_for), std::end(node_for), p);
-      p = util::copy_lit(p, ";");
+      p = std::ranges::copy("for="sv, p).out;
+      p = std::ranges::copy(node_for, p).out;
+      *p++ = ';';
     }
   }
   if ((params & FORWARDED_HOST) && !host.empty()) {
     // Just be quoted to skip checking characters.
-    p = util::copy_lit(p, "host=\"");
-    p = std::copy(std::begin(host), std::end(host), p);
-    p = util::copy_lit(p, "\";");
+    p = std::ranges::copy("host=\""sv, p).out;
+    p = std::ranges::copy(host, p).out;
+    p = std::ranges::copy("\";"sv, p).out;
   }
   if ((params & FORWARDED_PROTO) && !proto.empty()) {
     // Scheme production rule only allow characters which are all in
     // token.
-    p = util::copy_lit(p, "proto=");
-    p = std::copy(std::begin(proto), std::end(proto), p);
+    p = std::ranges::copy("proto="sv, p).out;
+    p = std::ranges::copy(proto, p).out;
     *p++ = ';';
   }
 
-  if (std::begin(iov) == p) {
-    return StringRef{};
+  if (std::ranges::begin(iov) == p) {
+    return ""sv;
   }
 
   --p;
   *p = '\0';
 
-  return StringRef{std::span{std::begin(iov), p}};
+  return as_string_view(std::ranges::begin(iov), p);
 }
 
-std::string colorizeHeaders(const char *hdrs) {
+std::string colorize_headers(const std::string_view &hdrs) {
   std::string nhdrs;
-  const char *p = strchr(hdrs, '\n');
-  if (!p) {
+  auto p = std::ranges::find(hdrs, '\n');
+  if (p == std::ranges::end(hdrs)) {
     // Not valid HTTP header
-    return hdrs;
+    return std::string{hdrs};
   }
-  nhdrs.append(hdrs, p + 1);
-  ++p;
+
+  nhdrs.append(std::ranges::begin(hdrs), ++p);
+
   while (1) {
-    const char *np = strchr(p, ':');
-    if (!np) {
-      nhdrs.append(p);
+    auto np = std::ranges::find(p, std::ranges::end(hdrs), ':');
+    if (np == std::ranges::end(hdrs)) {
+      nhdrs.append(p, std::ranges::end(hdrs));
       break;
     }
+
     nhdrs += TTY_HTTP_HD;
     nhdrs.append(p, np);
     nhdrs += TTY_RST;
-    auto redact = util::strieq("authorization"_sr, StringRef{p, np});
+
+    auto redact = util::strieq("authorization"sv, std::string_view{p, np});
+
     p = np;
-    np = strchr(p, '\n');
-    if (!np) {
-      if (redact) {
-        nhdrs.append(": <redacted>");
-      } else {
-        nhdrs.append(p);
-      }
-      break;
-    }
+
+    np = std::ranges::find(p, std::ranges::end(hdrs), '\n');
+
     if (redact) {
-      nhdrs.append(": <redacted>\n");
+      nhdrs.append(": <redacted>"sv);
     } else {
-      nhdrs.append(p, np + 1);
+      nhdrs.append(p, np);
     }
+
+    if (np == std::ranges::end(hdrs)) {
+      return nhdrs;
+    }
+
+    nhdrs += '\n';
     p = np + 1;
   }
+
   return nhdrs;
 }
 
 nghttp2_ssize select_padding_callback(nghttp2_session *session,
                                       const nghttp2_frame *frame,
                                       size_t max_payload, void *user_data) {
-  return std::min(max_payload, frame->hd.length + get_config()->padding);
+  return as_signed(
+    std::min(max_payload, frame->hd.length + get_config()->padding));
 }
 
-StringRef create_affinity_cookie(BlockAllocator &balloc, const StringRef &name,
-                                 uint32_t affinity_cookie,
-                                 const StringRef &path, bool secure) {
-  static constexpr auto PATH_PREFIX = "; Path="_sr;
-  static constexpr auto SECURE = "; Secure"_sr;
+std::string_view create_affinity_cookie(BlockAllocator &balloc,
+                                        const std::string_view &name,
+                                        uint32_t affinity_cookie,
+                                        const std::string_view &path,
+                                        bool secure) {
+  static constexpr auto PATH_PREFIX = "; Path="sv;
+  static constexpr auto SECURE = "; Secure"sv;
   // <name>=<value>[; Path=<path>][; Secure]
   size_t len = name.size() + 1 + 8;
 
@@ -187,26 +197,26 @@ StringRef create_affinity_cookie(BlockAllocator &balloc, const StringRef &name,
   }
 
   auto iov = make_byte_ref(balloc, len + 1);
-  auto p = std::copy(std::begin(name), std::end(name), std::begin(iov));
+  auto p = std::ranges::copy(name, std::ranges::begin(iov)).out;
   *p++ = '=';
   affinity_cookie = htonl(affinity_cookie);
-  p = util::format_hex(p, std::span{&affinity_cookie, 1});
+  p = util::format_hex(as_uint8_span(std::span{&affinity_cookie, 1}), p);
   if (!path.empty()) {
-    p = std::copy(std::begin(PATH_PREFIX), std::end(PATH_PREFIX), p);
-    p = std::copy(std::begin(path), std::end(path), p);
+    p = std::ranges::copy(PATH_PREFIX, p).out;
+    p = std::ranges::copy(path, p).out;
   }
   if (secure) {
-    p = std::copy(std::begin(SECURE), std::end(SECURE), p);
+    p = std::ranges::copy(SECURE, p).out;
   }
   *p = '\0';
-  return StringRef{std::span{std::begin(iov), p}};
+  return as_string_view(std::ranges::begin(iov), p);
 }
 
 bool require_cookie_secure_attribute(SessionAffinityCookieSecure secure,
-                                     const StringRef &scheme) {
+                                     const std::string_view &scheme) {
   switch (secure) {
   case SessionAffinityCookieSecure::AUTO:
-    return scheme == "https"_sr;
+    return scheme == "https"sv;
   case SessionAffinityCookieSecure::YES:
     return true;
   default:
@@ -214,13 +224,14 @@ bool require_cookie_secure_attribute(SessionAffinityCookieSecure secure,
   }
 }
 
-StringRef create_altsvc_header_value(BlockAllocator &balloc,
-                                     const std::vector<AltSvc> &altsvcs) {
+std::string_view
+create_altsvc_header_value(BlockAllocator &balloc,
+                           const std::vector<AltSvc> &altsvcs) {
   // <PROTOID>="<HOST>:<SERVICE>"; <PARAMS>
   size_t len = 0;
 
   if (altsvcs.empty()) {
-    return StringRef{};
+    return ""sv;
   }
 
   for (auto &altsvc : altsvcs) {
@@ -241,32 +252,32 @@ StringRef create_altsvc_header_value(BlockAllocator &balloc,
 
   // We will write additional ", " at the end, and cut it later.
   auto iov = make_byte_ref(balloc, len + 2);
-  auto p = std::begin(iov);
+  auto p = std::ranges::begin(iov);
 
   for (auto &altsvc : altsvcs) {
-    p = util::percent_encode_token(p, altsvc.protocol_id);
-    p = util::copy_lit(p, "=\"");
-    p = util::quote_string(p, altsvc.host);
+    p = util::percent_encode_token(altsvc.protocol_id, p);
+    p = std::ranges::copy("=\""sv, p).out;
+    p = util::quote_string(altsvc.host, p);
     *p++ = ':';
-    p = std::copy(std::begin(altsvc.service), std::end(altsvc.service), p);
+    p = std::ranges::copy(altsvc.service, p).out;
     *p++ = '"';
     if (!altsvc.params.empty()) {
-      p = util::copy_lit(p, "; ");
-      p = std::copy(std::begin(altsvc.params), std::end(altsvc.params), p);
+      p = std::ranges::copy("; "sv, p).out;
+      p = std::ranges::copy(altsvc.params, p).out;
     }
-    p = util::copy_lit(p, ", ");
+    p = std::ranges::copy(", "sv, p).out;
   }
 
   p -= 2;
   *p = '\0';
 
-  assert(static_cast<size_t>(p - std::begin(iov)) == len);
+  assert(static_cast<size_t>(p - std::ranges::begin(iov)) == len);
 
-  return StringRef{std::span{std::begin(iov), p}};
+  return as_string_view(std::ranges::begin(iov), p);
 }
 
-bool check_http_scheme(const StringRef &scheme, bool encrypted) {
-  return encrypted ? scheme == "https"_sr : scheme == "http"_sr;
+bool check_http_scheme(const std::string_view &scheme, bool encrypted) {
+  return encrypted ? scheme == "https"sv : scheme == "http"sv;
 }
 
 } // namespace http

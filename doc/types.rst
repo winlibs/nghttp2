@@ -1033,18 +1033,19 @@ Types (structs, unions and typedefs)
 .. type:: int (*nghttp2_on_invalid_header_callback)( nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
 
     
-    Callback function invoked when a invalid header name/value pair is
+    Callback function invoked when an invalid header name/value pair is
     received for the *frame*.
     
     The parameter and behaviour are similar to
     :type:`nghttp2_on_header_callback`.  The difference is that this
-    callback is only invoked when a invalid header name/value pair is
-    received which is treated as stream error if this callback is not
-    set.  Only invalid regular header field are passed to this
-    callback.  In other words, invalid pseudo header field is not
-    passed to this callback.  Also header fields which includes upper
-    cased latter are also treated as error without passing them to this
-    callback.
+    callback is only invoked when an invalid header name/value pair is
+    received which is treated as stream error if this callback returns
+    :enum:`nghttp2_error.NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE` and
+    :type:`nghttp2_on_invalid_header_callback2` is not set.  Only
+    invalid regular header field are passed to this callback.  In other
+    words, invalid pseudo header field is not passed to this callback.
+    Also header fields which includes upper cased latter are also
+    treated as error without passing them to this callback.
     
     This callback is only considered if HTTP messaging validation is
     turned on (which is on by default, see
@@ -1064,17 +1065,18 @@ Types (structs, unions and typedefs)
 .. type:: int (*nghttp2_on_invalid_header_callback2)( nghttp2_session *session, const nghttp2_frame *frame, nghttp2_rcbuf *name, nghttp2_rcbuf *value, uint8_t flags, void *user_data)
 
     
-    Callback function invoked when a invalid header name/value pair is
+    Callback function invoked when an invalid header name/value pair is
     received for the *frame*.
     
     The parameter and behaviour are similar to
     :type:`nghttp2_on_header_callback2`.  The difference is that this
-    callback is only invoked when a invalid header name/value pair is
-    received which is silently ignored if this callback is not set.
-    Only invalid regular header field are passed to this callback.  In
-    other words, invalid pseudo header field is not passed to this
-    callback.  Also header fields which includes upper cased latter are
-    also treated as error without passing them to this callback.
+    callback is only invoked when an invalid header name/value pair is
+    received which is silently ignored if neither this callback nor
+    :type:`nghttp2_on_invalid_header_callback` is set.  Only invalid
+    regular header field are passed to this callback.  In other words,
+    invalid pseudo header field is not passed to this callback.  Also
+    header fields which includes upper cased latter are also treated as
+    error without passing them to this callback.
     
     This callback is only considered if HTTP messaging validation is
     turned on (which is on by default, see
@@ -1360,6 +1362,12 @@ Types (structs, unions and typedefs)
     nonzero value is returned from this callback, they are treated as
     :enum:`nghttp2_error.NGHTTP2_ERR_CALLBACK_FAILURE`, but application
     should not rely on this details.
+.. type:: void (*nghttp2_rand_callback)(uint8_t *dest, size_t destlen)
+
+    
+    Callback function invoked when unpredictable data of *destlen*
+    bytes are needed.  The implementation must write unpredictable data
+    of *destlen* bytes into the buffer pointed by *dest*.
 .. type:: nghttp2_session_callbacks
 
     

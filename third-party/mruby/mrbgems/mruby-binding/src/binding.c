@@ -68,7 +68,7 @@ binding_irep_new_lvspace(mrb_state *mrb)
   irep->flags = MRB_ISEQ_NO_FREE;
   irep->iseq = iseq_dummy;
   irep->ilen = sizeof(iseq_dummy) / sizeof(iseq_dummy[0]);
-  irep->lv = (mrb_sym*)mrb_calloc(mrb, 1, sizeof(mrb_sym)); /* initial allocation for dummy */
+  irep->lv = NULL;
   irep->nlocals = 1;
   irep->nregs = 1;
   return irep;
@@ -92,7 +92,6 @@ binding_env_new_lvspace(mrb_state *mrb, const struct REnv *e)
 {
   struct REnv *env = MRB_OBJ_ALLOC(mrb, MRB_TT_ENV, NULL);
   mrb_value *stacks = (mrb_value*)mrb_calloc(mrb, 1, sizeof(mrb_value));
-  env->cxt = e ? e->cxt : mrb->c;
   env->mid = 0;
   env->stack = stacks;
   if (e && e->stack && MRB_ENV_LEN(e) > 0) {
@@ -101,7 +100,6 @@ binding_env_new_lvspace(mrb_state *mrb, const struct REnv *e)
   else {
     env->stack[0] = mrb_nil_value();
   }
-  env->flags = MRB_ENV_CLOSED;
   MRB_ENV_SET_LEN(env, 1);
   return env;
 }
@@ -396,22 +394,22 @@ mrb_f_binding(mrb_state *mrb, mrb_value self)
 void
 mrb_mruby_binding_gem_init(mrb_state *mrb)
 {
-  struct RClass *binding = mrb_define_class(mrb, "Binding", mrb->object_class);
+  struct RClass *binding = mrb_define_class_id(mrb, MRB_SYM(Binding), mrb->object_class);
   MRB_SET_INSTANCE_TT(binding, MRB_TT_OBJECT);
   MRB_UNDEF_ALLOCATOR(binding);
-  mrb_undef_class_method(mrb, binding, "new");
-  mrb_undef_class_method(mrb, binding, "allocate");
+  mrb_undef_class_method_id(mrb, binding, MRB_SYM(new));
+  mrb_undef_class_method_id(mrb, binding, MRB_SYM(allocate));
 
-  mrb_define_method(mrb, mrb->kernel_module, "binding", mrb_f_binding, MRB_ARGS_NONE());
+  mrb_define_private_method_id(mrb, mrb->kernel_module, MRB_SYM(binding), mrb_f_binding, MRB_ARGS_NONE());
 
-  mrb_define_method(mrb, binding, "initialize_copy", binding_initialize_copy, MRB_ARGS_REQ(1));
-  mrb_define_method(mrb, binding, "local_variable_defined?", binding_local_variable_defined_p, MRB_ARGS_REQ(1));
-  mrb_define_method(mrb, binding, "local_variable_get", binding_local_variable_get, MRB_ARGS_REQ(1));
-  mrb_define_method(mrb, binding, "local_variable_set", binding_local_variable_set, MRB_ARGS_REQ(2));
-  mrb_define_method(mrb, binding, "local_variables", binding_local_variables, MRB_ARGS_NONE());
-  mrb_define_method(mrb, binding, "receiver", binding_receiver, MRB_ARGS_NONE());
-  mrb_define_method(mrb, binding, "source_location", binding_source_location, MRB_ARGS_NONE());
-  mrb_define_method(mrb, binding, "inspect", mrb_any_to_s, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, binding, MRB_SYM(initialize_copy), binding_initialize_copy, MRB_ARGS_REQ(1));
+  mrb_define_method_id(mrb, binding, MRB_SYM_Q(local_variable_defined), binding_local_variable_defined_p, MRB_ARGS_REQ(1));
+  mrb_define_method_id(mrb, binding, MRB_SYM(local_variable_get), binding_local_variable_get, MRB_ARGS_REQ(1));
+  mrb_define_method_id(mrb, binding, MRB_SYM(local_variable_set), binding_local_variable_set, MRB_ARGS_REQ(2));
+  mrb_define_method_id(mrb, binding, MRB_SYM(local_variables), binding_local_variables, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, binding, MRB_SYM(receiver), binding_receiver, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, binding, MRB_SYM(source_location), binding_source_location, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, binding, MRB_SYM(inspect), mrb_any_to_s, MRB_ARGS_NONE());
 }
 
 void

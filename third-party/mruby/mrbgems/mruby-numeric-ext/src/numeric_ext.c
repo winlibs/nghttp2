@@ -165,8 +165,7 @@ int_digits(mrb_state *mrb, mrb_value self)
     }
 
     while (mrb_bint_cmp(mrb, x, zero) > 0) {
-      mrb_value q = mrb_bint_mod(mrb, x, bv);
-      mrb_ary_push(mrb, digits, q);
+      mrb_ary_push(mrb, digits, mrb_bint_mod(mrb, x, bv));
       x = mrb_bint_div(mrb, x, bv);
       if (!mrb_bigint_p(x)) {
         mrb_int n = mrb_integer(x);
@@ -201,6 +200,54 @@ int_digits(mrb_state *mrb, mrb_value self)
   return digits;
 }
 
+/*
+ *  call-seq:
+ *     int.size -> int
+ *
+ * Returns the number of bytes in the machine representation of int
+ * (machine dependent).
+ *
+ *   1.size               #=> 8
+ *   -1.size              #=> 8
+ *   2147483647.size      #=> 8
+ *   (256**10 - 1).size   #=> 12
+ *   (256**20 - 1).size   #=> 20
+ *   (256**40 - 1).size   #=> 40
+ */
+
+static mrb_value
+int_size(mrb_state *mrb, mrb_value self)
+{
+  size_t size = sizeof(mrb_int);
+#ifdef MRB_USE_BIGINT
+  if (mrb_bigint_p(self)) {
+    size = mrb_bint_memsize(self);
+  }
+#endif
+  return mrb_fixnum_value((mrb_int)size);
+}
+
+static mrb_value
+int_even(mrb_state *mrb, mrb_value self)
+{
+#ifdef MRB_USE_BIGINT
+  if (mrb_bigint_p(self)) {
+    mrb_value and1 = mrb_bint_and(mrb, self, mrb_fixnum_value(1));
+    if (mrb_integer(and1) == 0) return mrb_true_value();
+    return mrb_false_value();
+  }
+#endif
+  return mrb_bool_value(mrb_integer(self) % 2 == 0);
+}
+
+static mrb_value
+int_odd(mrb_state *mrb, mrb_value self)
+{
+  mrb_value even = int_even(mrb, self);
+  mrb_bool odd = !mrb_test(even);
+  return mrb_bool_value(odd);
+}
+
 #ifndef MRB_NO_FLOAT
 static mrb_value
 flo_remainder(mrb_state *mrb, mrb_value self)
@@ -215,22 +262,66 @@ flo_remainder(mrb_state *mrb, mrb_value self)
 }
 #endif
 
+static mrb_int
+isqrt(mrb_int n)
+{
+  mrb_assert(n >= 0);
+  if (n < 2) return n;
+
+  mrb_int x = n;
+  mrb_int y = (x + 1) / 2;
+
+  // Babylonian method (integer version)
+  while (y < x) {
+    x = y;
+    y = (x + n / x) / 2;
+  }
+
+  return x;
+}
+
+static mrb_value
+int_sqrt(mrb_state *mrb, mrb_value self)
+{
+  mrb_value arg = mrb_get_arg1(mrb);
+
+  if (mrb_integer_p(arg)) {
+    mrb_int n = mrb_integer(arg);
+    if (n < 0) {
+      mrb_raise(mrb, E_ARGUMENT_ERROR, "non-negative integer required");
+    }
+    return mrb_int_value(mrb, isqrt(n));
+  }
+#ifdef MRB_USE_BIGINT
+  else if (mrb_bigint_p(arg)) {
+    return mrb_bint_sqrt(mrb, arg);
+  }
+#endif
+  else {
+    mrb_raise(mrb, E_TYPE_ERROR, "expected Integer");
+  }
+}
+
 void
 mrb_mruby_numeric_ext_gem_init(mrb_state* mrb)
 {
   struct RClass *ic = mrb->integer_class;
 
-  mrb_define_alias(mrb, ic, "modulo", "%");
-  mrb_define_method(mrb, ic, "remainder", int_remainder, MRB_ARGS_REQ(1));
+  mrb_define_alias_id(mrb, ic, MRB_SYM(modulo), MRB_OPSYM(mod));
+  mrb_define_method_id(mrb, ic, MRB_SYM(remainder), int_remainder, MRB_ARGS_REQ(1));
 
   mrb_define_method_id(mrb, ic, MRB_SYM(pow), int_powm, MRB_ARGS_ARG(1,1));
   mrb_define_method_id(mrb, ic, MRB_SYM(digits), int_digits, MRB_ARGS_OPT(1));
+  mrb_define_method_id(mrb, ic, MRB_SYM(size), int_size, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, ic, MRB_SYM_Q(odd), int_odd, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, ic, MRB_SYM_Q(even), int_even, MRB_ARGS_NONE());
+  mrb_define_class_method_id(mrb, ic, MRB_SYM(sqrt), int_sqrt, MRB_ARGS_REQ(1));
 
 #ifndef MRB_NO_FLOAT
   struct RClass *fc = mrb->float_class;
 
-  mrb_define_alias(mrb, fc, "modulo", "%");
-  mrb_define_method(mrb, fc, "remainder", flo_remainder, MRB_ARGS_REQ(1));
+  mrb_define_alias_id(mrb, fc, MRB_SYM(modulo), MRB_OPSYM(mod));
+  mrb_define_method_id(mrb, fc, MRB_SYM(remainder), flo_remainder, MRB_ARGS_REQ(1));
 
   mrb_define_const_id(mrb, fc, MRB_SYM(RADIX),        mrb_fixnum_value(MRB_FLT_RADIX));
   mrb_define_const_id(mrb, fc, MRB_SYM(MANT_DIG),     mrb_fixnum_value(MRB_FLT_MANT_DIG));

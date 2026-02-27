@@ -36,8 +36,9 @@ static const mrb_irep call_irep = {
   0,                                   /* refcnt */
 };
 
+mrb_alignas(8)
 static const struct RProc call_proc = {
-  NULL, NULL, MRB_TT_PROC, MRB_GC_RED, MRB_FL_OBJ_IS_FROZEN | MRB_PROC_SCOPE | MRB_PROC_STRICT,
+  NULL, NULL, MRB_TT_PROC, MRB_GC_RED, MRB_OBJ_IS_FROZEN, MRB_PROC_SCOPE | MRB_PROC_STRICT,
   { &call_irep }, NULL, { NULL }
 };
 
@@ -85,6 +86,7 @@ mrb_env_new(mrb_state *mrb, struct mrb_context *c, mrb_callinfo *ci, int nstacks
   e->mid = ci->mid;
   e->stack = stack;
   e->cxt = c;
+  MRB_ENV_COPY_FLAGS_FROM_CI(e, ci);
 
   return e;
 }
@@ -96,7 +98,8 @@ closure_setup(mrb_state *mrb, struct RProc *p)
   const struct RProc *up = p->upper;
   struct REnv *e = NULL;
 
-  if (ci && (e = mrb_vm_ci_env(ci)) != NULL) {
+  mrb_assert(ci != NULL);
+  if ((e = mrb_vm_ci_env(ci)) != NULL) {
     /* do nothing, because e is assigned already */
   }
   else if (up) {
@@ -197,7 +200,7 @@ mrb_proc_cfunc_env_get(mrb_state *mrb, mrb_int idx)
 }
 
 mrb_value
-mrb_proc_get_self(mrb_state *mrb, struct RProc *p, struct RClass **target_class_p)
+mrb_proc_get_self(mrb_state *mrb, const struct RProc *p, struct RClass **target_class_p)
 {
   if (MRB_PROC_CFUNC_P(p)) {
     *target_class_p = mrb->object_class;
@@ -220,7 +223,7 @@ mrb_proc_get_self(mrb_state *mrb, struct RProc *p, struct RClass **target_class_
 }
 
 void
-mrb_proc_copy(mrb_state *mrb, struct RProc *a, struct RProc *b)
+mrb_proc_copy(mrb_state *mrb, struct RProc *a, const struct RProc *b)
 {
   if (a->body.irep) {
     /* already initialized proc */
@@ -286,8 +289,8 @@ mrb_proc_eql(mrb_state *mrb, mrb_value self, mrb_value other)
   if (mrb_type(self) != MRB_TT_PROC) return FALSE;
   if (mrb_type(other) != MRB_TT_PROC) return FALSE;
 
-  struct RProc *p1 = mrb_proc_ptr(self);
-  struct RProc *p2 = mrb_proc_ptr(other);
+  const struct RProc *p1 = mrb_proc_ptr(self);
+  const struct RProc *p2 = mrb_proc_ptr(other);
   if (MRB_PROC_CFUNC_P(p1)) {
     if (!MRB_PROC_CFUNC_P(p1)) return FALSE;
     if (p1->body.func != p2->body.func) return FALSE;
@@ -306,7 +309,7 @@ proc_eql(mrb_state *mrb, mrb_value self)
 static mrb_value
 proc_hash(mrb_state *mrb, mrb_value self)
 {
-  struct RProc *p = mrb_proc_ptr(self);
+  const struct RProc *p = mrb_proc_ptr(self);
   return mrb_int_value(mrb, (mrb_int)(((intptr_t)p->body.irep)^MRB_TT_PROC));
 }
 
@@ -323,7 +326,7 @@ static mrb_value
 proc_lambda(mrb_state *mrb, mrb_value self)
 {
   mrb_value blk;
-  struct RProc *p;
+  const struct RProc *p;
 
   mrb_get_args(mrb, "&", &blk);
   if (mrb_nil_p(blk)) {
@@ -460,8 +463,8 @@ mrb_proc_merge_lvar(mrb_state *mrb, mrb_irep *irep, struct REnv *env, int num, c
     mrb_raise(mrb, E_RUNTIME_ERROR, "unavailable local variable names");
   }
 
-  irep->lv = (mrb_sym*)mrb_realloc(mrb, (mrb_sym*)irep->lv, sizeof(mrb_sym) * (irep->nlocals + num));
-  env->stack = (mrb_value*)mrb_realloc(mrb, env->stack, sizeof(mrb_value) * (irep->nlocals + 1 /* self */ + num));
+  irep->lv = (mrb_sym*)mrb_realloc(mrb, (mrb_sym*)irep->lv, sizeof(mrb_sym) * (irep->nlocals - 1 /* self */ + num));
+  env->stack = (mrb_value*)mrb_realloc(mrb, env->stack, sizeof(mrb_value) * (irep->nlocals + num));
 
   mrb_sym *destlv = (mrb_sym*)irep->lv + irep->nlocals - 1 /* self */;
   mrb_value *destst = env->stack + irep->nlocals;
@@ -503,5 +506,5 @@ mrb_init_proc(mrb_state *mrb)
   mrb_define_method_raw(mrb, pc, MRB_SYM(call), m);   /* 15.2.17.4.3 */
   mrb_define_method_raw(mrb, pc, MRB_OPSYM(aref), m); /* 15.2.17.4.1 */
 
-  mrb_define_method(mrb, mrb->kernel_module,       "lambda", proc_lambda, MRB_ARGS_NONE()|MRB_ARGS_BLOCK()); /* 15.3.1.3.27 */
+  mrb_define_private_method_id(mrb, mrb->kernel_module, MRB_SYM(lambda), proc_lambda, MRB_ARGS_NONE()|MRB_ARGS_BLOCK()); /* 15.3.1.3.27 */
 }

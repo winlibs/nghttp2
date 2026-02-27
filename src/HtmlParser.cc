@@ -39,30 +39,28 @@ HtmlParser::HtmlParser(const std::string &base_uri)
 HtmlParser::~HtmlParser() { htmlFreeParserCtxt(parser_ctx_); }
 
 namespace {
-StringRef get_attr(const xmlChar **attrs, const StringRef &name) {
+std::string_view get_attr(const xmlChar **attrs, const std::string_view &name) {
   if (attrs == nullptr) {
-    return StringRef{};
+    return ""sv;
   }
   for (; *attrs; attrs += 2) {
-    if (util::strieq(
-          StringRef{attrs[0], strlen(reinterpret_cast<const char *>(attrs[0]))},
-          name)) {
-      return StringRef{attrs[1],
-                       strlen(reinterpret_cast<const char *>(attrs[1]))};
+    if (util::strieq(std::string_view{reinterpret_cast<const char *>(attrs[0])},
+                     name)) {
+      return std::string_view{reinterpret_cast<const char *>(attrs[1])};
     }
   }
-  return StringRef{};
+  return ""sv;
 }
 } // namespace
 
 namespace {
 ResourceType
-get_resource_type_for_preload_as(const StringRef &attribute_value) {
-  if (util::strieq("image"_sr, attribute_value)) {
+get_resource_type_for_preload_as(const std::string_view &attribute_value) {
+  if (util::strieq("image"sv, attribute_value)) {
     return REQ_IMG;
-  } else if (util::strieq("style"_sr, attribute_value)) {
+  } else if (util::strieq("style"sv, attribute_value)) {
     return REQ_CSS;
-  } else if (util::strieq("script"_sr, attribute_value)) {
+  } else if (util::strieq("script"sv, attribute_value)) {
     return REQ_UNBLOCK_JS;
   } else {
     return REQ_OTHERS;
@@ -71,7 +69,7 @@ get_resource_type_for_preload_as(const StringRef &attribute_value) {
 } // namespace
 
 namespace {
-void add_link(ParserData *parser_data, const StringRef &uri,
+void add_link(ParserData *parser_data, const std::string_view &uri,
               ResourceType res_type) {
   auto u = xmlBuildURI(
     reinterpret_cast<const xmlChar *>(uri.data()),
@@ -79,7 +77,7 @@ void add_link(ParserData *parser_data, const StringRef &uri,
   if (u) {
     parser_data->links.push_back(
       std::make_pair(reinterpret_cast<char *>(u), res_type));
-    free(u);
+    xmlFree(u);
   }
 }
 } // namespace
@@ -88,37 +86,36 @@ namespace {
 void start_element_func(void *user_data, const xmlChar *src_name,
                         const xmlChar **attrs) {
   auto parser_data = static_cast<ParserData *>(user_data);
-  auto name =
-    StringRef{src_name, strlen(reinterpret_cast<const char *>(src_name))};
-  if (util::strieq("head"_sr, name)) {
+  auto name = std::string_view{reinterpret_cast<const char *>(src_name)};
+  if (util::strieq("head"sv, name)) {
     ++parser_data->inside_head;
   }
-  if (util::strieq("link"_sr, name)) {
-    auto rel_attr = get_attr(attrs, "rel"_sr);
-    auto href_attr = get_attr(attrs, "href"_sr);
+  if (util::strieq("link"sv, name)) {
+    auto rel_attr = get_attr(attrs, "rel"sv);
+    auto href_attr = get_attr(attrs, "href"sv);
     if (rel_attr.empty() || href_attr.empty()) {
       return;
     }
-    if (util::strieq("shortcut icon"_sr, rel_attr)) {
+    if (util::strieq("shortcut icon"sv, rel_attr)) {
       add_link(parser_data, href_attr, REQ_OTHERS);
-    } else if (util::strieq("stylesheet"_sr, rel_attr)) {
+    } else if (util::strieq("stylesheet"sv, rel_attr)) {
       add_link(parser_data, href_attr, REQ_CSS);
-    } else if (util::strieq("preload"_sr, rel_attr)) {
-      auto as_attr = get_attr(attrs, "as"_sr);
+    } else if (util::strieq("preload"sv, rel_attr)) {
+      auto as_attr = get_attr(attrs, "as"sv);
       if (as_attr.empty()) {
         return;
       }
       add_link(parser_data, href_attr,
                get_resource_type_for_preload_as(as_attr));
     }
-  } else if (util::strieq("img"_sr, name)) {
-    auto src_attr = get_attr(attrs, "src"_sr);
+  } else if (util::strieq("img"sv, name)) {
+    auto src_attr = get_attr(attrs, "src"sv);
     if (src_attr.empty()) {
       return;
     }
     add_link(parser_data, src_attr, REQ_IMG);
-  } else if (util::strieq("script"_sr, name)) {
-    auto src_attr = get_attr(attrs, "src"_sr);
+  } else if (util::strieq("script"sv, name)) {
+    auto src_attr = get_attr(attrs, "src"sv);
     if (src_attr.empty()) {
       return;
     }
@@ -134,9 +131,8 @@ void start_element_func(void *user_data, const xmlChar *src_name,
 namespace {
 void end_element_func(void *user_data, const xmlChar *name) {
   auto parser_data = static_cast<ParserData *>(user_data);
-  if (util::strieq(
-        "head"_sr,
-        StringRef{name, strlen(reinterpret_cast<const char *>(name))})) {
+  if (util::strieq("head"sv,
+                   std::string_view{reinterpret_cast<const char *>(name)})) {
     --parser_data->inside_head;
   }
 }
@@ -181,9 +177,9 @@ xmlSAXHandler saxHandler = {
 
 int HtmlParser::parse_chunk(const char *chunk, size_t size, int fin) {
   if (!parser_ctx_) {
-    parser_ctx_ =
-      htmlCreatePushParserCtxt(&saxHandler, &parser_data_, chunk, size,
-                               base_uri_.c_str(), XML_CHAR_ENCODING_NONE);
+    parser_ctx_ = htmlCreatePushParserCtxt(
+      &saxHandler, &parser_data_, chunk, static_cast<int>(size),
+      base_uri_.c_str(), XML_CHAR_ENCODING_NONE);
     if (!parser_ctx_) {
       return -1;
     } else {
@@ -199,7 +195,7 @@ int HtmlParser::parse_chunk(const char *chunk, size_t size, int fin) {
 }
 
 int HtmlParser::parse_chunk_internal(const char *chunk, size_t size, int fin) {
-  int rv = htmlParseChunk(parser_ctx_, chunk, size, fin);
+  int rv = htmlParseChunk(parser_ctx_, chunk, static_cast<int>(size), fin);
   if (rv == 0) {
     return 0;
   } else {

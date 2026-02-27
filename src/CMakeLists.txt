@@ -7,7 +7,7 @@ set_source_files_properties(${cxx_sources} PROPERTIES
 
 include_directories(
   "${CMAKE_CURRENT_SOURCE_DIR}/includes"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../third-party"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../third-party/urlparse"
   "${CMAKE_CURRENT_SOURCE_DIR}/../third-party/llhttp/include"
 
   ${JEMALLOC_INCLUDE_DIRS}
@@ -16,7 +16,9 @@ include_directories(
   ${LIBNGHTTP3_INCLUDE_DIRS}
   ${LIBNGTCP2_INCLUDE_DIRS}
   ${LIBNGTCP2_CRYPTO_QUICTLS_INCLUDE_DIRS}
+  ${LIBNGTCP2_CRYPTO_LIBRESSL_INCLUDE_DIRS}
   ${LIBNGTCP2_CRYPTO_WOLFSSL_INCLUDE_DIRS}
+  ${LIBNGTCP2_CRYPTO_OSSL_INCLUDE_DIRS}
   ${OPENSSL_INCLUDE_DIRS}
   ${WOLFSSL_INCLUDE_DIRS}
   ${LIBCARES_INCLUDE_DIRS}
@@ -36,7 +38,9 @@ link_libraries(
   ${LIBNGHTTP3_LIBRARIES}
   ${LIBNGTCP2_LIBRARIES}
   ${LIBNGTCP2_CRYPTO_QUICTLS_LIBRARIES}
+  ${LIBNGTCP2_CRYPTO_LIBRESSL_LIBRARIES}
   ${LIBNGTCP2_CRYPTO_WOLFSSL_LIBRARIES}
+  ${LIBNGTCP2_CRYPTO_OSSL_LIBRARIES}
   ${OPENSSL_LIBRARIES}
   ${WOLFSSL_LIBRARIES}
   ${LIBCARES_LIBRARIES}
@@ -85,7 +89,6 @@ if(ENABLE_APP)
     list(APPEND H2LOAD_SOURCES
       h2load_http3_session.cc
       h2load_quic.cc
-      quic.cc
     )
   endif()
 
@@ -125,7 +128,6 @@ if(ENABLE_APP)
     shrpx_api_downstream_connection.cc
     shrpx_health_monitor_downstream_connection.cc
     shrpx_null_downstream_connection.cc
-    shrpx_exec.cc
     shrpx_dns_resolver.cc
     shrpx_dual_dns_resolver.cc
     shrpx_dns_tracker.cc
@@ -147,7 +149,7 @@ if(ENABLE_APP)
      shrpx_quic_connection_handler.cc
      shrpx_http3_upstream.cc
      http3.cc
-     quic.cc
+     siphash.cc
     )
   endif()
   add_library(nghttpx_static STATIC ${NGHTTPX_SRCS})
@@ -171,54 +173,59 @@ if(ENABLE_APP)
     target_link_libraries(nghttpx_static neverbleed)
   endif()
 
-  set(NGHTTPX_UNITTEST_SOURCES
-    shrpx-unittest.cc
-    shrpx_tls_test.cc
-    shrpx_downstream_test.cc
-    shrpx_config_test.cc
-    shrpx_worker_test.cc
-    shrpx_http_test.cc
-    shrpx_router_test.cc
-    http2_test.cc
-    util_test.cc
-    nghttp2_gzip_test.c
-    nghttp2_gzip.c
-    buffer_test.cc
-    memchunk_test.cc
-    template_test.cc
-    base64_test.cc
-    ${CMAKE_SOURCE_DIR}/tests/munit/munit.c
-  )
-  add_executable(nghttpx-unittest EXCLUDE_FROM_ALL
-    ${NGHTTPX_UNITTEST_SOURCES}
-    $<TARGET_OBJECTS:llhttp>
-    $<TARGET_OBJECTS:url-parser>
+  if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
+    set(NGHTTPX_UNITTEST_SOURCES
+      shrpx-unittest.cc
+      shrpx_tls_test.cc
+      shrpx_downstream_test.cc
+      shrpx_config_test.cc
+      shrpx_worker_test.cc
+      shrpx_http_test.cc
+      shrpx_router_test.cc
+      http2_test.cc
+      util_test.cc
+      nghttp2_gzip_test.c
+      nghttp2_gzip.c
+      buffer_test.cc
+      memchunk_test.cc
+      template_test.cc
+      base64_test.cc
+      ${CMAKE_SOURCE_DIR}/tests/munit/munit.c
     )
-  target_include_directories(nghttpx-unittest PRIVATE
-    ${CMAKE_SOURCE_DIR}/tests/munit
-  )
-  target_compile_definitions(nghttpx-unittest
-    PRIVATE "-DNGHTTP2_SRC_DIR=\"${CMAKE_SOURCE_DIR}/src\""
-  )
-  target_link_libraries(nghttpx-unittest nghttpx_static)
-  if(HAVE_MRUBY)
-    target_link_libraries(nghttpx-unittest mruby-lib)
-  endif()
-  if(HAVE_NEVERBLEED)
-    target_link_libraries(nghttpx-unittest neverbleed)
-  endif()
+    if(ENABLE_HTTP3)
+      list(APPEND NGHTTPX_UNITTEST_SOURCES siphash_test.cc)
+    endif()
+    add_executable(nghttpx-unittest EXCLUDE_FROM_ALL
+      ${NGHTTPX_UNITTEST_SOURCES}
+      $<TARGET_OBJECTS:llhttp>
+      $<TARGET_OBJECTS:urlparse>
+    )
+    target_include_directories(nghttpx-unittest PRIVATE
+      ${CMAKE_SOURCE_DIR}/tests/munit
+    )
+    target_compile_definitions(nghttpx-unittest
+      PRIVATE "-DNGHTTP2_SRC_DIR=\"${CMAKE_SOURCE_DIR}/src\""
+    )
+    target_link_libraries(nghttpx-unittest nghttpx_static)
+    if(HAVE_MRUBY)
+      target_link_libraries(nghttpx-unittest mruby-lib)
+    endif()
+    if(HAVE_NEVERBLEED)
+      target_link_libraries(nghttpx-unittest neverbleed)
+    endif()
 
-  add_test(nghttpx-unittest nghttpx-unittest)
-  add_dependencies(check nghttpx-unittest)
+    add_test(nghttpx-unittest nghttpx-unittest)
+    add_dependencies(check nghttpx-unittest)
+  endif()
 
   add_executable(nghttp   ${NGHTTP_SOURCES}   $<TARGET_OBJECTS:llhttp>
-    $<TARGET_OBJECTS:url-parser>
+    $<TARGET_OBJECTS:urlparse>
   )
   add_executable(nghttpd  ${NGHTTPD_SOURCES}  $<TARGET_OBJECTS:llhttp>
-    $<TARGET_OBJECTS:url-parser>
+    $<TARGET_OBJECTS:urlparse>
   )
   add_executable(nghttpx  ${NGHTTPX-bin_SOURCES} $<TARGET_OBJECTS:llhttp>
-    $<TARGET_OBJECTS:url-parser>
+    $<TARGET_OBJECTS:urlparse>
   )
   target_compile_definitions(nghttpx PRIVATE
     "-DPKGDATADIR=\"${PKGDATADIR}\""
@@ -226,7 +233,7 @@ if(ENABLE_APP)
   )
   target_link_libraries(nghttpx nghttpx_static)
   add_executable(h2load   ${H2LOAD_SOURCES}   $<TARGET_OBJECTS:llhttp>
-    $<TARGET_OBJECTS:url-parser>
+    $<TARGET_OBJECTS:urlparse>
   )
 
   install(TARGETS nghttp nghttpd nghttpx h2load)

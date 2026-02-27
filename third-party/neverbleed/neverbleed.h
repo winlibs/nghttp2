@@ -133,7 +133,7 @@ extern enum neverbleed_offload_type {
 
 inline size_t neverbleed_iobuf_size(neverbleed_iobuf_t *buf)
 {
-    return buf->end - buf->start;
+    return (size_t)(buf->end - buf->start);
 }
 
 #ifdef __cplusplus

@@ -71,9 +71,10 @@ struct MRubyAssocData {
   int phase;
 };
 
-RProc *compile(mrb_state *mrb, const StringRef &filename);
+RProc *compile(mrb_state *mrb, const std::string_view &filename);
 
-std::unique_ptr<MRubyContext> create_mruby_context(const StringRef &filename);
+std::unique_ptr<MRubyContext>
+create_mruby_context(const std::string_view &filename);
 
 // Return interned |ptr|.
 mrb_sym intern_ptr(mrb_state *mrb, void *ptr);
@@ -86,4 +87,4 @@ void check_phase(mrb_state *mrb, int phase, int phase_mask);
 
 } // namespace shrpx
 
-#endif // SHRPX_MRUBY_H
+#endif // !defined(SHRPX_MRUBY_H)

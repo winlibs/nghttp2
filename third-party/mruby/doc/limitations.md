@@ -1,3 +1,5 @@
+<!-- summary: About the Limitations of mruby -->
+
 # Limitations and Differences
 
 The philosophy of mruby is to be a lightweight implementation of
@@ -69,75 +71,6 @@ p Liste.new "foobar"
 #### mruby [3.1.0 (2022-05-12)]
 
 `ArgumentError` is raised.
-
-## Method visibility
-
-For simplicity reasons no method visibility (public/private/protected) is
-supported. Those methods are defined, but they are dummy methods.
-
-```ruby
-class VisibleTest
-
-  def public_method; end
-
-  private
-  def private_method; end
-
-end
-
-p VisibleTest.new.respond_to?(:private_method, false)
-p VisibleTest.new.respond_to?(:private_method, true)
-```
-
-#### Ruby [ruby 2.0.0p645 (2015-04-13 revision 50299)]
-
-```
-false
-true
-```
-
-#### mruby [3.1.0 (2022-05-12)]
-
-```
-true
-true
-```
-
-### Visibility Declaration
-
-The declaration form of following visibility methods are not implemented.
-
-- `public`
-- `private`
-- `protected`
-- `module_function`
-
-Especially, `module_function` method is not dummy, but no declaration form.
-
-```ruby
-module TestModule
-  module_function
-  def test_func
-    p 'test_func called'
-  end
-
-  test_func
-end
-
-p 'ok'
-```
-
-#### Ruby [ruby 2.5.5p157 (2019-03-15 revision 67260)]
-
-```
-ok
-```
-
-#### mruby [3.1.0 (2022-05-12)]
-
-```
-test.rb:8: undefined method 'test_func' (NoMethodError)
-```
 
 ## `defined?`
 
@@ -253,3 +186,30 @@ def g(a: 1, b: a)
 end
 g(a:1)
 ```
+
+## No Double Dispatch in Module Loading
+
+To make implementation simpler, mruby does not use double dispatching in module loading (`include`/`prepend`/`extend`).
+Those method internally called corresponding actual load methods (`append_features`/`prepend_features`/`extend_object`).
+But they are rarely overloaded, consumes more memory, and make loading little bit slower. As a Ruby implementation for the smaller device,
+we decided mruby simpler.
+
+```ruby
+module M
+  def self.append_features(mod)
+     p :append
+  end
+end
+
+class C
+  include M
+end
+```
+
+#### Ruby [ruby 3.5.0dev (2025-04-21 85bab61565))]
+
+Prints `:append`.
+
+#### mruby [3.5.0 (2025-04-28)]
+
+Nothing printed (since `include` does not call `append_features` internally).

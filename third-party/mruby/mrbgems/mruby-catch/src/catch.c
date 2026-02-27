@@ -37,15 +37,16 @@ static const mrb_irep catch_irep = {
   NULL,
   sizeof(catch_iseq),0,3,0,0
 };
+mrb_alignas(8)
 static const struct RProc catch_proc = {
-  NULL, NULL, MRB_TT_PROC, MRB_GC_RED, MRB_FL_OBJ_IS_FROZEN | MRB_PROC_SCOPE | MRB_PROC_STRICT,
+  NULL, NULL, MRB_TT_PROC, MRB_GC_RED, MRB_OBJ_IS_FROZEN, MRB_PROC_SCOPE | MRB_PROC_STRICT,
   { &catch_irep }, NULL, { NULL }
 };
 
-static uintptr_t
+static size_t
 find_catcher(mrb_state *mrb, mrb_value tag)
 {
-  const mrb_callinfo *ci = mrb->c->ci - 1; // skip ownself throw
+  const mrb_callinfo *ci = mrb->c->ci - 1; // skip oneself throw
   ptrdiff_t n = ci - mrb->c->cibase;
 
   for (; n > 0; n--, ci--) {
@@ -67,16 +68,14 @@ throw_m(mrb_state *mrb, mrb_value self)
   }
 
   uintptr_t ci_index = find_catcher(mrb, tag);
-  if (ci_index > 0) {
-    struct RBreak *b = MRB_OBJ_ALLOC(mrb, MRB_TT_BREAK, NULL);
-    mrb_break_value_set(b, obj);
-    b->ci_break_index = ci_index; /* Back to the caller directly */
-    mrb_exc_raise(mrb, mrb_obj_value(b));
-  }
-  else {
+  if (ci_index == 0) {
     mrb_value argv[2] = {tag, obj};
     mrb_exc_raise(mrb, mrb_obj_new(mrb, mrb_exc_get_id(mrb, MRB_ERROR_SYM(UncaughtThrowError)), 2, argv));
   }
+  struct RBreak *b = MRB_OBJ_ALLOC(mrb, MRB_TT_BREAK, NULL);
+  mrb_break_value_set(b, obj);
+  b->ci_break_index = ci_index; /* Back to the caller directly */
+  mrb_exc_raise(mrb, mrb_obj_value(b));
   /* not reached */
   return mrb_nil_value();
 }
@@ -88,9 +87,10 @@ mrb_mruby_catch_gem_init(mrb_state *mrb)
 
   MRB_PRESYM_INIT_SYMBOLS(mrb, catch_syms);
   MRB_METHOD_FROM_PROC(m, &catch_proc);
+  m.flags |= MRB_METHOD_PRIVATE_FL;
   mrb_define_method_raw(mrb, mrb->kernel_module, MRB_SYM(catch), m);
 
-  mrb_define_method(mrb, mrb->kernel_module, "throw", throw_m, MRB_ARGS_ARG(1,1));
+  mrb_define_private_method_id(mrb, mrb->kernel_module, MRB_SYM(throw), throw_m, MRB_ARGS_ARG(1,1));
 }
 
 void

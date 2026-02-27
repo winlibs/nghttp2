@@ -39,6 +39,10 @@
    don't. */
 #undef HAVE_DECL_INITGROUPS
 
+/* Define to 1 if you have the declaration of `LIBRESSL_VERSION_NUMBER', and
+   to 0 if you don't. */
+#undef HAVE_DECL_LIBRESSL_VERSION_NUMBER
+
 /* Define to 1 if you have the declaration of `strerror_r', and to 0 if you
    don't. */
 #undef HAVE_DECL_STRERROR_R
@@ -81,6 +85,12 @@
 
 /* Define to 1 if you have `libngtcp2_crypto_boringssl` library. */
 #undef HAVE_LIBNGTCP2_CRYPTO_BORINGSSL
+
+/* Define to 1 if you have `libngtcp2_crypto_libressl` library. */
+#undef HAVE_LIBNGTCP2_CRYPTO_LIBRESSL
+
+/* Define to 1 if you have `libngtcp2_crypto_ossl` library. */
+#undef HAVE_LIBNGTCP2_CRYPTO_OSSL
 
 /* Define to 1 if you have `libngtcp2_crypto_quictls` library. */
 #undef HAVE_LIBNGTCP2_CRYPTO_QUICTLS
@@ -163,11 +173,11 @@
 /* Define to 1 if you have the <stdlib.h> header file. */
 #undef HAVE_STDLIB_H
 
+/* Define to 1 if you have the `std::chrono::time_zone`. */
+#undef HAVE_STD_CHRONO_TIME_ZONE
+
 /* Define to 1 if you have the `std::future`. */
 #undef HAVE_STD_FUTURE
-
-/* Define to 1 if you have the `std::map::emplace`. */
-#undef HAVE_STD_MAP_EMPLACE
 
 /* Define to 1 if you have the `strchr' function. */
 #undef HAVE_STRCHR
@@ -216,9 +226,6 @@
 
 /* Define to 1 if you have the <sys/types.h> header file. */
 #undef HAVE_SYS_TYPES_H
-
-/* Define to 1 if you have thread_local storage specifier. */
-#undef HAVE_THREAD_LOCAL
 
 /* Define to 1 if you have the `timegm' function. */
 #undef HAVE_TIMEGM

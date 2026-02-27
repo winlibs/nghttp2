@@ -30,7 +30,7 @@
 #include <sys/types.h>
 #ifdef HAVE_SYS_SOCKET_H
 #  include <sys/socket.h>
-#endif // HAVE_SYS_SOCKET_H
+#endif // defined(HAVE_SYS_SOCKET_H)
 
 #include <mutex>
 #include <memory>
@@ -38,36 +38,34 @@
 #include <random>
 #ifndef NOTHREADS
 #  include <future>
-#endif // NOTHREADS
+#endif // !defined(NOTHREADS)
 
 #ifdef HAVE_LIBBPF
 #  include <bpf/libbpf.h>
-#endif // HAVE_LIBBPF
+#endif // defined(HAVE_LIBBPF)
 
 #include "ssl_compat.h"
 
 #ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
 #  include <wolfssl/options.h>
 #  include <wolfssl/openssl/ssl.h>
-#else // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#else // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 #  include <openssl/ssl.h>
-#endif // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#endif // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 
 #include <ev.h>
 
 #ifdef HAVE_NEVERBLEED
 #  include <neverbleed.h>
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
 
 #include "shrpx_downstream_connection_pool.h"
 #include "shrpx_config.h"
-#include "shrpx_exec.h"
 
 namespace shrpx {
 
 class Http2Session;
 class ConnectBlocker;
-class AcceptHandler;
 class Worker;
 struct WorkerStat;
 struct TicketKeys;
@@ -79,20 +77,6 @@ namespace tls {
 class CertLookupTree;
 
 } // namespace tls
-
-struct OCSPUpdateContext {
-  // ocsp response buffer
-  std::vector<uint8_t> resp;
-  // Process running fetch-ocsp-response script
-  Process proc;
-  // index to ConnectionHandler::all_ssl_ctx_, which points to next
-  // SSL_CTX to update ocsp response cache.
-  size_t next;
-  ev_child chldev;
-  ev_io rev;
-  // errno encountered while processing response
-  int error;
-};
 
 // SerialEvent is an event sent from Worker thread.
 enum class SerialEventType {
@@ -117,7 +101,7 @@ struct BPFRef {
   bpf_map *reuseport_array;
   bpf_map *worker_id_map;
 };
-#  endif // HAVE_LIBBPF
+#  endif // defined(HAVE_LIBBPF)
 
 // QUIC IPC message type.
 enum class QUICIPCType {
@@ -135,14 +119,12 @@ struct QUICLingeringWorkerProcess {
   // Socket to send QUIC IPC message to this worker process.
   int quic_ipc_fd;
 };
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 class ConnectionHandler {
 public:
   ConnectionHandler(struct ev_loop *loop, std::mt19937 &gen);
   ~ConnectionHandler();
-  int handle_connection(int fd, sockaddr *addr, int addrlen,
-                        const UpstreamAddr *faddr);
   // Creates Worker object for single threaded configuration.
   int create_single_worker();
   // Creates |num| Worker objects for multi threaded configuration.
@@ -155,31 +137,10 @@ public:
   const std::shared_ptr<TicketKeys> &get_ticket_keys() const;
   struct ev_loop *get_loop() const;
   Worker *get_single_worker() const;
-  void add_acceptor(std::unique_ptr<AcceptHandler> h);
-  void delete_acceptor();
-  void enable_acceptor();
-  void disable_acceptor();
-  void sleep_acceptor(ev_tstamp t);
-  void accept_pending_connection();
   void graceful_shutdown_worker();
   void set_graceful_shutdown(bool f);
   bool get_graceful_shutdown() const;
   void join_worker();
-
-  // Cancels ocsp update process
-  void cancel_ocsp_update();
-  // Starts ocsp update for certificate |cert_file|.
-  int start_ocsp_update(const char *cert_file);
-  // Reads incoming data from ocsp update process
-  void read_ocsp_chunk();
-  // Handles the completion of one ocsp update
-  void handle_ocsp_complete();
-  // Resets ocsp_;
-  void reset_ocsp();
-  // Proceeds to the next certificate's ocsp update.  If all
-  // certificates' ocsp update has been done, schedule next ocsp
-  // update.
-  void proceed_next_cert_ocsp();
 
   void set_tls_ticket_key_memcached_dispatcher(
     std::unique_ptr<MemcachedDispatcher> dispatcher);
@@ -231,12 +192,12 @@ public:
 #  ifdef HAVE_LIBBPF
   std::vector<BPFRef> &get_quic_bpf_refs();
   void unload_bpf_objects();
-#  endif // HAVE_LIBBPF
-#endif   // ENABLE_HTTP3
+#  endif // defined(HAVE_LIBBPF)
+#endif   // defined(ENABLE_HTTP3)
 
 #ifdef HAVE_NEVERBLEED
   void set_neverbleed(neverbleed_t *nb);
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
 
   // Send SerialEvent SerialEventType::REPLACE_DOWNSTREAM to this
   // object.
@@ -249,8 +210,6 @@ public:
   // Sends WorkerEvent to make them replace downstream.
   void
   worker_replace_downstream(std::shared_ptr<DownstreamConfig> downstreamconf);
-
-  void set_enable_acceptor_on_ocsp_completion(bool f);
 
 private:
   // Stores all SSL_CTX objects.
@@ -268,12 +227,11 @@ private:
   std::vector<QUICLingeringWorkerProcess> quic_lingering_worker_processes_;
 #  ifdef HAVE_LIBBPF
   std::vector<BPFRef> quic_bpf_refs_;
-#  endif // HAVE_LIBBPF
+#  endif // defined(HAVE_LIBBPF)
   std::shared_ptr<QUICKeyingMaterials> quic_keying_materials_;
   std::vector<SSL_CTX *> quic_all_ssl_ctx_;
   std::vector<std::vector<SSL_CTX *>> quic_indexed_ssl_ctx_;
-#endif // ENABLE_HTTP3
-  OCSPUpdateContext ocsp_;
+#endif // defined(ENABLE_HTTP3)
   std::mt19937 &gen_;
   // ev_loop for each worker
   std::vector<struct ev_loop *> worker_loops_;
@@ -291,33 +249,27 @@ private:
   std::unique_ptr<tls::CertLookupTree> cert_tree_;
 #ifdef ENABLE_HTTP3
   std::unique_ptr<tls::CertLookupTree> quic_cert_tree_;
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
   std::unique_ptr<MemcachedDispatcher> tls_ticket_key_memcached_dispatcher_;
   // Current TLS session ticket keys.  Note that TLS connection does
   // not refer to this field directly.  They use TicketKeys object in
   // Worker object.
   std::shared_ptr<TicketKeys> ticket_keys_;
   struct ev_loop *loop_;
-  std::vector<std::unique_ptr<AcceptHandler>> acceptors_;
 #ifdef HAVE_NEVERBLEED
   neverbleed_t *nb_;
-#endif // HAVE_NEVERBLEED
-  ev_timer disable_acceptor_timer_;
-  ev_timer ocsp_timer_;
+#endif // defined(HAVE_NEVERBLEED)
   ev_async thread_join_asyncev_;
   ev_async serial_event_asyncev_;
 #ifndef NOTHREADS
   std::future<void> thread_join_fut_;
-#endif // NOTHREADS
+#endif // defined(NOTHREADS)
   size_t tls_ticket_key_memcached_get_retry_count_;
   size_t tls_ticket_key_memcached_fail_count_;
   unsigned int worker_round_robin_cnt_;
   bool graceful_shutdown_;
-  // true if acceptors should be enabled after the initial ocsp update
-  // has finished.
-  bool enable_acceptor_on_ocsp_completion_;
 };
 
 } // namespace shrpx
 
-#endif // SHRPX_CONNECTION_HANDLER_H
+#endif // !defined(SHRPX_CONNECTION_HANDLER_H)

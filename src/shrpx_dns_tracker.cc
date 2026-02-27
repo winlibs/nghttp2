@@ -64,10 +64,11 @@ ResolverEntry DNSTracker::make_entry(std::unique_ptr<DualDNSResolver> resolv,
                                      const Address *result) {
   auto &dnsconf = get_config()->dns;
 
-  auto ent = ResolverEntry{};
-  ent.resolv = std::move(resolv);
-  ent.host = std::move(host);
-  ent.status = status;
+  auto ent = ResolverEntry{
+    .host = std::move(host),
+    .resolv = std::move(resolv),
+    .status = status,
+  };
   switch (status) {
   case DNSResolverStatus::ERROR:
   case DNSResolverStatus::OK:
@@ -109,15 +110,14 @@ DNSResolverStatus DNSTracker::resolve(Address *result, DNSQuery *dnsq) {
 
   auto it = ents_.find(dnsq->host);
 
-  if (it == std::end(ents_)) {
+  if (it == std::ranges::end(ents_)) {
     if (LOG_ENABLED(INFO)) {
       LOG(INFO) << "DNS entry not found for " << dnsq->host;
     }
 
     auto resolv = std::make_unique<DualDNSResolver>(loop_, family_);
-    auto host_copy =
-      ImmutableString{std::begin(dnsq->host), std::end(dnsq->host)};
-    auto host = StringRef{host_copy};
+    auto host_copy = ImmutableString{dnsq->host};
+    auto host = as_string_view(host_copy);
 
     rv = resolv->resolve(host);
     if (rv != 0) {
@@ -185,7 +185,7 @@ DNSResolverStatus DNSTracker::resolve(Address *result, DNSQuery *dnsq) {
     }
 
     auto resolv = std::make_unique<DualDNSResolver>(loop_, family_);
-    auto host = StringRef{ent.host};
+    auto host = as_string_view(ent.host);
 
     rv = resolv->resolve(host);
     if (rv != 0) {
@@ -287,7 +287,7 @@ void DNSTracker::cancel(DNSQuery *dnsq) {
   }
 
   auto it = ents_.find(dnsq->host);
-  if (it == std::end(ents_)) {
+  if (it == std::ranges::end(ents_)) {
     return;
   }
 
@@ -310,7 +310,7 @@ void DNSTracker::gc() {
   }
 
   auto now = std::chrono::steady_clock::now();
-  for (auto it = std::begin(ents_); it != std::end(ents_);) {
+  for (auto it = std::ranges::begin(ents_); it != std::ranges::end(ents_);) {
     auto &ent = (*it).second;
     if (ent.expiry >= now) {
       ++it;

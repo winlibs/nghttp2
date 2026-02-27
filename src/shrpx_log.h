@@ -32,6 +32,8 @@
 #include <memory>
 #include <vector>
 #include <chrono>
+#include <algorithm>
+#include <ranges>
 
 #include "shrpx_log_config.h"
 #include "tls.h"
@@ -46,9 +48,9 @@ using namespace nghttp2;
 
 #ifdef __FILE_NAME__
 #  define NGHTTP2_FILE_NAME __FILE_NAME__
-#else // !__FILE_NAME__
+#else // !defined(__FILE_NAME__)
 #  define NGHTTP2_FILE_NAME __FILE__
-#endif // !__FILE_NAME__
+#endif // !defined(__FILE_NAME__)
 
 #define LOG(SEVERITY) shrpx::Log(SEVERITY, NGHTTP2_FILE_NAME, __LINE__)
 
@@ -107,23 +109,56 @@ public:
   Log(int severity, const char *filename, int linenum);
   ~Log();
   Log &operator<<(const std::string &s);
+  Log &operator<<(const std::string_view &s);
   Log &operator<<(const char *s);
-  Log &operator<<(const StringRef &s);
   Log &operator<<(const ImmutableString &s);
-  Log &operator<<(short n) { return *this << static_cast<long long>(n); }
-  Log &operator<<(int n) { return *this << static_cast<long long>(n); }
-  Log &operator<<(long n) { return *this << static_cast<long long>(n); }
-  Log &operator<<(long long n);
-  Log &operator<<(unsigned short n) {
-    return *this << static_cast<unsigned long long>(n);
+  template <std::signed_integral T> Log &operator<<(T n) {
+    if (full_) {
+      return *this;
+    }
+
+    if (n >= 0) {
+      return *this << as_unsigned(n);
+    }
+
+    if (flags_ & fmt_hex) {
+      write_hex(as_unsigned(n));
+      return *this;
+    }
+
+    if (wleft() < std::numeric_limits<T>::digits10 + 1 + /* sign */ 1) {
+      full_ = true;
+      return *this;
+    }
+
+    *last_++ = '-';
+
+    last_ = util::utos(
+      static_cast<std::make_unsigned_t<T>>(0u - as_unsigned(n)), last_);
+    update_full();
+
+    return *this;
   }
-  Log &operator<<(unsigned int n) {
-    return *this << static_cast<unsigned long long>(n);
+  template <std::unsigned_integral T> Log &operator<<(T n) {
+    if (full_) {
+      return *this;
+    }
+
+    if (flags_ & fmt_hex) {
+      write_hex(n);
+      return *this;
+    }
+
+    if (wleft() < std::numeric_limits<T>::digits10 + 1) {
+      full_ = true;
+      return *this;
+    }
+
+    last_ = util::utos(n, last_);
+    update_full();
+
+    return *this;
   }
-  Log &operator<<(unsigned long n) {
-    return *this << static_cast<unsigned long long>(n);
-  }
-  Log &operator<<(unsigned long long n);
   Log &operator<<(float n) { return *this << static_cast<double>(n); }
   Log &operator<<(double n);
   Log &operator<<(long double n);
@@ -136,42 +171,24 @@ public:
     func(*this);
     return *this;
   }
-  template <typename InputIt> void write_seq(InputIt first, InputIt last) {
+  template <std::ranges::input_range R>
+  requires(!std::is_array_v<std::remove_cvref_t<R>>)
+  void write_seq(R &&r) {
     if (full_) {
       return;
     }
 
-    auto d = std::distance(first, last);
-    auto n = std::min(wleft(), static_cast<size_t>(d));
-    last_ = std::copy(first, first + n, last_);
+    auto n = std::min(wleft(), static_cast<size_t>(std::ranges::distance(r)));
+    last_ = std::ranges::copy(std::views::take(r, as_signed(n)), last_).out;
     update_full();
   }
 
-  template <typename T> void write_hex(T n) {
+  template <std::unsigned_integral T> void write_hex(T n) {
     if (full_) {
       return;
     }
 
-    if (n == 0) {
-      if (wleft() < 4 /* for "0x00" */) {
-        full_ = true;
-        return;
-      }
-      *last_++ = '0';
-      *last_++ = 'x';
-      *last_++ = '0';
-      *last_++ = '0';
-      update_full();
-      return;
-    }
-
-    size_t nlen = 0;
-    for (auto t = n; t; t >>= 8, ++nlen)
-      ;
-
-    nlen *= 2;
-
-    if (wleft() < 2 /* for "0x" */ + nlen) {
+    if (wleft() < "0x"sv.size() + sizeof(T) * 2) {
       full_ = true;
       return;
     }
@@ -179,20 +196,13 @@ public:
     *last_++ = '0';
     *last_++ = 'x';
 
-    last_ += nlen;
+    last_ = util::format_hex(n, last_);
     update_full();
-
-    auto p = last_ - 1;
-    for (; n; n >>= 8) {
-      uint8_t b = n & 0xff;
-      *p-- = util::LOWER_XDIGITS[b & 0xf];
-      *p-- = util::LOWER_XDIGITS[b >> 4];
-    }
   }
   static void set_severity_level(int severity);
   // Returns the severity level by |name|.  Returns -1 if |name| is
   // unknown.
-  static int get_severity_level_by_name(const StringRef &name);
+  static int get_severity_level_by_name(const std::string_view &name);
   static bool log_enabled(int severity) { return severity >= severity_thres_; }
 
   enum {
@@ -200,18 +210,20 @@ public:
     fmt_hex = 0x01,
   };
 
-  void set_flags(int flags) { flags_ = flags; }
+  void set_flags(uint32_t flags) { flags_ = flags; }
 
 private:
-  size_t rleft() { return last_ - begin_; }
-  size_t wleft() { return end_ - last_; }
-  void update_full() { full_ = last_ == end_; }
+  size_t rleft() { return as_unsigned(last_ - begin_); }
+  size_t wleft() {
+    return as_unsigned(end_ - last_ - /* terminal NUL or LF */ 1);
+  }
+  void update_full() { full_ = wleft() == 0; }
 
   LogBuffer &buf_;
   uint8_t *begin_;
   uint8_t *end_;
   uint8_t *last_;
-  const char *filename_;
+  std::string_view filename_;
   uint32_t flags_;
   int severity_;
   int linenum_;
@@ -266,20 +278,20 @@ enum class LogFragmentType {
 };
 
 struct LogFragment {
-  LogFragment(LogFragmentType type, StringRef value = ""_sr)
+  LogFragment(LogFragmentType type, std::string_view value = ""sv)
     : type(type), value(std::move(value)) {}
   LogFragmentType type;
-  StringRef value;
+  std::string_view value;
 };
 
 struct LogSpec {
   Downstream *downstream;
-  StringRef remote_addr;
-  StringRef alpn;
-  StringRef sni;
+  std::string_view remote_addr;
+  std::string_view alpn;
+  std::string_view sni;
   SSL *ssl;
   std::chrono::high_resolution_clock::time_point request_end_time;
-  StringRef remote_port;
+  std::string_view remote_port;
   uint16_t server_port;
   pid_t pid;
 };
@@ -315,4 +327,4 @@ int open_log_file(const char *path);
 
 } // namespace shrpx
 
-#endif // SHRPX_LOG_H
+#endif // !defined(SHRPX_LOG_H)

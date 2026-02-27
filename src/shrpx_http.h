@@ -28,6 +28,7 @@
 #include "shrpx.h"
 
 #include <string>
+#include <algorithm>
 
 #include <nghttp2/nghttp2.h>
 
@@ -36,32 +37,48 @@
 #include "allocator.h"
 
 using namespace nghttp2;
+using namespace std::literals;
 
 namespace shrpx {
 
 namespace http {
 
-StringRef create_error_html(BlockAllocator &balloc, unsigned int status_code);
+std::string_view create_error_html(BlockAllocator &balloc,
+                                   unsigned int status_code);
+
+struct ViaValueGenerator {
+  template <std::weakly_incrementable O>
+  requires(std::indirectly_writable<O, char>)
+  constexpr O operator()(int major, int minor, O result) {
+    using result_type = std::iter_value_t<O>;
+
+    *result++ = static_cast<result_type>(major + '0');
+
+    if (major < 2) {
+      *result++ = '.';
+      *result++ = static_cast<result_type>(minor + '0');
+    }
+
+    return std::ranges::copy(" nghttpx"sv, result).out;
+  }
+};
 
 template <typename OutputIt>
 OutputIt create_via_header_value(OutputIt dst, int major, int minor) {
-  *dst++ = static_cast<char>(major + '0');
-  if (major < 2) {
-    *dst++ = '.';
-    *dst++ = static_cast<char>(minor + '0');
-  }
-  return util::copy_lit(dst, " nghttpx");
+  return ViaValueGenerator{}(major, minor, std::move(dst));
 }
 
 // Returns generated RFC 7239 Forwarded header field value.  The
 // |params| is bitwise-OR of zero or more of shrpx_forwarded_param
 // defined in shrpx_config.h.
-StringRef create_forwarded(BlockAllocator &balloc, int params,
-                           const StringRef &node_by, const StringRef &node_for,
-                           const StringRef &host, const StringRef &proto);
+std::string_view create_forwarded(BlockAllocator &balloc, uint32_t params,
+                                  const std::string_view &node_by,
+                                  const std::string_view &node_for,
+                                  const std::string_view &host,
+                                  const std::string_view &proto);
 
 // Adds ANSI color codes to HTTP headers |hdrs|.
-std::string colorizeHeaders(const char *hdrs);
+std::string colorize_headers(const std::string_view &hdrs);
 
 nghttp2_ssize select_padding_callback(nghttp2_session *session,
                                       const nghttp2_frame *frame,
@@ -70,27 +87,29 @@ nghttp2_ssize select_padding_callback(nghttp2_session *session,
 // Creates set-cookie-string for cookie based affinity.  If |path| is
 // not empty, "; <path>" is added.  If |secure| is true, "; Secure" is
 // added.
-StringRef create_affinity_cookie(BlockAllocator &balloc, const StringRef &name,
-                                 uint32_t affinity_cookie,
-                                 const StringRef &path, bool secure);
+std::string_view create_affinity_cookie(BlockAllocator &balloc,
+                                        const std::string_view &name,
+                                        uint32_t affinity_cookie,
+                                        const std::string_view &path,
+                                        bool secure);
 
 // Returns true if |secure| indicates that Secure attribute should be
 // set.
 bool require_cookie_secure_attribute(SessionAffinityCookieSecure secure,
-                                     const StringRef &scheme);
+                                     const std::string_view &scheme);
 
 // Returns RFC 7838 alt-svc header field value.
-StringRef create_altsvc_header_value(BlockAllocator &balloc,
-                                     const std::vector<AltSvc> &altsvcs);
+std::string_view create_altsvc_header_value(BlockAllocator &balloc,
+                                            const std::vector<AltSvc> &altsvcs);
 
 // Returns true if either of the following conditions holds:
 // - scheme is https and encrypted is true
 // - scheme is http and encrypted is false
 // Otherwise returns false.
-bool check_http_scheme(const StringRef &scheme, bool encrypted);
+bool check_http_scheme(const std::string_view &scheme, bool encrypted);
 
 } // namespace http
 
 } // namespace shrpx
 
-#endif // SHRPX_HTTP_H
+#endif // !defined(SHRPX_HTTP_H)

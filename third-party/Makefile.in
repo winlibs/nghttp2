@@ -148,13 +148,13 @@ am__libneverbleed_la_SOURCES_DIST = neverbleed/neverbleed.c \
 @ENABLE_THIRD_PARTY_TRUE@@HAVE_NEVERBLEED_TRUE@am_libneverbleed_la_OBJECTS = neverbleed/libneverbleed_la-neverbleed.lo
 libneverbleed_la_OBJECTS = $(am_libneverbleed_la_OBJECTS)
 @ENABLE_THIRD_PARTY_TRUE@@HAVE_NEVERBLEED_TRUE@am_libneverbleed_la_rpath =
-liburl_parser_la_LIBADD =
-am__liburl_parser_la_SOURCES_DIST = url-parser/url_parser.c \
-	url-parser/url_parser.h
-@ENABLE_THIRD_PARTY_TRUE@am_liburl_parser_la_OBJECTS =  \
-@ENABLE_THIRD_PARTY_TRUE@	url-parser/url_parser.lo
-liburl_parser_la_OBJECTS = $(am_liburl_parser_la_OBJECTS)
-@ENABLE_THIRD_PARTY_TRUE@am_liburl_parser_la_rpath =
+liburlparse_la_LIBADD =
+am__liburlparse_la_SOURCES_DIST = urlparse/urlparse.c \
+	urlparse/urlparse.h
+@ENABLE_THIRD_PARTY_TRUE@am_liburlparse_la_OBJECTS =  \
+@ENABLE_THIRD_PARTY_TRUE@	urlparse/urlparse.lo
+liburlparse_la_OBJECTS = $(am_liburlparse_la_OBJECTS)
+@ENABLE_THIRD_PARTY_TRUE@am_liburlparse_la_rpath =
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
 am__v_P_0 = false
@@ -174,7 +174,7 @@ am__depfiles_remade = llhttp/src/$(DEPDIR)/libllhttp_la-api.Plo \
 	llhttp/src/$(DEPDIR)/libllhttp_la-http.Plo \
 	llhttp/src/$(DEPDIR)/libllhttp_la-llhttp.Plo \
 	neverbleed/$(DEPDIR)/libneverbleed_la-neverbleed.Plo \
-	url-parser/$(DEPDIR)/url_parser.Plo
+	urlparse/$(DEPDIR)/urlparse.Plo
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -195,10 +195,10 @@ am__v_CCLD_ = $(am__v_CCLD_@AM_DEFAULT_V@)
 am__v_CCLD_0 = @echo "  CCLD    " $@;
 am__v_CCLD_1 = 
 SOURCES = $(libllhttp_la_SOURCES) $(libneverbleed_la_SOURCES) \
-	$(liburl_parser_la_SOURCES)
+	$(liburlparse_la_SOURCES)
 DIST_SOURCES = $(am__libllhttp_la_SOURCES_DIST) \
 	$(am__libneverbleed_la_SOURCES_DIST) \
-	$(am__liburl_parser_la_SOURCES_DIST)
+	$(am__liburlparse_la_SOURCES_DIST)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -294,6 +294,10 @@ LIBNGHTTP3_LIBS = @LIBNGHTTP3_LIBS@
 LIBNGTCP2_CFLAGS = @LIBNGTCP2_CFLAGS@
 LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS = @LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS@
 LIBNGTCP2_CRYPTO_BORINGSSL_LIBS = @LIBNGTCP2_CRYPTO_BORINGSSL_LIBS@
+LIBNGTCP2_CRYPTO_LIBRESSL_CFLAGS = @LIBNGTCP2_CRYPTO_LIBRESSL_CFLAGS@
+LIBNGTCP2_CRYPTO_LIBRESSL_LIBS = @LIBNGTCP2_CRYPTO_LIBRESSL_LIBS@
+LIBNGTCP2_CRYPTO_OSSL_CFLAGS = @LIBNGTCP2_CRYPTO_OSSL_CFLAGS@
+LIBNGTCP2_CRYPTO_OSSL_LIBS = @LIBNGTCP2_CRYPTO_OSSL_LIBS@
 LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS = @LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS@
 LIBNGTCP2_CRYPTO_QUICTLS_LIBS = @LIBNGTCP2_CRYPTO_QUICTLS_LIBS@
 LIBNGTCP2_CRYPTO_WOLFSSL_CFLAGS = @LIBNGTCP2_CRYPTO_WOLFSSL_CFLAGS@
@@ -422,11 +426,87 @@ AM_CPPFLAGS = @DEFS@
 # Enumerate all mruby files with the following command:
 # find mruby -type f ! -ipath 'mruby/.*' | awk '{print "\t"$0" \\"}'
 EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
-	mruby/docker-compose.yml mruby/codespell.txt \
-	mruby/CONTRIBUTING.md mruby/NEWS mruby/CODEOWNERS \
-	mruby/Gemfile.lock mruby/appveyor.yml mruby/Dockerfile \
-	mruby/Gemfile mruby/benchmark/plot.gpl \
-	mruby/benchmark/bm_ao_render.rb mruby/benchmark/bm_fib.rb \
+	mruby/docker-compose.yml mruby/CONTRIBUTING.md mruby/NEWS \
+	mruby/tools/lrama/LEGAL.md mruby/tools/lrama/exe/lrama \
+	mruby/tools/lrama/lib/lrama/state.rb \
+	mruby/tools/lrama/lib/lrama/counterexamples/path.rb \
+	mruby/tools/lrama/lib/lrama/counterexamples/start_path.rb \
+	mruby/tools/lrama/lib/lrama/counterexamples/state_item.rb \
+	mruby/tools/lrama/lib/lrama/counterexamples/example.rb \
+	mruby/tools/lrama/lib/lrama/counterexamples/derivation.rb \
+	mruby/tools/lrama/lib/lrama/counterexamples/production_path.rb \
+	mruby/tools/lrama/lib/lrama/counterexamples/transition_path.rb \
+	mruby/tools/lrama/lib/lrama/counterexamples/triple.rb \
+	mruby/tools/lrama/lib/lrama/states.rb \
+	mruby/tools/lrama/lib/lrama/option_parser.rb \
+	mruby/tools/lrama/lib/lrama/states_reporter.rb \
+	mruby/tools/lrama/lib/lrama/grammar/counter.rb \
+	mruby/tools/lrama/lib/lrama/grammar/code/rule_action.rb \
+	mruby/tools/lrama/lib/lrama/grammar/code/initial_action_code.rb \
+	mruby/tools/lrama/lib/lrama/grammar/code/printer_code.rb \
+	mruby/tools/lrama/lib/lrama/grammar/code/no_reference_code.rb \
+	mruby/tools/lrama/lib/lrama/grammar/code/destructor_code.rb \
+	mruby/tools/lrama/lib/lrama/grammar/union.rb \
+	mruby/tools/lrama/lib/lrama/grammar/destructor.rb \
+	mruby/tools/lrama/lib/lrama/grammar/binding.rb \
+	mruby/tools/lrama/lib/lrama/grammar/reference.rb \
+	mruby/tools/lrama/lib/lrama/grammar/symbols/resolver.rb \
+	mruby/tools/lrama/lib/lrama/grammar/auxiliary.rb \
+	mruby/tools/lrama/lib/lrama/grammar/symbols.rb \
+	mruby/tools/lrama/lib/lrama/grammar/stdlib.y \
+	mruby/tools/lrama/lib/lrama/grammar/type.rb \
+	mruby/tools/lrama/lib/lrama/grammar/percent_code.rb \
+	mruby/tools/lrama/lib/lrama/grammar/rule.rb \
+	mruby/tools/lrama/lib/lrama/grammar/symbol.rb \
+	mruby/tools/lrama/lib/lrama/grammar/error_token.rb \
+	mruby/tools/lrama/lib/lrama/grammar/rule_builder.rb \
+	mruby/tools/lrama/lib/lrama/grammar/printer.rb \
+	mruby/tools/lrama/lib/lrama/grammar/code.rb \
+	mruby/tools/lrama/lib/lrama/grammar/parameterizing_rule/resolver.rb \
+	mruby/tools/lrama/lib/lrama/grammar/parameterizing_rule/rhs.rb \
+	mruby/tools/lrama/lib/lrama/grammar/parameterizing_rule/rule.rb \
+	mruby/tools/lrama/lib/lrama/grammar/parameterizing_rule.rb \
+	mruby/tools/lrama/lib/lrama/grammar/precedence.rb \
+	mruby/tools/lrama/lib/lrama/digraph.rb \
+	mruby/tools/lrama/lib/lrama/grammar_validator.rb \
+	mruby/tools/lrama/lib/lrama/context.rb \
+	mruby/tools/lrama/lib/lrama/version.rb \
+	mruby/tools/lrama/lib/lrama/bitmap.rb \
+	mruby/tools/lrama/lib/lrama/state/resolved_conflict.rb \
+	mruby/tools/lrama/lib/lrama/state/reduce.rb \
+	mruby/tools/lrama/lib/lrama/state/shift_reduce_conflict.rb \
+	mruby/tools/lrama/lib/lrama/state/shift.rb \
+	mruby/tools/lrama/lib/lrama/state/reduce_reduce_conflict.rb \
+	mruby/tools/lrama/lib/lrama/output.rb \
+	mruby/tools/lrama/lib/lrama/counterexamples.rb \
+	mruby/tools/lrama/lib/lrama/trace_reporter.rb \
+	mruby/tools/lrama/lib/lrama/diagnostics.rb \
+	mruby/tools/lrama/lib/lrama/command.rb \
+	mruby/tools/lrama/lib/lrama/logger.rb \
+	mruby/tools/lrama/lib/lrama/report/duration.rb \
+	mruby/tools/lrama/lib/lrama/report/profile.rb \
+	mruby/tools/lrama/lib/lrama/lexer.rb \
+	mruby/tools/lrama/lib/lrama/parser.rb \
+	mruby/tools/lrama/lib/lrama/grammar.rb \
+	mruby/tools/lrama/lib/lrama/options.rb \
+	mruby/tools/lrama/lib/lrama/lexer/token.rb \
+	mruby/tools/lrama/lib/lrama/lexer/location.rb \
+	mruby/tools/lrama/lib/lrama/lexer/token/char.rb \
+	mruby/tools/lrama/lib/lrama/lexer/token/instantiate_rule.rb \
+	mruby/tools/lrama/lib/lrama/lexer/token/ident.rb \
+	mruby/tools/lrama/lib/lrama/lexer/token/user_code.rb \
+	mruby/tools/lrama/lib/lrama/lexer/token/tag.rb \
+	mruby/tools/lrama/lib/lrama/lexer/grammar_file.rb \
+	mruby/tools/lrama/lib/lrama/report.rb \
+	mruby/tools/lrama/lib/lrama/states/item.rb \
+	mruby/tools/lrama/lib/lrama.rb \
+	mruby/tools/lrama/template/bison/yacc.h \
+	mruby/tools/lrama/template/bison/yacc.c \
+	mruby/tools/lrama/template/bison/_yacc.h mruby/tools/lrama/MIT \
+	mruby/tools/lrama/NEWS.md mruby/Gemfile.lock \
+	mruby/appveyor.yml mruby/Dockerfile mruby/Gemfile \
+	mruby/benchmark/plot.gpl mruby/benchmark/bm_ao_render.rb \
+	mruby/benchmark/bm_so_mandelbrot.rb mruby/benchmark/bm_fib.rb \
 	mruby/benchmark/bm_so_lists.rb \
 	mruby/benchmark/bm_app_lc_fizzbuzz.rb mruby/Makefile \
 	mruby/LEGAL mruby/tasks/libmruby.rake mruby/tasks/core.rake \
@@ -434,7 +514,8 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/tasks/toolchains/openwrt.rake \
 	mruby/tasks/toolchains/android.rake \
 	mruby/tasks/toolchains/gcc.rake \
-	mruby/tasks/toolchains/clang.rake mruby/tasks/doc.rake \
+	mruby/tasks/toolchains/clang.rake \
+	mruby/tasks/toolchains/emscripten.rake mruby/tasks/doc.rake \
 	mruby/tasks/benchmark.rake mruby/tasks/mrbgems.rake \
 	mruby/tasks/presym.rake mruby/tasks/install.rake \
 	mruby/tasks/bin.rake mruby/tasks/test.rake \
@@ -455,21 +536,27 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/build_config/host-shared.rb \
 	mruby/build_config/host-debug.rb mruby/build_config/bench.rb \
 	mruby/build_config/host-cxx.rb mruby/build_config/mrbc.rb \
+	mruby/build_config/no-float.rb \
 	mruby/build_config/ArduinoDue.rb \
-	mruby/build_config/IntelEdison.rb mruby/build_config/boxing.rb \
+	mruby/build_config/IntelEdison.rb \
+	mruby/build_config/playstationportable.rb \
+	mruby/build_config/boxing.rb \
 	mruby/build_config/IntelGalileo.rb \
 	mruby/build_config/ci/msvc.rb \
 	mruby/build_config/ci/gcc-clang.rb \
 	mruby/build_config/nintendo_switch.rb \
 	mruby/build_config/serenity.rb \
 	mruby/build_config/dreamcast_shelf.rb \
-	mruby/build_config/default.rb \
+	mruby/build_config/default.rb mruby/build_config/emscripten.rb \
 	mruby/build_config/android_armeabi_v7a_neon_hard.rb \
 	mruby/build_config/host-gprof.rb \
 	mruby/build_config/clang-asan.rb mruby/build_config/RX630.rb \
+	mruby/build_config/luckfox_pico.rb \
 	mruby/build_config/host-nofloat.rb \
+	mruby/build_config/emscripten-cxx.rb \
 	mruby/build_config/android_arm64_v8a.rb \
 	mruby/build_config/cross-32bit.rb \
+	mruby/build_config/milkv_duo.rb \
 	mruby/build_config/cross-mingw.rb \
 	mruby/build_config/helpers/wine_runner.rb \
 	mruby/lib/mruby/build/command.rb \
@@ -521,25 +608,24 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/test/t/bs_block.rb mruby/test/t/float.rb \
 	mruby/test/t/standarderror.rb mruby/test/t/superclass.rb \
 	mruby/test/assert.rb mruby/TODO.md mruby/Doxyfile \
-	mruby/mrblib/00kernel.rb mruby/mrblib/range.rb \
-	mruby/mrblib/kernel.rb mruby/mrblib/hash.rb \
-	mruby/mrblib/00class.rb mruby/mrblib/10error.rb \
+	mruby/mrblib/range.rb mruby/mrblib/kernel.rb \
+	mruby/mrblib/hash.rb mruby/mrblib/10error.rb \
 	mruby/mrblib/array.rb mruby/mrblib/string.rb \
 	mruby/mrblib/compar.rb mruby/mrblib/symbol.rb \
 	mruby/mrblib/enum.rb mruby/mrblib/numeric.rb \
 	mruby/build_config.rb mruby/LICENSE mruby/src/etc.c \
 	mruby/src/variable.c mruby/src/cdump.c mruby/src/init.c \
-	mruby/src/opcode.h mruby/src/gc.c mruby/src/load.c \
-	mruby/src/codedump.c mruby/src/error.c mruby/src/readfloat.c \
-	mruby/src/state.c mruby/src/string.c mruby/src/numeric.c \
-	mruby/src/readnum.c mruby/src/enum.c mruby/src/print.c \
+	mruby/src/gc.c mruby/src/load.c mruby/src/codedump.c \
+	mruby/src/error.c mruby/src/readfloat.c mruby/src/state.c \
+	mruby/src/string.c mruby/src/numeric.c mruby/src/readnum.c \
+	mruby/src/enum.c mruby/src/print.c mruby/src/mempool.c \
 	mruby/src/readint.c mruby/src/numops.c mruby/src/hash.c \
 	mruby/src/version.c mruby/src/backtrace.c mruby/src/fmt_fp.c \
 	mruby/src/range.c mruby/src/vm.c mruby/src/debug.c \
-	mruby/src/symbol.c mruby/src/error.h mruby/src/kernel.c \
-	mruby/src/object.c mruby/src/proc.c mruby/src/array.c \
-	mruby/src/dump.c mruby/src/class.c mruby/src/value_array.h \
-	mruby/src/allocf.c mruby/src/pool.c mruby/mruby-source.gemspec \
+	mruby/src/symbol.c mruby/src/kernel.c mruby/src/object.c \
+	mruby/src/proc.c mruby/src/array.c mruby/src/dump.c \
+	mruby/src/class.c mruby/src/value_array.h mruby/src/allocf.c \
+	mruby/mruby-source.gemspec \
 	mruby/mrbgems/mruby-eval/mrbgem.rake \
 	mruby/mrbgems/mruby-eval/test/binding.rb \
 	mruby/mrbgems/mruby-eval/test/eval.rb \
@@ -574,6 +660,7 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/mrbgems/mruby-cmath/test/cmath.rb \
 	mruby/mrbgems/mruby-cmath/src/cmath.c \
 	mruby/mrbgems/mruby-compar-ext/mrbgem.rake \
+	mruby/mrbgems/mruby-compar-ext/test/compar.rb \
 	mruby/mrbgems/mruby-compar-ext/mrblib/compar.rb \
 	mruby/mrbgems/mruby-pack/mrbgem.rake \
 	mruby/mrbgems/mruby-pack/README.md \
@@ -634,6 +721,7 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/mrbgems/mruby-dir/src/Win/dirent.c \
 	mruby/mrbgems/mruby-dir/src/dir.c \
 	mruby/mrbgems/mruby-object-ext/mrbgem.rake \
+	mruby/mrbgems/mruby-object-ext/test/object_ext.c \
 	mruby/mrbgems/mruby-object-ext/test/nil.rb \
 	mruby/mrbgems/mruby-object-ext/test/object.rb \
 	mruby/mrbgems/mruby-object-ext/mrblib/object.rb \
@@ -650,13 +738,10 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/mrbgems/mruby-binding/test/binding.rb \
 	mruby/mrbgems/mruby-binding/test/binding.c \
 	mruby/mrbgems/mruby-binding/src/binding.c \
-	mruby/mrbgems/mruby-print/mrbgem.rake \
-	mruby/mrbgems/mruby-print/mrblib/print.rb \
-	mruby/mrbgems/mruby-print/src/print.c \
 	mruby/mrbgems/mruby-hash-ext/mrbgem.rake \
 	mruby/mrbgems/mruby-hash-ext/test/hash.rb \
 	mruby/mrbgems/mruby-hash-ext/mrblib/hash.rb \
-	mruby/mrbgems/mruby-hash-ext/src/hash-ext.c \
+	mruby/mrbgems/mruby-hash-ext/src/hash_ext.c \
 	mruby/mrbgems/mruby-sleep/example/sleep.rb \
 	mruby/mrbgems/mruby-sleep/mrbgem.rake \
 	mruby/mrbgems/mruby-sleep/README.md \
@@ -687,9 +772,9 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/mrbgems/mruby-time/src/time.c \
 	mruby/mrbgems/mruby-time/include/mruby/time.h \
 	mruby/mrbgems/mruby-proc-binding/mrbgem.rake \
-	mruby/mrbgems/mruby-proc-binding/test/proc-binding.c \
-	mruby/mrbgems/mruby-proc-binding/test/proc-binding.rb \
-	mruby/mrbgems/mruby-proc-binding/src/proc-binding.c \
+	mruby/mrbgems/mruby-proc-binding/test/proc_binding.c \
+	mruby/mrbgems/mruby-proc-binding/test/proc_binding.rb \
+	mruby/mrbgems/mruby-proc-binding/src/proc_binding.c \
 	mruby/mrbgems/stdlib-ext.gembox mruby/mrbgems/metaprog.gembox \
 	mruby/mrbgems/mruby-enumerator/mrbgem.rake \
 	mruby/mrbgems/mruby-enumerator/test/enumerator.rb \
@@ -732,7 +817,7 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/mrbgems/mruby-complex/mrblib/complex.rb \
 	mruby/mrbgems/mruby-complex/src/complex.c \
 	mruby/mrbgems/mruby-exit/mrbgem.rake \
-	mruby/mrbgems/mruby-exit/src/mruby-exit.c \
+	mruby/mrbgems/mruby-exit/src/mruby_exit.c \
 	mruby/mrbgems/mruby-error/mrbgem.rake \
 	mruby/mrbgems/mruby-error/test/exception.rb \
 	mruby/mrbgems/mruby-error/test/exception.c \
@@ -770,9 +855,9 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/mrbgems/mruby-enum-lazy/mrbgem.rake \
 	mruby/mrbgems/mruby-enum-lazy/test/lazy.rb \
 	mruby/mrbgems/mruby-enum-lazy/mrblib/lazy.rb \
-	mruby/mrbgems/mruby-bin-strip/tools/mruby-strip/mruby-strip.c \
+	mruby/mrbgems/mruby-bin-strip/tools/mruby-strip/mruby_strip.c \
 	mruby/mrbgems/mruby-bin-strip/mrbgem.rake \
-	mruby/mrbgems/mruby-bin-strip/bintest/mruby-strip.rb \
+	mruby/mrbgems/mruby-bin-strip/bintest/mruby_strip.rb \
 	mruby/mrbgems/mruby-errno/mrbgem.rake \
 	mruby/mrbgems/mruby-errno/README.md \
 	mruby/mrbgems/mruby-errno/test/errno.rb \
@@ -791,6 +876,10 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/mrbgems/mruby-bin-mrbc/tools/mrbc/mrbc.c \
 	mruby/mrbgems/mruby-bin-mrbc/mrbgem.rake \
 	mruby/mrbgems/mruby-bin-mrbc/bintest/mrbc.rb \
+	mruby/mrbgems/mruby-encoding/mrbgem.rake \
+	mruby/mrbgems/mruby-encoding/test/string.rb \
+	mruby/mrbgems/mruby-encoding/test/numeric.rb \
+	mruby/mrbgems/mruby-encoding/src/encoding.c \
 	mruby/mrbgems/stdlib-io.gembox mruby/mrbgems/default.gembox \
 	mruby/mrbgems/mruby-os-memsize/mrbgem.rake \
 	mruby/mrbgems/mruby-os-memsize/test/memsize.rb \
@@ -803,18 +892,20 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/doc/mruby3.0.md mruby/doc/mruby3.1.md \
 	mruby/doc/internal/opcode.md mruby/doc/internal/boxing.md \
 	mruby/doc/limitations.md mruby/doc/mruby3.2.md \
-	mruby/doc/mruby3.3.md mruby/doc/guides/compile.md \
-	mruby/doc/guides/memory.md mruby/doc/guides/mrbgems.md \
-	mruby/doc/guides/debugger.md mruby/doc/guides/link.md \
+	mruby/doc/mruby3.4.md mruby/doc/mruby3.3.md \
+	mruby/doc/guides/compile.md mruby/doc/guides/memory.md \
+	mruby/doc/guides/mrbgems.md mruby/doc/guides/debugger.md \
+	mruby/doc/guides/hier.md mruby/doc/guides/link.md \
 	mruby/doc/guides/symbol.md mruby/doc/guides/gc-arena-howto.md \
 	mruby/doc/guides/mrbconf.md mruby/minirake \
 	mruby/include/mruby/opcode.h mruby/include/mruby/re.h \
 	mruby/include/mruby/hash.h mruby/include/mruby/string.h \
-	mruby/include/mruby/presym.h mruby/include/mruby/object.h \
-	mruby/include/mruby/class.h mruby/include/mruby/ops.h \
-	mruby/include/mruby/irep.h mruby/include/mruby/compile.h \
-	mruby/include/mruby/array.h mruby/include/mruby/range.h \
-	mruby/include/mruby/throw.h mruby/include/mruby/variable.h \
+	mruby/include/mruby/presym.h mruby/include/mruby/mempool.h \
+	mruby/include/mruby/object.h mruby/include/mruby/class.h \
+	mruby/include/mruby/ops.h mruby/include/mruby/irep.h \
+	mruby/include/mruby/compile.h mruby/include/mruby/array.h \
+	mruby/include/mruby/range.h mruby/include/mruby/throw.h \
+	mruby/include/mruby/variable.h \
 	mruby/include/mruby/boxing_word.h \
 	mruby/include/mruby/istruct.h mruby/include/mruby/data.h \
 	mruby/include/mruby/common.h mruby/include/mruby/error.h \
@@ -828,11 +919,11 @@ EXTRA_DIST = CMakeLists.txt build_config.rb mruby/AUTHORS \
 	mruby/include/mruby/presym/scanning.h \
 	mruby/include/mruby/proc.h mruby/include/mrbconf.h \
 	mruby/include/mruby.h
-@ENABLE_THIRD_PARTY_TRUE@noinst_LTLIBRARIES = liburl-parser.la \
+@ENABLE_THIRD_PARTY_TRUE@noinst_LTLIBRARIES = liburlparse.la \
 @ENABLE_THIRD_PARTY_TRUE@	libllhttp.la $(am__append_1)
-@ENABLE_THIRD_PARTY_TRUE@liburl_parser_la_SOURCES = \
-@ENABLE_THIRD_PARTY_TRUE@	url-parser/url_parser.c \
-@ENABLE_THIRD_PARTY_TRUE@	url-parser/url_parser.h
+@ENABLE_THIRD_PARTY_TRUE@liburlparse_la_SOURCES = \
+@ENABLE_THIRD_PARTY_TRUE@	urlparse/urlparse.c \
+@ENABLE_THIRD_PARTY_TRUE@	urlparse/urlparse.h
 
 @ENABLE_THIRD_PARTY_TRUE@libllhttp_la_SOURCES = \
 @ENABLE_THIRD_PARTY_TRUE@	llhttp/src/api.c \
@@ -914,17 +1005,17 @@ neverbleed/libneverbleed_la-neverbleed.lo: neverbleed/$(am__dirstamp) \
 
 libneverbleed.la: $(libneverbleed_la_OBJECTS) $(libneverbleed_la_DEPENDENCIES) $(EXTRA_libneverbleed_la_DEPENDENCIES) 
 	$(AM_V_CCLD)$(LINK) $(am_libneverbleed_la_rpath) $(libneverbleed_la_OBJECTS) $(libneverbleed_la_LIBADD) $(LIBS)
-url-parser/$(am__dirstamp):
-	@$(MKDIR_P) url-parser
-	@: > url-parser/$(am__dirstamp)
-url-parser/$(DEPDIR)/$(am__dirstamp):
-	@$(MKDIR_P) url-parser/$(DEPDIR)
-	@: > url-parser/$(DEPDIR)/$(am__dirstamp)
-url-parser/url_parser.lo: url-parser/$(am__dirstamp) \
-	url-parser/$(DEPDIR)/$(am__dirstamp)
+urlparse/$(am__dirstamp):
+	@$(MKDIR_P) urlparse
+	@: > urlparse/$(am__dirstamp)
+urlparse/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) urlparse/$(DEPDIR)
+	@: > urlparse/$(DEPDIR)/$(am__dirstamp)
+urlparse/urlparse.lo: urlparse/$(am__dirstamp) \
+	urlparse/$(DEPDIR)/$(am__dirstamp)
 
-liburl-parser.la: $(liburl_parser_la_OBJECTS) $(liburl_parser_la_DEPENDENCIES) $(EXTRA_liburl_parser_la_DEPENDENCIES) 
-	$(AM_V_CCLD)$(LINK) $(am_liburl_parser_la_rpath) $(liburl_parser_la_OBJECTS) $(liburl_parser_la_LIBADD) $(LIBS)
+liburlparse.la: $(liburlparse_la_OBJECTS) $(liburlparse_la_DEPENDENCIES) $(EXTRA_liburlparse_la_DEPENDENCIES) 
+	$(AM_V_CCLD)$(LINK) $(am_liburlparse_la_rpath) $(liburlparse_la_OBJECTS) $(liburlparse_la_LIBADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -932,8 +1023,8 @@ mostlyclean-compile:
 	-rm -f llhttp/src/*.lo
 	-rm -f neverbleed/*.$(OBJEXT)
 	-rm -f neverbleed/*.lo
-	-rm -f url-parser/*.$(OBJEXT)
-	-rm -f url-parser/*.lo
+	-rm -f urlparse/*.$(OBJEXT)
+	-rm -f urlparse/*.lo
 
 distclean-compile:
 	-rm -f *.tab.c
@@ -942,7 +1033,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@llhttp/src/$(DEPDIR)/libllhttp_la-http.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@llhttp/src/$(DEPDIR)/libllhttp_la-llhttp.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@neverbleed/$(DEPDIR)/libneverbleed_la-neverbleed.Plo@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@url-parser/$(DEPDIR)/url_parser.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@urlparse/$(DEPDIR)/urlparse.Plo@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
 	@$(MKDIR_P) $(@D)
@@ -1009,7 +1100,7 @@ clean-libtool:
 	-rm -rf .libs _libs
 	-rm -rf llhttp/src/.libs llhttp/src/_libs
 	-rm -rf neverbleed/.libs neverbleed/_libs
-	-rm -rf url-parser/.libs url-parser/_libs
+	-rm -rf urlparse/.libs urlparse/_libs
 
 ID: $(am__tagged_files)
 	$(am__define_uniq_tagged_files); mkid -fID $$unique
@@ -1131,8 +1222,8 @@ distclean-generic:
 	-rm -f llhttp/src/$(am__dirstamp)
 	-rm -f neverbleed/$(DEPDIR)/$(am__dirstamp)
 	-rm -f neverbleed/$(am__dirstamp)
-	-rm -f url-parser/$(DEPDIR)/$(am__dirstamp)
-	-rm -f url-parser/$(am__dirstamp)
+	-rm -f urlparse/$(DEPDIR)/$(am__dirstamp)
+	-rm -f urlparse/$(am__dirstamp)
 
 maintainer-clean-generic:
 	@echo "This command is intended for maintainers to use"
@@ -1149,7 +1240,7 @@ distclean: distclean-am
 	-rm -f llhttp/src/$(DEPDIR)/libllhttp_la-http.Plo
 	-rm -f llhttp/src/$(DEPDIR)/libllhttp_la-llhttp.Plo
 	-rm -f neverbleed/$(DEPDIR)/libneverbleed_la-neverbleed.Plo
-	-rm -f url-parser/$(DEPDIR)/url_parser.Plo
+	-rm -f urlparse/$(DEPDIR)/urlparse.Plo
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-tags
@@ -1199,7 +1290,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f llhttp/src/$(DEPDIR)/libllhttp_la-http.Plo
 	-rm -f llhttp/src/$(DEPDIR)/libllhttp_la-llhttp.Plo
 	-rm -f neverbleed/$(DEPDIR)/libneverbleed_la-neverbleed.Plo
-	-rm -f url-parser/$(DEPDIR)/url_parser.Plo
+	-rm -f urlparse/$(DEPDIR)/urlparse.Plo
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 

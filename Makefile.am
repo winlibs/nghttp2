@@ -20,8 +20,8 @@
 # LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-SUBDIRS = lib third-party src bpf examples tests integration-tests \
-	doc contrib script
+SUBDIRS = lib tests third-party src bpf examples integration-tests \
+	doc contrib
 
 ACLOCAL_AMFLAGS = -I m4
 
@@ -47,6 +47,7 @@ EXTRA_DIST = nghttpx.conf.sample proxy.pac.sample android-config android-env \
 	cmake/FindLibbrotlienc.cmake \
 	cmake/FindLibbrotlidec.cmake \
 	cmake/FindLibngtcp2_crypto_wolfssl.cmake \
+	cmake/FindLibngtcp2_crypto_ossl.cmake \
 	cmake/FindWolfSSL.cmake \
 	cmake/PickyWarningsC.cmake \
 	cmake/PickyWarningsCXX.cmake

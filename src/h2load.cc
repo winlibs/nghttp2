@@ -28,12 +28,12 @@
 #include <signal.h>
 #ifdef HAVE_NETINET_IN_H
 #  include <netinet/in.h>
-#endif // HAVE_NETINET_IN_H
+#endif // defined(HAVE_NETINET_IN_H)
 #include <netinet/tcp.h>
 #include <sys/stat.h>
 #ifdef HAVE_FCNTL_H
 #  include <fcntl.h>
-#endif // HAVE_FCNTL_H
+#endif // defined(HAVE_FCNTL_H)
 #include <sys/mman.h>
 #include <netinet/udp.h>
 
@@ -54,30 +54,35 @@
 #ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
 #  include <wolfssl/options.h>
 #  include <wolfssl/openssl/err.h>
-#else // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#else // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 #  include <openssl/err.h>
-#endif // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#endif // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 
 #ifdef ENABLE_HTTP3
-#  ifdef HAVE_LIBNGTCP2_CRYPTO_QUICTLS
+#  if defined(HAVE_LIBNGTCP2_CRYPTO_QUICTLS) ||                                \
+    defined(HAVE_LIBNGTCP2_CRYPTO_LIBRESSL)
 #    include <ngtcp2/ngtcp2_crypto_quictls.h>
-#  endif // HAVE_LIBNGTCP2_CRYPTO_QUICTLS
+#  endif // defined(HAVE_LIBNGTCP2_CRYPTO_QUICTLS) ||
+         // defined(HAVE_LIBNGTCP2_CRYPTO_LIBRESSL)
 #  ifdef HAVE_LIBNGTCP2_CRYPTO_BORINGSSL
 #    include <ngtcp2/ngtcp2_crypto_boringssl.h>
-#  endif // HAVE_LIBNGTCP2_CRYPTO_BORINGSSL
+#  endif // defined(HAVE_LIBNGTCP2_CRYPTO_BORINGSSL)
 #  ifdef HAVE_LIBNGTCP2_CRYPTO_WOLFSSL
 #    include <ngtcp2/ngtcp2_crypto_wolfssl.h>
-#  endif // HAVE_LIBNGTCP2_CRYPTO_WOLFSSL
-#endif   // ENABLE_HTTP3
+#  endif // defined(HAVE_LIBNGTCP2_CRYPTO_WOLFSSL)
+#  ifdef HAVE_LIBNGTCP2_CRYPTO_OSSL
+#    include <ngtcp2/ngtcp2_crypto_ossl.h>
+#  endif // defined(HAVE_LIBNGTCP2_CRYPTO_OSSL)
+#endif   // defined(ENABLE_HTTP3)
 
-#include "url-parser/url_parser.h"
+#include "urlparse.h"
 
 #include "h2load_http1_session.h"
 #include "h2load_http2_session.h"
 #ifdef ENABLE_HTTP3
 #  include "h2load_http3_session.h"
 #  include "h2load_quic.h"
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 #include "tls.h"
 #include "http2.h"
 #include "util.h"
@@ -85,7 +90,7 @@
 
 #ifndef O_BINARY
 #  define O_BINARY (0)
-#endif // O_BINARY
+#endif // !defined(O_BINARY)
 
 using namespace nghttp2;
 
@@ -158,9 +163,9 @@ bool Config::is_quic() const {
 #ifdef ENABLE_HTTP3
   return !alpn_list.empty() &&
          (alpn_list[0] == NGHTTP3_ALPN_H3 || alpn_list[0] == "\x5h3-29");
-#else  // !ENABLE_HTTP3
+#else  // !defined(ENABLE_HTTP3)
   return false;
-#endif // !ENABLE_HTTP3
+#endif // !defined(ENABLE_HTTP3)
 }
 Config config;
 
@@ -457,7 +462,7 @@ Client::Client(uint32_t id, Worker *worker, size_t req_todo)
     ssl(nullptr),
 #ifdef ENABLE_HTTP3
     quic{},
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
     next_addr(config.addrs),
     current_addr(nullptr),
     reqidx(0),
@@ -502,27 +507,34 @@ Client::Client(uint32_t id, Worker *worker, size_t req_todo)
 #ifdef ENABLE_HTTP3
   ev_timer_init(&quic.pkt_timer, quic_pkt_timeout_cb, 0., 0.);
   quic.pkt_timer.data = this;
+#  ifndef UDP_SEGMENT
+  quic.tx.no_gso = true;
+#  endif // !defined(UDP_SEGMENT)
 
   if (config.is_quic()) {
-    quic.tx.data = std::make_unique<uint8_t[]>(64_k);
+    ev_set_priority(&rev, EV_MAXPRI);
+
+    quic.tx.data = std::make_unique<uint8_t[]>(QUIC_TX_DATALEN);
   }
 
   ngtcp2_ccerr_default(&quic.last_error);
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 }
 
 Client::~Client() {
   disconnect();
 
+  // Free ssl before freeing QUIC resources because
+  // libngtcp2_crypto_ossl requires that ngtcp2_conn is still alive.
+  if (ssl) {
+    SSL_free(ssl);
+  }
+
 #ifdef ENABLE_HTTP3
   if (config.is_quic()) {
     quic_free();
   }
-#endif // ENABLE_HTTP3
-
-  if (ssl) {
-    SSL_free(ssl);
-  }
+#endif // defined(ENABLE_HTTP3)
 
   worker->sample_client_stat(&cstat);
   ++worker->client_smp.n;
@@ -547,7 +559,7 @@ int Client::make_socket(addrinfo *addr) {
       std::cerr << "setsockopt UDP_GRO failed" << std::endl;
       return -1;
     }
-#  endif // UDP_GRO
+#  endif // defined(UDP_GRO)
 
     rv = util::bind_any_addr_udp(fd, addr->ai_family);
     if (rv != 0) {
@@ -568,7 +580,7 @@ int Client::make_socket(addrinfo *addr) {
       std::cerr << "quic_init failed" << std::endl;
       return -1;
     }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
   } else {
     fd = util::create_nonblock_socket(addr->ai_family);
     if (fd == -1) {
@@ -663,7 +675,7 @@ int Client::connect() {
 
     readfn = &Client::read_quic;
     writefn = &Client::write_quic;
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
   } else {
     writefn = &Client::connected;
   }
@@ -729,11 +741,11 @@ void Client::disconnect() {
   if (config.is_quic()) {
     quic_close_connection();
   }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 #ifdef ENABLE_HTTP3
   ev_timer_stop(worker->loop, &quic.pkt_timer);
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
   ev_timer_stop(worker->loop, &conn_inactivity_watcher);
   ev_timer_stop(worker->loop, &conn_active_watcher);
   ev_timer_stop(worker->loop, &rps_watcher);
@@ -877,6 +889,9 @@ void print_server_tmp_key(SSL *ssl) {
     auto cname = EC_curve_nid2nist(nid);
     if (!cname) {
       cname = OBJ_nid2sn(nid);
+      if (!cname) {
+        cname = "<unknown>";
+      }
     }
 #  endif // !OPENSSL_3_0_0_API
 
@@ -891,7 +906,7 @@ void print_server_tmp_key(SSL *ssl) {
   }
 }
 } // namespace
-#endif // !NGHTTP2_OPENSSL_IS_BORINGSSL
+#endif // !defined(NGHTTP2_OPENSSL_IS_BORINGSSL)
 
 void Client::report_tls_info() {
   if (worker->id == 0 && !worker->tls_info_report_done) {
@@ -901,7 +916,7 @@ void Client::report_tls_info() {
               << "Cipher: " << SSL_CIPHER_get_name(cipher) << std::endl;
 #ifndef NGHTTP2_OPENSSL_IS_BORINGSSL
     print_server_tmp_key(ssl);
-#endif // !NGHTTP2_OPENSSL_IS_BORINGSSL
+#endif // !defined(NGHTTP2_OPENSSL_IS_BORINGSSL)
   }
 }
 
@@ -917,7 +932,7 @@ void Client::terminate_session() {
   if (config.is_quic()) {
     quic.close_requested = true;
   }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
   if (session) {
     session->terminate();
   }
@@ -925,12 +940,12 @@ void Client::terminate_session() {
   signal_write();
 }
 
-void Client::on_request(int32_t stream_id) { streams[stream_id] = Stream(); }
+void Client::on_request(int64_t stream_id) { streams[stream_id] = Stream(); }
 
-void Client::on_header(int32_t stream_id, const uint8_t *name, size_t namelen,
+void Client::on_header(int64_t stream_id, const uint8_t *name, size_t namelen,
                        const uint8_t *value, size_t valuelen) {
   auto itr = streams.find(stream_id);
-  if (itr == std::end(streams)) {
+  if (itr == std::ranges::end(streams)) {
     return;
   }
   auto &stream = (*itr).second;
@@ -944,12 +959,12 @@ void Client::on_header(int32_t stream_id, const uint8_t *name, size_t namelen,
   }
 
   if (stream.status_success == -1 && namelen == 7 &&
-      ":status"_sr == StringRef{name, namelen}) {
+      ":status"sv == as_string_view(name, namelen)) {
     int status = 0;
-    for (size_t i = 0; i < valuelen; ++i) {
-      if ('0' <= value[i] && value[i] <= '9') {
+    for (auto c : std::span{value, valuelen}) {
+      if (util::is_digit(as_signed(c))) {
         status *= 10;
-        status += value[i] - '0';
+        status += c - '0';
         if (status > 999) {
           stream.status_success = 0;
           return;
@@ -971,7 +986,7 @@ void Client::on_header(int32_t stream_id, const uint8_t *name, size_t namelen,
       ++worker->stats.status[3];
       stream.status_success = 1;
     } else if (status < 600) {
-      ++worker->stats.status[status / 100];
+      ++worker->stats.status[static_cast<size_t>(status / 100)];
       stream.status_success = 0;
     } else {
       stream.status_success = 0;
@@ -979,9 +994,9 @@ void Client::on_header(int32_t stream_id, const uint8_t *name, size_t namelen,
   }
 }
 
-void Client::on_status_code(int32_t stream_id, uint16_t status) {
+void Client::on_status_code(int64_t stream_id, uint16_t status) {
   auto itr = streams.find(stream_id);
-  if (itr == std::end(streams)) {
+  if (itr == std::ranges::end(streams)) {
     return;
   }
   auto &stream = (*itr).second;
@@ -1006,7 +1021,7 @@ void Client::on_status_code(int32_t stream_id, uint16_t status) {
   }
 }
 
-void Client::on_stream_close(int32_t stream_id, bool success, bool final) {
+void Client::on_stream_close(int64_t stream_id, bool success, bool final) {
   if (worker->current_phase == Phase::MAIN_DURATION) {
     if (req_inflight > 0) {
       --req_inflight;
@@ -1046,20 +1061,21 @@ void Client::on_stream_close(int32_t stream_id, bool success, bool final) {
         req_stat->stream_close_time - req_stat->request_time);
 
       std::array<uint8_t, 256> buf;
-      auto p = std::begin(buf);
-      p = util::utos(p, start.count());
+      auto p = std::ranges::begin(buf);
+      p = util::utos(as_unsigned(start.count()), p);
       *p++ = '\t';
       if (success) {
-        p = util::utos(p, req_stat->status);
+        p = util::utos(as_unsigned(req_stat->status), p);
       } else {
         *p++ = '-';
         *p++ = '1';
       }
       *p++ = '\t';
-      p = util::utos(p, delta.count());
+      p = util::utos(as_unsigned(delta.count()), p);
       *p++ = '\n';
 
-      auto nwrite = static_cast<size_t>(std::distance(std::begin(buf), p));
+      auto nwrite =
+        static_cast<size_t>(std::ranges::distance(std::ranges::begin(buf), p));
       assert(nwrite <= buf.size());
       while (write(worker->config->log_fd, buf.data(), nwrite) == -1 &&
              errno == EINTR)
@@ -1095,9 +1111,9 @@ void Client::on_stream_close(int32_t stream_id, bool success, bool final) {
   }
 }
 
-RequestStat *Client::get_req_stat(int32_t stream_id) {
+RequestStat *Client::get_req_stat(int64_t stream_id) {
   auto it = streams.find(stream_id);
-  if (it == std::end(streams)) {
+  if (it == std::ranges::end(streams)) {
     return nullptr;
   }
 
@@ -1114,14 +1130,14 @@ int Client::connection_made() {
     SSL_get0_alpn_selected(ssl, &next_proto, &next_proto_len);
 
     if (next_proto) {
-      auto proto = StringRef{next_proto, next_proto_len};
+      auto proto = as_string_view(next_proto, next_proto_len);
       if (config.is_quic()) {
 #ifdef ENABLE_HTTP3
         assert(session);
-        if ("h3"_sr != proto && "h3-29"_sr != proto) {
+        if ("h3"sv != proto && "h3-29"sv != proto) {
           return -1;
         }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
       } else if (util::check_h2_is_selected(proto)) {
         session = std::make_unique<Http2Session>(this);
       } else if (NGHTTP2_H1_1 == proto) {
@@ -1242,11 +1258,11 @@ int Client::connection_made() {
 
 int Client::on_read(const uint8_t *data, size_t len) {
   auto rv = session->on_read(data, len);
-  if (rv != 0) {
-    return -1;
-  }
   if (worker->current_phase == Phase::MAIN_DURATION) {
     worker->stats.bytes_total += len;
+  }
+  if (rv != 0) {
+    return -1;
   }
   signal_write();
   return 0;
@@ -1281,7 +1297,7 @@ int Client::read_clear() {
       return -1;
     }
 
-    if (on_read(buf, nread) != 0) {
+    if (on_read(buf, as_unsigned(nread)) != 0) {
       return -1;
     }
   }
@@ -1315,7 +1331,7 @@ int Client::write_clear() {
       return -1;
     }
 
-    wb.drain(nwrite);
+    wb.drain(as_unsigned(nwrite));
   }
 
   ev_io_stop(worker->loop, &wev);
@@ -1401,7 +1417,7 @@ int Client::read_tls() {
       }
     }
 
-    if (on_read(buf, rv) != 0) {
+    if (on_read(buf, static_cast<size_t>(rv)) != 0) {
       return -1;
     }
   }
@@ -1423,7 +1439,7 @@ int Client::write_tls() {
       break;
     }
 
-    auto rv = SSL_write(ssl, iov.iov_base, iov.iov_len);
+    auto rv = SSL_write(ssl, iov.iov_base, static_cast<int>(iov.iov_len));
 
     if (rv <= 0) {
       auto err = SSL_get_error(ssl, rv);
@@ -1439,7 +1455,7 @@ int Client::write_tls() {
       }
     }
 
-    wb.drain(rv);
+    wb.drain(static_cast<size_t>(rv));
   }
 
   ev_io_stop(worker->loop, &wev);
@@ -1448,22 +1464,39 @@ int Client::write_tls() {
 }
 
 #ifdef ENABLE_HTTP3
-// Returns 1 if sendmsg is blocked.
-int Client::write_udp(const sockaddr *addr, socklen_t addrlen,
-                      const uint8_t *data, size_t datalen, size_t gso_size) {
-  iovec msg_iov;
-  msg_iov.iov_base = const_cast<uint8_t *>(data);
-  msg_iov.iov_len = datalen;
+// Returns remaining bytes if sendmsg is blocked.
+std::span<const uint8_t> Client::write_udp(const sockaddr *addr,
+                                           socklen_t addrlen,
+                                           std::span<const uint8_t> data,
+                                           size_t gso_size) {
+  if (quic.tx.no_gso && data.size() > gso_size) {
+    for (; !data.empty();) {
+      auto len = std::min(data.size(), gso_size);
+      if (!write_udp(addr, addrlen, data.first(len), len).empty()) {
+        return data;
+      }
 
-  msghdr msg{};
-  msg.msg_name = const_cast<sockaddr *>(addr);
-  msg.msg_namelen = addrlen;
-  msg.msg_iov = &msg_iov;
-  msg.msg_iovlen = 1;
+      data = data.subspan(len);
+    }
+
+    return {};
+  }
+
+  iovec msg_iov{
+    .iov_base = const_cast<uint8_t *>(data.data()),
+    .iov_len = data.size(),
+  };
+
+  msghdr msg{
+    .msg_name = const_cast<sockaddr *>(addr),
+    .msg_namelen = addrlen,
+    .msg_iov = &msg_iov,
+    .msg_iovlen = 1,
+  };
 
 #  ifdef UDP_SEGMENT
   std::array<uint8_t, CMSG_SPACE(sizeof(uint16_t))> msg_ctrl{};
-  if (gso_size && datalen > gso_size) {
+  if (data.size() > gso_size) {
     msg.msg_control = msg_ctrl.data();
     msg.msg_controllen = msg_ctrl.size();
 
@@ -1471,29 +1504,33 @@ int Client::write_udp(const sockaddr *addr, socklen_t addrlen,
     cm->cmsg_level = SOL_UDP;
     cm->cmsg_type = UDP_SEGMENT;
     cm->cmsg_len = CMSG_LEN(sizeof(uint16_t));
-    uint16_t n = gso_size;
+    auto n = static_cast<uint16_t>(gso_size);
     memcpy(CMSG_DATA(cm), &n, sizeof(n));
   }
-#  endif // UDP_SEGMENT
+#  endif // defined(UDP_SEGMENT)
 
   auto nwrite = sendmsg(fd, &msg, 0);
   if (nwrite < 0) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return 1;
+      return data;
+    }
+
+    if (errno == EIO && !quic.tx.no_gso) {
+      quic.tx.no_gso = true;
+
+      return write_udp(addr, addrlen, data, gso_size);
     }
 
     std::cerr << "sendmsg: errno=" << errno << std::endl;
-  } else if (gso_size) {
-    worker->stats.udp_dgram_sent += (datalen + gso_size - 1) / gso_size;
   } else {
-    ++worker->stats.udp_dgram_sent;
+    worker->stats.udp_dgram_sent += (data.size() + gso_size - 1) / gso_size;
   }
 
   ev_io_stop(worker->loop, &wev);
 
-  return 0;
+  return {};
 }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 void Client::record_request_time(RequestStat *req_stat) {
   req_stat->request_time = std::chrono::steady_clock::now();
@@ -1543,7 +1580,7 @@ void Client::signal_write() { ev_io_start(worker->loop, &wev); }
 void Client::try_new_connection() { new_connection_requested = true; }
 
 namespace {
-int get_ev_loop_flags() {
+unsigned int get_ev_loop_flags() {
   if (ev_supported_backends() & ~ev_recommended_backends() & EVBACKEND_KQUEUE) {
     return ev_recommended_backends() | EVBACKEND_KQUEUE;
   }
@@ -1625,7 +1662,7 @@ void Worker::free_client(Client *deleted_client) {
     if (client == deleted_client) {
       client->req_todo = client->req_done;
       stats.req_todo += client->req_todo;
-      auto index = &client - &clients[0];
+      auto index = as_unsigned(&client - &clients[0]);
       clients[index] = nullptr;
       return;
     }
@@ -1712,10 +1749,9 @@ double within_sd(const std::vector<double> &samples, double mean, double sd) {
   }
   auto lower = mean - sd;
   auto upper = mean + sd;
-  auto m = std::count_if(
-    std::begin(samples), std::end(samples),
-    [&lower, &upper](double t) { return lower <= t && t <= upper; });
-  return (m / static_cast<double>(samples.size())) * 100;
+  auto m = std::ranges::count_if(
+    samples, [&lower, &upper](double t) { return lower <= t && t <= upper; });
+  return (static_cast<double>(m) / static_cast<double>(samples.size())) * 100;
 }
 } // namespace
 
@@ -1742,14 +1778,14 @@ SDStat compute_time_stat(const std::vector<double> &samples,
     res.max = std::max(res.max, t);
     sum += t;
 
-    auto na = a + (t - a) / n;
+    auto na = a + (t - a) / static_cast<double>(n);
     q += (t - a) * (t - na);
     a = na;
   }
 
   assert(n > 0);
-  res.mean = sum / n;
-  res.sd = sqrt(q / (sampling && n > 1 ? n - 1 : n));
+  res.mean = sum / static_cast<double>(n);
+  res.sd = sqrt(q / static_cast<double>(sampling && n > 1 ? n - 1 : n));
   res.within_sd = within_sd(samples, res.mean, res.sd);
 
   return res;
@@ -1799,7 +1835,7 @@ process_time_stats(const std::vector<std::unique_ptr<Worker>> &workers) {
                    cstat.client_end_time - cstat.client_start_time)
                    .count();
         if (t > 1e-9) {
-          rps_values.push_back(cstat.req_success / t);
+          rps_values.push_back(static_cast<double>(cstat.req_success) / t);
         }
       }
 
@@ -1844,15 +1880,16 @@ void resolve_host() {
 
     config.addrs = res.release();
     return;
-  };
+  }
 
   int rv;
-  addrinfo hints{}, *res;
+  addrinfo *res;
 
-  hints.ai_family = AF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_protocol = 0;
-  hints.ai_flags = AI_ADDRCONFIG;
+  addrinfo hints{
+    .ai_flags = AI_ADDRCONFIG,
+    .ai_family = AF_UNSPEC,
+    .ai_socktype = SOCK_STREAM,
+  };
 
   const auto &resolve_host =
     config.connect_to_host.empty() ? config.host : config.connect_to_host;
@@ -1874,18 +1911,18 @@ void resolve_host() {
 } // namespace
 
 namespace {
-std::string get_reqline(const char *uri, const http_parser_url &u) {
+std::string get_reqline(const char *uri, const urlparse_url &u) {
   std::string reqline;
 
-  if (util::has_uri_field(u, UF_PATH)) {
-    reqline = util::get_uri_field(uri, u, UF_PATH);
+  if (util::has_uri_field(u, URLPARSE_PATH)) {
+    reqline = util::get_uri_field(uri, u, URLPARSE_PATH);
   } else {
     reqline = "/";
   }
 
-  if (util::has_uri_field(u, UF_QUERY)) {
+  if (util::has_uri_field(u, URLPARSE_QUERY)) {
     reqline += '?';
-    reqline += util::get_uri_field(uri, u, UF_QUERY);
+    reqline += util::get_uri_field(uri, u, URLPARSE_QUERY);
   }
 
   return reqline;
@@ -1893,21 +1930,22 @@ std::string get_reqline(const char *uri, const http_parser_url &u) {
 } // namespace
 
 namespace {
-constexpr auto UNIX_PATH_PREFIX = "unix:"_sr;
+constexpr auto UNIX_PATH_PREFIX = "unix:"sv;
 } // namespace
 
 namespace {
-bool parse_base_uri(const StringRef &base_uri) {
-  http_parser_url u{};
-  if (http_parser_parse_url(base_uri.data(), base_uri.size(), 0, &u) != 0 ||
-      !util::has_uri_field(u, UF_SCHEMA) || !util::has_uri_field(u, UF_HOST)) {
+bool parse_base_uri(const std::string_view &base_uri) {
+  urlparse_url u;
+  if (urlparse_parse_url(base_uri.data(), base_uri.size(), 0, &u) != 0 ||
+      !util::has_uri_field(u, URLPARSE_SCHEMA) ||
+      !util::has_uri_field(u, URLPARSE_HOST)) {
     return false;
   }
 
-  config.scheme = util::get_uri_field(base_uri.data(), u, UF_SCHEMA);
-  config.host = util::get_uri_field(base_uri.data(), u, UF_HOST);
+  config.scheme = util::get_uri_field(base_uri.data(), u, URLPARSE_SCHEMA);
+  config.host = util::get_uri_field(base_uri.data(), u, URLPARSE_HOST);
   config.default_port = util::get_default_port(base_uri.data(), u);
-  if (util::has_uri_field(u, UF_PORT)) {
+  if (util::has_uri_field(u, URLPARSE_PORT)) {
     config.port = u.port;
   } else {
     config.port = config.default_port;
@@ -1918,7 +1956,7 @@ bool parse_base_uri(const StringRef &base_uri) {
 } // namespace
 namespace {
 // Use std::vector<std::string>::iterator explicitly, without that,
-// http_parser_url u{} fails with clang-3.4.
+// urlparse_url u{} fails with clang-3.4.
 std::vector<std::string> parse_uris(std::vector<std::string>::iterator first,
                                     std::vector<std::string>::iterator last) {
   std::vector<std::string> reqlines;
@@ -1929,7 +1967,7 @@ std::vector<std::string> parse_uris(std::vector<std::string>::iterator first,
   }
 
   if (!config.has_base_uri()) {
-    if (!parse_base_uri(StringRef{*first})) {
+    if (!parse_base_uri(*first)) {
       std::cerr << "invalid URI: " << *first << std::endl;
       exit(EXIT_FAILURE);
     }
@@ -1938,11 +1976,11 @@ std::vector<std::string> parse_uris(std::vector<std::string>::iterator first,
   }
 
   for (; first != last; ++first) {
-    http_parser_url u{};
+    urlparse_url u;
 
     auto uri = (*first).c_str();
 
-    if (http_parser_parse_url(uri, (*first).size(), 0, &u) != 0) {
+    if (urlparse_parse_url(uri, (*first).size(), 0, &u) != 0) {
       std::cerr << "invalid URI: " << uri << std::endl;
       exit(EXIT_FAILURE);
     }
@@ -2060,7 +2098,7 @@ int parse_header_table_size(uint32_t &dst, const char *opt,
     return -1;
   }
 
-  dst = *n;
+  dst = static_cast<uint32_t>(*n);
 
   return 0;
 }
@@ -2102,7 +2140,7 @@ benchmarking tool for HTTP/2 server)"
 } // namespace
 
 namespace {
-constexpr auto DEFAULT_ALPN_LIST = "h2,h2-16,h2-14,http/1.1"_sr;
+constexpr auto DEFAULT_ALPN_LIST = "h2,http/1.1"sv;
 } // namespace
 
 namespace {
@@ -2160,9 +2198,9 @@ Options:
       << util::utos_unit(config.max_frame_size) << R"(
   -w, --window-bits=<N>
               Sets the stream level initial window size to (2**<N>)-1.
-              For QUIC, <N> is capped to 26 (roughly 64MiB).
-              Default: )"
-      << config.window_bits << R"(
+              For  QUIC, <N>  is  capped to  26  (roughly 64MiB).   It
+              defaults  to  24 (16MiB)  for  QUIC,  and 30  for  other
+              protocols.
   -W, --connection-window-bits=<N>
               Sets  the  connection  level   initial  window  size  to
               (2**<N>)-1.
@@ -2337,6 +2375,7 @@ int main(int argc, char **argv) {
   std::string datafile;
   std::string logfile;
   bool nreqs_set_manually = false;
+  auto window_bits_set_manually = false;
   while (1) {
     static int flag = 0;
     constexpr static option long_options[] = {
@@ -2393,7 +2432,7 @@ int main(int argc, char **argv) {
         std::cerr << "-n: bad option value: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.nreqs = *n;
+      config.nreqs = static_cast<size_t>(*n);
       nreqs_set_manually = true;
       break;
     }
@@ -2403,7 +2442,7 @@ int main(int argc, char **argv) {
         std::cerr << "-c: bad option value: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.nclients = *n;
+      config.nclients = static_cast<size_t>(*n);
       break;
     }
     case 'd':
@@ -2413,14 +2452,14 @@ int main(int argc, char **argv) {
 #ifdef NOTHREADS
       std::cerr << "-t: WARNING: Threading disabled at build time, "
                 << "no threads created." << std::endl;
-#else
+#else  // !defined(NOTHREADS)
       auto n = util::parse_uint(optarg);
       if (!n) {
         std::cerr << "-t: bad option value: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.nthreads = *n;
-#endif // NOTHREADS
+      config.nthreads = static_cast<size_t>(*n);
+#endif // !defined(NOTHREADS)
       break;
     }
     case 'm': {
@@ -2429,7 +2468,7 @@ int main(int argc, char **argv) {
         std::cerr << "-m: bad option value: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.max_concurrent_streams = *n;
+      config.max_concurrent_streams = static_cast<size_t>(*n);
       break;
     }
     case 'w':
@@ -2442,9 +2481,10 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
       }
       if (c == 'w') {
-        config.window_bits = *n;
+        window_bits_set_manually = true;
+        config.window_bits = static_cast<size_t>(*n);
       } else {
-        config.connection_window_bits = *n;
+        config.connection_window_bits = static_cast<size_t>(*n);
       }
       break;
     }
@@ -2463,19 +2503,19 @@ int main(int argc, char **argv) {
         std::cerr << "--max-frame-size: maximum 16777215" << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.max_frame_size = *n;
+      config.max_frame_size = static_cast<size_t>(*n);
       break;
     }
     case 'H': {
       char *header = optarg;
       // Skip first possible ':' in the header name
-      char *value = strchr(optarg + 1, ':');
-      if (!value || (header[0] == ':' && header + 1 == value)) {
+      auto name_end = strchr(optarg + 1, ':');
+      if (!name_end || (header[0] == ':' && header + 1 == name_end)) {
         std::cerr << "-H: invalid header: " << optarg << std::endl;
         exit(EXIT_FAILURE);
       }
-      *value = 0;
-      value++;
+      *name_end = 0;
+      auto value = name_end + 1;
       while (isspace(*value)) {
         value++;
       }
@@ -2488,16 +2528,16 @@ int main(int argc, char **argv) {
       }
       // Note that there is no processing currently to handle multiple
       // message-header fields with the same field name
+      util::tolower(header, name_end, header);
       config.custom_headers.emplace_back(header, value);
-      util::inp_strlower(config.custom_headers.back().name);
       break;
     }
     case 'i':
       config.ifile = optarg;
       break;
     case 'p': {
-      auto proto = StringRef{optarg};
-      if (util::strieq(NGHTTP2_CLEARTEXT_PROTO_VERSION_ID ""_sr, proto)) {
+      auto proto = std::string_view{optarg};
+      if (util::strieq(NGHTTP2_CLEARTEXT_PROTO_VERSION_ID ""sv, proto)) {
         config.no_tls_proto = Config::PROTO_HTTP2;
       } else if (util::strieq(NGHTTP2_H1_1, proto)) {
         config.no_tls_proto = Config::PROTO_HTTP1_1;
@@ -2518,7 +2558,7 @@ int main(int argc, char **argv) {
                   << "must be positive." << std::endl;
         exit(EXIT_FAILURE);
       }
-      config.rate = *n;
+      config.rate = static_cast<size_t>(*n);
       break;
     }
     case 'T': {
@@ -2542,7 +2582,7 @@ int main(int argc, char **argv) {
       break;
     }
     case 'B': {
-      auto arg = StringRef{optarg};
+      auto arg = std::string_view{optarg};
       config.base_uri = "";
       config.base_uri_unix = false;
 
@@ -2551,7 +2591,8 @@ int main(int argc, char **argv) {
         sockaddr_un un;
 
         auto path =
-          StringRef{std::begin(arg) + UNIX_PATH_PREFIX.size(), std::end(arg)};
+          std::string_view{std::ranges::begin(arg) + UNIX_PATH_PREFIX.size(),
+                           std::ranges::end(arg)};
 
         if (path.size() == 0 || path.size() + 1 > sizeof(un.sun_path)) {
           std::cerr << "--base-uri: invalid UNIX domain socket path: " << arg
@@ -2562,7 +2603,7 @@ int main(int argc, char **argv) {
         config.base_uri_unix = true;
 
         auto &unix_addr = config.unix_addr;
-        std::copy(std::begin(path), std::end(path), unix_addr.sun_path);
+        std::ranges::copy(path, unix_addr.sun_path);
         unix_addr.sun_path[path.size()] = '\0';
         unix_addr.sun_family = AF_UNIX;
 
@@ -2622,7 +2663,7 @@ int main(int argc, char **argv) {
       }
       case 6:
         // --h1
-        config.alpn_list = util::parse_config_str_list("http/1.1"_sr);
+        config.alpn_list = util::parse_config_str_list("http/1.1"sv);
         config.no_tls_proto = Config::PROTO_HTTP1_1;
         break;
       case 7:
@@ -2655,7 +2696,7 @@ int main(int argc, char **argv) {
         break;
       case 11: {
         // --connect-to
-        auto p = util::split_hostport(StringRef{optarg});
+        auto p = util::split_hostport(std::string_view{optarg});
         int64_t port = 0;
         if (p.first.empty() ||
             (!p.second.empty() &&
@@ -2664,7 +2705,7 @@ int main(int argc, char **argv) {
           exit(EXIT_FAILURE);
         }
         config.connect_to_host = p.first;
-        config.connect_to_port = port;
+        config.connect_to_port = static_cast<uint16_t>(port);
         break;
       }
       case 12: {
@@ -2707,7 +2748,7 @@ int main(int argc, char **argv) {
                     << std::endl;
           exit(EXIT_FAILURE);
         }
-        config.max_udp_payload_size = *n;
+        config.max_udp_payload_size = static_cast<size_t>(*n);
         break;
       }
       case 18:
@@ -2721,7 +2762,8 @@ int main(int argc, char **argv) {
         // fall through
       case 19:
         // alpn-list option
-        config.alpn_list = util::parse_config_str_list(StringRef{optarg});
+        config.alpn_list =
+          util::parse_config_str_list(std::string_view{optarg});
         break;
       case 20:
         // --sni
@@ -2753,15 +2795,19 @@ int main(int argc, char **argv) {
 
   // serialize the APLN tokens
   for (auto &proto : config.alpn_list) {
-    proto.insert(proto.begin(), static_cast<unsigned char>(proto.size()));
+    proto.insert(std::ranges::begin(proto), static_cast<char>(proto.size()));
+  }
+
+  if (config.is_quic() && !window_bits_set_manually) {
+    config.window_bits = 24;
   }
 
   std::vector<std::string> reqlines;
 
   if (config.ifile.empty()) {
     std::vector<std::string> uris;
-    std::copy(&argv[optind], &argv[argc], std::back_inserter(uris));
-    reqlines = parse_uris(std::begin(uris), std::end(uris));
+    std::ranges::copy(&argv[optind], &argv[argc], std::back_inserter(uris));
+    reqlines = parse_uris(std::ranges::begin(uris), std::ranges::end(uris));
   } else {
     std::vector<std::string> uris;
     if (!config.timing_script) {
@@ -2803,7 +2849,7 @@ int main(int argc, char **argv) {
       }
     }
 
-    reqlines = parse_uris(std::begin(uris), std::end(uris));
+    reqlines = parse_uris(std::ranges::begin(uris), std::ranges::end(uris));
   }
 
   if (reqlines.empty()) {
@@ -2892,8 +2938,8 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
     config.data_length = data_stat.st_size;
-    auto addr = mmap(nullptr, config.data_length, PROT_READ, MAP_SHARED,
-                     config.data_fd, 0);
+    auto addr = mmap(nullptr, static_cast<size_t>(config.data_length),
+                     PROT_READ, MAP_SHARED, config.data_fd, 0);
     if (addr == MAP_FAILED) {
       std::cerr << "-d: Could not mmap file " << datafile << std::endl;
       exit(EXIT_FAILURE);
@@ -2915,9 +2961,26 @@ int main(int argc, char **argv) {
               << std::endl;
   }
 
-  struct sigaction act {};
+  struct sigaction act{};
   act.sa_handler = SIG_IGN;
   sigaction(SIGPIPE, &act, nullptr);
+
+#ifdef ENABLE_HTTP3
+#  if defined(HAVE_LIBNGTCP2_CRYPTO_QUICTLS) ||                                \
+    defined(HAVE_LIBNGTCP2_CRYPTO_LIBRESSL)
+  if (ngtcp2_crypto_quictls_init() != 0) {
+    std::cerr << "ngtcp2_crypto_quictls_init failed" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+#  endif // defined(HAVE_LIBNGTCP2_CRYPTO_QUICTLS) ||
+         // defined(HAVE_LIBNGTCP2_CRYPTO_LIBRESSL)
+#  ifdef HAVE_LIBNGTCP2_CRYPTO_OSSL
+  if (ngtcp2_crypto_ossl_init() != 0) {
+    std::cerr << "ngtcp2_crypto_ossl_init failed" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+#  endif // defined(HAVE_LIBNGTCP2_CRYPTO_OSSL)
+#endif   // defined(ENABLE_HTTP3)
 
   auto ssl_ctx = SSL_CTX_new(TLS_client_method());
   if (!ssl_ctx) {
@@ -2926,15 +2989,16 @@ int main(int argc, char **argv) {
     exit(EXIT_FAILURE);
   }
 
-  auto ssl_opts = (SSL_OP_ALL & ~SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS) |
-                  SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION |
-                  SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION;
+  auto ssl_opts = static_cast<nghttp2_ssl_op_type>(
+    (SSL_OP_ALL & ~SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS) | SSL_OP_NO_SSLv2 |
+    SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION |
+    SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION);
 
 #ifdef SSL_OP_ENABLE_KTLS
   if (config.ktls) {
     ssl_opts |= SSL_OP_ENABLE_KTLS;
   }
-#endif // SSL_OP_ENABLE_KTLS
+#endif // defined(SSL_OP_ENABLE_KTLS)
 
   SSL_CTX_set_options(ssl_ctx, ssl_opts);
   SSL_CTX_set_mode(ssl_ctx, SSL_MODE_AUTO_RETRY);
@@ -2942,28 +3006,30 @@ int main(int argc, char **argv) {
 
   if (config.is_quic()) {
 #ifdef ENABLE_HTTP3
-#  ifdef HAVE_LIBNGTCP2_CRYPTO_QUICTLS
+#  if defined(HAVE_LIBNGTCP2_CRYPTO_QUICTLS) ||                                \
+    defined(HAVE_LIBNGTCP2_CRYPTO_LIBRESSL)
     if (ngtcp2_crypto_quictls_configure_client_context(ssl_ctx) != 0) {
       std::cerr << "ngtcp2_crypto_quictls_configure_client_context failed"
                 << std::endl;
       exit(EXIT_FAILURE);
     }
-#  endif // HAVE_LIBNGTCP2_CRYPTO_QUICTLS
+#  endif // defined(HAVE_LIBNGTCP2_CRYPTO_QUICTLS) ||
+         // defined(HAVE_LIBNGTCP2_CRYPTO_LIBRESSL)
 #  ifdef HAVE_LIBNGTCP2_CRYPTO_BORINGSSL
     if (ngtcp2_crypto_boringssl_configure_client_context(ssl_ctx) != 0) {
       std::cerr << "ngtcp2_crypto_boringssl_configure_client_context failed"
                 << std::endl;
       exit(EXIT_FAILURE);
     }
-#  endif // HAVE_LIBNGTCP2_CRYPTO_BORINGSSL
+#  endif // defined(HAVE_LIBNGTCP2_CRYPTO_BORINGSSL)
 #  ifdef HAVE_LIBNGTCP2_CRYPTO_WOLFSSL
     if (ngtcp2_crypto_wolfssl_configure_client_context(ssl_ctx) != 0) {
       std::cerr << "ngtcp2_crypto_wolfssl_configure_client_context failed"
                 << std::endl;
       exit(EXIT_FAILURE);
     }
-#  endif // HAVE_LIBNGTCP2_CRYPTO_WOLFSSL
-#endif   // ENABLE_HTTP3
+#  endif // defined(HAVE_LIBNGTCP2_CRYPTO_WOLFSSL)
+#endif   // defined(ENABLE_HTTP3)
   } else if (nghttp2::tls::ssl_ctx_set_proto_versions(
                ssl_ctx, nghttp2::tls::NGHTTP2_TLS_MIN_VERSION,
                nghttp2::tls::NGHTTP2_TLS_MAX_VERSION) != 0) {
@@ -2986,30 +3052,22 @@ int main(int argc, char **argv) {
               << std::endl;
     exit(EXIT_FAILURE);
   }
-#endif // NGHTTP2_GENUINE_OPENSSL || NGHTTP2_OPENSSL_IS_LIBRESSL ||
-       // NGHTTP2_OPENSSL_IS_WOLFSSL
+#endif // defined(NGHTTP2_GENUINE_OPENSSL) ||
+       // defined(NGHTTP2_OPENSSL_IS_LIBRESSL) ||
+       // defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 
-#ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
-  // Passing X25519 to SSL_CTX_set1_groups_list fails for some reason.
-  if (SSL_CTX_set1_curves_list(
-        ssl_ctx, const_cast<char *>(config.groups.c_str())) != 1) {
-    std::cerr << "SSL_CTX_set1_curves_list failed: "
-              << ERR_error_string(ERR_get_error(), nullptr) << std::endl;
-    exit(EXIT_FAILURE);
-  }
-#else  // !NGHTTP2_OPENSSL_IS_WOLFSSL
   if (SSL_CTX_set1_groups_list(ssl_ctx, config.groups.c_str()) != 1) {
     std::cerr << "SSL_CTX_set1_groups_list failed" << std::endl;
     exit(EXIT_FAILURE);
   }
-#endif // !NGHTTP2_OPENSSL_IS_WOLFSSL
 
   std::vector<unsigned char> proto_list;
   for (const auto &proto : config.alpn_list) {
-    std::copy_n(proto.c_str(), proto.size(), std::back_inserter(proto_list));
+    std::ranges::copy(proto, std::back_inserter(proto_list));
   }
 
-  SSL_CTX_set_alpn_protos(ssl_ctx, proto_list.data(), proto_list.size());
+  SSL_CTX_set_alpn_protos(ssl_ctx, proto_list.data(),
+                          static_cast<uint32_t>(proto_list.size()));
 
   if (tls::setup_keylog_callback(ssl_ctx) != 0) {
     std::cerr << "Failed to setup keylog" << std::endl;
@@ -3024,7 +3082,8 @@ int main(int argc, char **argv) {
     std::cerr << "SSL_CTX_add_cert_compression_alg failed" << std::endl;
     exit(EXIT_FAILURE);
   }
-#endif // NGHTTP2_OPENSSL_IS_BORINGSSL && HAVE_LIBBROTLI
+#endif // defined(NGHTTP2_OPENSSL_IS_BORINGSSL) &&
+       // defined(HAVE_LIBBROTLI)
 
   std::string user_agent = "h2load nghttp2/" NGHTTP2_VERSION;
   Headers shared_nva;
@@ -3038,8 +3097,7 @@ int main(int argc, char **argv) {
     {":authority", "host", ":method", ":scheme", "user-agent"});
 
   for (auto &kv : config.custom_headers) {
-    if (std::find(std::begin(override_hdrs), std::end(override_hdrs),
-                  kv.name) != std::end(override_hdrs)) {
+    if (util::contains(override_hdrs, kv.name)) {
       // override header
       for (auto &nv : shared_nva) {
         if ((nv.name == ":authority" && kv.name == "host") ||
@@ -3055,13 +3113,12 @@ int main(int argc, char **argv) {
 
   std::string content_length_str;
   if (config.data_fd != -1) {
-    content_length_str = util::utos(config.data_length);
+    content_length_str = util::utos(as_unsigned(config.data_length));
   }
 
-  auto method_it =
-    std::find_if(std::begin(shared_nva), std::end(shared_nva),
-                 [](const Header &nv) { return nv.name == ":method"; });
-  assert(method_it != std::end(shared_nva));
+  auto method_it = std::ranges::find_if(
+    shared_nva, [](const Header &nv) { return nv.name == ":method"; });
+  assert(method_it != std::ranges::end(shared_nva));
 
   config.h1reqs.reserve(reqlines.size());
   config.nva.reserve(reqlines.size());
@@ -3102,7 +3159,7 @@ int main(int argc, char **argv) {
     // 2 for :path, and possible content-length
     nva.reserve(2 + shared_nva.size());
 
-    nva.push_back(http2::make_field_v(":path"_sr, req));
+    nva.push_back(http2::make_field_v(":path"sv, req));
 
     for (auto &nv : shared_nva) {
       nva.push_back(http2::make_field_nv(nv.name, nv.value));
@@ -3110,7 +3167,7 @@ int main(int argc, char **argv) {
 
     if (!content_length_str.empty()) {
       nva.push_back(
-        http2::make_field_nv("content-length"_sr, content_length_str));
+        http2::make_field_nv("content-length"sv, content_length_str));
     }
 
     config.nva.push_back(std::move(nva));
@@ -3180,8 +3237,8 @@ int main(int argc, char **argv) {
       }
     }
 
-    workers.push_back(
-      create_worker(i, ssl_ctx, nreqs, nclients, rate, max_samples_per_thread));
+    workers.push_back(create_worker(static_cast<uint32_t>(i), ssl_ctx, nreqs,
+                                    nclients, rate, max_samples_per_thread));
     auto &worker = workers.back();
     futures.push_back(
       std::async(std::launch::async, [&worker, &mu, &cv, &ready]() {
@@ -3193,7 +3250,7 @@ int main(int argc, char **argv) {
 
 #  ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
         wc_ecc_fp_free();
-#  endif // NGHTTP2_OPENSSL_IS_WOLFSSL
+#  endif // defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
       }));
   }
 
@@ -3209,7 +3266,7 @@ int main(int argc, char **argv) {
     fut.get();
   }
 
-#else  // NOTHREADS
+#else  // defined(NOTHREADS)
   auto rate = config.rate;
   auto nclients = config.nclients;
   auto nreqs =
@@ -3221,7 +3278,7 @@ int main(int argc, char **argv) {
   auto start = std::chrono::steady_clock::now();
 
   workers.back()->run();
-#endif // NOTHREADS
+#endif // defined(NOTHREADS)
 
   auto end = std::chrono::steady_clock::now();
   auto duration =
@@ -3269,26 +3326,28 @@ int main(int argc, char **argv) {
   if (duration.count() > 0) {
     if (config.is_timing_based_mode()) {
       // we only want to consider the main duration if warm-up is given
-      rps = stats.req_success / config.duration;
-      bps = stats.bytes_total / config.duration;
+      rps = static_cast<ev_tstamp>(stats.req_success) / config.duration;
+      bps = static_cast<int64_t>(static_cast<ev_tstamp>(stats.bytes_total) /
+                                 config.duration);
     } else {
       auto secd = std::chrono::duration_cast<
         std::chrono::duration<double, std::chrono::seconds::period>>(duration);
-      rps = stats.req_success / secd.count();
-      bps = stats.bytes_total / secd.count();
+      rps = static_cast<double>(stats.req_success) / secd.count();
+      bps = static_cast<int64_t>(static_cast<double>(stats.bytes_total) /
+                                 secd.count());
     }
   }
 
   double header_space_savings = 0.;
   if (stats.bytes_head_decomp > 0) {
-    header_space_savings =
-      1. - static_cast<double>(stats.bytes_head) / stats.bytes_head_decomp;
+    header_space_savings = 1. - static_cast<double>(stats.bytes_head) /
+                                  static_cast<double>(stats.bytes_head_decomp);
   }
 
   std::cout << std::fixed << std::setprecision(2) << R"(
 finished in )"
             << util::format_duration(duration) << ", " << rps << " req/s, "
-            << util::utos_funit(bps) << R"(B/s
+            << util::utos_funit(as_unsigned(bps)) << R"(B/s
 requests: )" << stats.req_todo
             << " total, " << stats.req_started << " started, " << stats.req_done
             << " done, " << stats.req_status_success << " succeeded, "
@@ -3297,18 +3356,19 @@ requests: )" << stats.req_todo
 status codes: )"
             << stats.status[2] << " 2xx, " << stats.status[3] << " 3xx, "
             << stats.status[4] << " 4xx, " << stats.status[5] << R"( 5xx
-traffic: )" << util::utos_funit(stats.bytes_total)
+traffic: )" << util::utos_funit(as_unsigned(stats.bytes_total))
             << "B (" << stats.bytes_total << ") total, "
-            << util::utos_funit(stats.bytes_head) << "B (" << stats.bytes_head
-            << ") headers (space savings " << header_space_savings * 100
-            << "%), " << util::utos_funit(stats.bytes_body) << "B ("
+            << util::utos_funit(as_unsigned(stats.bytes_head)) << "B ("
+            << stats.bytes_head << ") headers (space savings "
+            << header_space_savings * 100 << "%), "
+            << util::utos_funit(as_unsigned(stats.bytes_body)) << "B ("
             << stats.bytes_body << R"() data)" << std::endl;
 #ifdef ENABLE_HTTP3
   if (config.is_quic()) {
     std::cout << "UDP datagram: " << stats.udp_dgram_sent << " sent, "
               << stats.udp_dgram_recv << " received" << std::endl;
   }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
   std::cout
     << R"(                     min         max         mean         sd        +/- sd
 time for request: )"

@@ -27,24 +27,7 @@ Synopsis
     assigned stream ID will be returned.  Otherwise, specify stream ID
     in *stream_id*.
     
-    The *pri_spec* is a deprecated priority specification of this
-    request.  ``NULL`` means the default priority (see
-    `nghttp2_priority_spec_default_init()`).  To specify the priority,
-    use `nghttp2_priority_spec_init()`.  If *pri_spec* is not ``NULL``,
-    this function will copy its data members.  In the future release
-    after the end of 2024, this function will ignore *pri_spec* and
-    behave as if ``NULL`` is given.
-    
-    The ``pri_spec->weight`` must be in [:macro:`NGHTTP2_MIN_WEIGHT`,
-    :macro:`NGHTTP2_MAX_WEIGHT`], inclusive.  If ``pri_spec->weight``
-    is strictly less than :macro:`NGHTTP2_MIN_WEIGHT`, it becomes
-    :macro:`NGHTTP2_MIN_WEIGHT`.  If it is strictly greater than
-    :macro:`NGHTTP2_MAX_WEIGHT`, it becomes :macro:`NGHTTP2_MAX_WEIGHT`.
-    
-    If
-    :enum:`nghttp2_settings_id.NGHTTP2_SETTINGS_NO_RFC7540_PRIORITIES`
-    of value of 1 is received by a remote endpoint, *pri_spec* is
-    ignored, and treated as if ``NULL`` is specified.
+    The *pri_spec* is ignored.
     
     The *nva* is an array of name/value pair :type:`nghttp2_nv` with
     *nvlen* elements.  The application is responsible to include
@@ -84,8 +67,7 @@ Synopsis
         No stream ID is available because maximum stream ID was
         reached.
     :enum:`nghttp2_error.NGHTTP2_ERR_INVALID_ARGUMENT`
-        The *stream_id* is 0; or trying to depend on itself (stream ID
-        equals ``pri_spec->stream_id``).
+        The *stream_id* is 0.
     :enum:`nghttp2_error.NGHTTP2_ERR_DATA_EXIST`
         DATA or HEADERS has been already submitted and not fully
         processed yet.  This happens if stream denoted by *stream_id*

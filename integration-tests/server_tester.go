@@ -161,7 +161,7 @@ func newServerTester(t *testing.T, opts options) *serverTester {
 	b := "-b"
 
 	if !externalDNS {
-		b += fmt.Sprintf("%v;", strings.Replace(backendURL.Host, ":", ",", -1))
+		b += fmt.Sprintf("%v;", strings.ReplaceAll(backendURL.Host, ":", ","))
 	} else {
 		sep := strings.LastIndex(backendURL.Host, ":")
 		if sep == -1 {
@@ -170,6 +170,8 @@ func newServerTester(t *testing.T, opts options) *serverTester {
 
 		// We use awesome service nip.io.
 		b += fmt.Sprintf("%v.nip.io,%v;", backendURL.Host[:sep], backendURL.Host[sep+1:])
+		// Make external DNS tests less flaky.
+		args = append(args, "--backend-address-family=IPv4")
 	}
 
 	if backendTLS {
@@ -206,7 +208,19 @@ func newServerTester(t *testing.T, opts options) *serverTester {
 	if opts.quic {
 		args = append(args,
 			fmt.Sprintf("-f127.0.0.1,%v;quic", serverPort),
-			"--no-quic-bpf")
+			"--no-quic-bpf",
+			// quic-go client just closes connection after
+			// receiving the first GOAWAY without any
+			// indication like sending CONNECTION_CLOSE if
+			// there is no active stream.  If that
+			// happens, server keeps resending 2nd GOAWAY
+			// until idle timeout passes.  If that happens
+			// during Close(), the process will be killed
+			// because the default idle timeout is longer
+			// than the close timeout.  Shorten the idle
+			// timeout to prevent it from happening.
+			"--frontend-quic-idle-timeout=5",
+		)
 	}
 
 	authority := fmt.Sprintf("127.0.0.1:%v", opts.connectPort)
@@ -631,7 +645,7 @@ loop:
 				return res, err
 			}
 
-			sr, ok := streams[f.FrameHeader.StreamID]
+			sr, ok := streams[f.StreamID]
 			if !ok {
 				st.header = make(http.Header)
 				break
@@ -643,7 +657,7 @@ loop:
 
 			status, err = strconv.Atoi(sr.header.Get(":status"))
 			if err != nil {
-				return res, fmt.Errorf("Error parsing status code: %w", err)
+				return res, fmt.Errorf("could not parse :status: %w", err)
 			}
 
 			sr.status = status
@@ -664,7 +678,7 @@ loop:
 
 			streams[sr.streamID] = sr
 		case *http2.DataFrame:
-			sr, ok := streams[f.FrameHeader.StreamID]
+			sr, ok := streams[f.StreamID]
 			if !ok {
 				break
 			}
@@ -675,7 +689,7 @@ loop:
 				break loop
 			}
 		case *http2.RSTStreamFrame:
-			sr, ok := streams[f.FrameHeader.StreamID]
+			sr, ok := streams[f.StreamID]
 			if !ok {
 				break
 			}

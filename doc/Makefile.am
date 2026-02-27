@@ -81,6 +81,7 @@ APIDOCS= \
 	nghttp2_option_set_max_outbound_ack.rst \
 	nghttp2_option_set_max_settings.rst \
 	nghttp2_option_set_stream_reset_rate_limit.rst \
+	nghttp2_option_set_glitch_rate_limit.rst \
 	nghttp2_pack_settings_payload.rst \
 	nghttp2_pack_settings_payload2.rst \
 	nghttp2_priority_spec_check_default.rst \
@@ -114,6 +115,7 @@ APIDOCS= \
 	nghttp2_session_callbacks_set_on_stream_close_callback.rst \
 	nghttp2_session_callbacks_set_pack_extension_callback.rst \
 	nghttp2_session_callbacks_set_pack_extension_callback2.rst \
+	nghttp2_session_callbacks_set_rand_callback.rst \
 	nghttp2_session_callbacks_set_recv_callback.rst \
 	nghttp2_session_callbacks_set_recv_callback2.rst \
 	nghttp2_session_callbacks_set_select_padding_callback.rst \

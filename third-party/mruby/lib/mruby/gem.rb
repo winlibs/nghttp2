@@ -372,6 +372,7 @@ module MRuby
 
       def each(&b)
         @ary.each(&b)
+        self
       end
 
       def [](name)
@@ -384,6 +385,7 @@ module MRuby
         else
           # GEM was already added to this list
         end
+        self
       end
 
       def empty?
@@ -463,8 +465,8 @@ module MRuby
         table.instance_variable_set :@root_gems, ary
         class << table
           include TSort
-          def tsort_each_node &b
-            @root_gems.each &b
+          def tsort_each_node(&b)
+            @root_gems.each(&b)
           end
 
           def tsort_each_child(n, &b)

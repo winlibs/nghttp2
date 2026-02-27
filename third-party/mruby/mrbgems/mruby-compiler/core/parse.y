@@ -12,6 +12,7 @@
 #define YYSTACK_USE_ALLOCA 1
 
 #include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
 #include <mruby.h>
 #include <mruby/compile.h>
@@ -26,13 +27,17 @@
 
 #define YYLEX_PARAM p
 
+#define mrbc_malloc(s) mrb_basic_alloc_func(NULL,(s))
+#define mrbc_realloc(p,s) mrb_basic_alloc_func((p),(s))
+#define mrbc_free(p) mrb_basic_alloc_func((p),0)
+
 typedef mrb_ast_node node;
 typedef struct mrb_parser_state parser_state;
 typedef struct mrb_parser_heredoc_info parser_heredoc_info;
 
 static int yyparse(parser_state *p);
-static int yylex(void *lval, parser_state *p);
-static void yyerror(parser_state *p, const char *s);
+static int yylex(void *lval, void *lp, parser_state *p);
+static void yyerror(void *lp, parser_state *p, const char *s);
 static void yywarning(parser_state *p, const char *s);
 static void backref_error(parser_state *p, node *n);
 static void void_expr_error(parser_state *p, node *n);
@@ -110,7 +115,7 @@ cons_free_gen(parser_state *p, node *cons)
 static void*
 parser_palloc(parser_state *p, size_t size)
 {
-  void *m = mrb_pool_alloc(p->pool, size);
+  void *m = mempool_alloc(p->pool, size);
 
   if (!m) {
     MRB_THROW(p->mrb->jmp);
@@ -316,7 +321,7 @@ local_add_f(parser_state *p, mrb_sym sym)
         mrb_int len;
         const char* name = mrb_sym_name_len(p->mrb, sym, &len);
         if (len > 0 && name[0] != '_') {
-          yyerror(p, "duplicated argument name");
+          yyerror(NULL, p, "duplicated argument name");
           return;
         }
       }
@@ -334,12 +339,8 @@ local_add(parser_state *p, mrb_sym sym)
   }
 }
 
-static void
-local_add_blk(parser_state *p, mrb_sym blk)
-{
-  /* allocate register for block */
-  local_add_f(p, blk ? blk : 0);
-}
+/* allocate register for block */
+#define local_add_blk(p) local_add_f(p, 0)
 
 static void
 local_add_kw(parser_state *p, mrb_sym kwd)
@@ -552,18 +553,11 @@ new_zsuper(parser_state *p)
 static node*
 new_yield(parser_state *p, node *c)
 {
-  if (c) {
-    if (c->cdr) {
-      if (c->cdr->cdr) {
-        yyerror(p, "both block arg and actual block given");
-      }
-      if (c->cdr->car) {
-        return cons((node*)NODE_YIELD, push(c->car, c->cdr->car));
-      }
-    }
-    return cons((node*)NODE_YIELD, c->car);
+  if (c && c->cdr && c->cdr->cdr) {
+        yyerror(NULL, p, "both block arg and actual block given");
   }
-  return cons((node*)NODE_YIELD, 0);
+
+  return cons((node*)NODE_YIELD, c);
 }
 
 /* (:return . c) */
@@ -723,6 +717,25 @@ new_cvar(parser_state *p, mrb_sym sym)
 static node*
 new_nvar(parser_state *p, int num)
 {
+  int nvar;
+  node *nvars = p->nvars->cdr;
+  while (nvars) {
+    nvar = intn(nvars->car);
+    if (nvar == -2) break; /* top of the scope */
+    if (nvar > 0) {
+      yyerror(NULL, p, "numbered parameter used in outer block");
+      break;
+    }
+    nvars->car = nint(-1);
+    nvars = nvars->cdr;
+  }
+  nvar = intn(p->nvars->car);
+  if (nvar == -1) {
+    yyerror(NULL, p, "numbered parameter used in inner block");
+  }
+  else {
+    p->nvars->car = nint(nvar > num ? nvar : num);
+  }
   return cons((node*)NODE_NVAR, nint(num));
 }
 
@@ -872,7 +885,8 @@ new_args_tail(parser_state *p, node *kws, node *kwrest, mrb_sym blk)
     local_add_kw(p, (kwrest && kwrest->cdr)? sym(kwrest->cdr) : 0);
   }
 
-  local_add_blk(p, blk);
+  local_add_blk(p);
+  if (blk) local_add_f(p, blk);
 
   /* allocate register for keywords arguments */
   /* order is for Proc#parameters */
@@ -934,7 +948,7 @@ setup_numparams(parser_state *p, node *a)
     mrb_sym sym;
     // m || opt || rest || tail
     if (a && (a->car || (a->cdr && a->cdr->car) || (a->cdr->cdr && a->cdr->cdr->car) || (a->cdr->cdr->cdr->cdr && a->cdr->cdr->cdr->cdr->car))) {
-      yyerror(p, "ordinary parameter is defined");
+      yyerror(NULL, p, "ordinary parameter is defined");
     }
     else if (p->locals) {
       /* p->locals should not be NULL unless error happens before the point */
@@ -967,6 +981,7 @@ new_block(parser_state *p, node *a, node *b)
 static node*
 new_lambda(parser_state *p, node *a, node *b)
 {
+  a = setup_numparams(p, a);
   return list4((node*)NODE_LAMBDA, locals_node(p), a, b);
 }
 
@@ -1004,14 +1019,14 @@ new_op_asgn(parser_state *p, node *a, mrb_sym op, node *b)
 static node*
 new_imaginary(parser_state *p, node *imaginary)
 {
-  return new_call(p, new_const(p, MRB_SYM_2(p->mrb, Kernel)), MRB_SYM_2(p->mrb, Complex),
-                  new_callargs(p, list2(list3((node*)NODE_INT, (node*)strdup("0"), nint(10)), imaginary), 0, 0), '.');
+  return new_fcall(p, MRB_SYM_2(p->mrb, Complex),
+                  new_callargs(p, list2(list3((node*)NODE_INT, (node*)strdup("0"), nint(10)), imaginary), 0, 0));
 }
 
 static node*
 new_rational(parser_state *p, node *rational)
 {
-  return new_call(p, new_const(p, MRB_SYM_2(p->mrb, Kernel)), MRB_SYM_2(p->mrb, Rational), new_callargs(p, list1(rational), 0, 0), '.');
+  return new_fcall(p, MRB_SYM_2(p->mrb, Rational), new_callargs(p, list1(rational), 0, 0));
 }
 
 /* (:int . i) */
@@ -1068,7 +1083,7 @@ static node*
 composite_string_node(parser_state *p, node *a, node *b)
 {
   size_t newlen = (size_t)a->cdr + (size_t)b->cdr;
-  char *str = (char*)mrb_pool_realloc(p->pool, a->car, (size_t)a->cdr + 1, newlen + 1);
+  char *str = (char*)mempool_realloc(p->pool, a->car, (size_t)a->cdr + 1, newlen + 1);
   memcpy(str + (size_t)a->cdr, b->car, (size_t)b->cdr);
   str[newlen] = '\0';
   a->car = (node*)str;
@@ -1242,7 +1257,7 @@ args_with_block(parser_state *p, node *a, node *b)
 {
   if (b) {
     if (a->cdr && a->cdr->cdr) {
-      yyerror(p, "both block arg and actual block given");
+      yyerror(NULL, p, "both block arg and actual block given");
     }
     a->cdr->cdr = b;
   }
@@ -1259,7 +1274,7 @@ endless_method_name(parser_state *p, node *defn)
     for (int i=0; i<len-1; i++) {
       if (!identchar(name[i])) return;
     }
-    yyerror(p, "setter method cannot be defined by endless method definition");
+    yyerror(NULL, p, "setter method cannot be defined by endless method definition");
   }
 }
 
@@ -1309,7 +1324,7 @@ static node*
 ret_args(parser_state *p, node *n)
 {
   if (n->cdr->cdr) {
-    yyerror(p, "block argument should not be given");
+    yyerror(NULL, p, "block argument should not be given");
     return NULL;
   }
   if (!n->car) return NULL;
@@ -1320,24 +1335,27 @@ ret_args(parser_state *p, node *n)
 static void
 assignable(parser_state *p, node *lhs)
 {
-  if (intn(lhs->car) == NODE_LVAR) {
+  switch (intn(lhs->car)) {
+  case NODE_LVAR:
     local_add(p, sym(lhs->cdr));
+    break;
+  case NODE_CONST:
+    if (p->in_def)
+      yyerror(NULL, p, "dynamic constant assignment");
+    break;
   }
 }
 
 static node*
 var_reference(parser_state *p, node *lhs)
 {
-  node *n;
-
   if (intn(lhs->car) == NODE_LVAR) {
     if (!local_var_p(p, sym(lhs->cdr))) {
-      n = new_fcall(p, sym(lhs->cdr), 0);
+      node *n = new_fcall(p, sym(lhs->cdr), 0);
       cons_free(lhs);
       return n;
     }
   }
-
   return lhs;
 }
 
@@ -1345,18 +1363,16 @@ static node*
 label_reference(parser_state *p, mrb_sym sym)
 {
   const char *name = mrb_sym_name(p->mrb, sym);
-  node *n;
 
   if (local_var_p(p, sym)) {
-    n = new_lvar(p, sym);
+    return new_lvar(p, sym);
   }
   else if (ISUPPER(name[0])) {
-    n = new_const(p, sym);
+    return new_const(p, sym);
   }
   else {
-    n = new_fcall(p, sym, 0);
+    return new_fcall(p, sym, 0);
   }
-  return n;
 }
 
 typedef enum mrb_string_type  string_type;
@@ -1409,8 +1425,7 @@ static parser_heredoc_info *
 parsing_heredoc_info(parser_state *p)
 {
   node *nd = p->parsing_heredoc;
-  if (nd == NULL)
-    return NULL;
+  if (nd == NULL) return NULL;
   /* mrb_assert(nd->car->car == NODE_HEREDOC); */
   return (parser_heredoc_info*)nd->car->cdr;
 }
@@ -1441,6 +1456,31 @@ heredoc_end(parser_state *p)
   }
 }
 #define is_strterm_type(p,str_func) ((p)->lex_strterm->type & (str_func))
+
+static void
+prohibit_literals(parser_state *p, node *n)
+{
+  if (n == 0) {
+    yyerror(NULL, p, "can't define singleton method for ().");
+  }
+  else {
+    switch (typen(n->car)) {
+    case NODE_INT:
+    case NODE_STR:
+    case NODE_DSTR:
+    case NODE_XSTR:
+    case NODE_DXSTR:
+    case NODE_DREGX:
+    case NODE_MATCH:
+    case NODE_FLOAT:
+    case NODE_ARRAY:
+    case NODE_HEREDOC:
+      yyerror(NULL, p, "can't define singleton method for literals");
+    default:
+      break;
+    }
+  }
+}
 
 /* xxx ----------------------------- */
 
@@ -1504,7 +1544,7 @@ heredoc_end(parser_state *p)
         modifier_while  "'while' modifier"
         modifier_until  "'until' modifier"
         modifier_rescue "'rescue' modifier"
-        keyword_alias   "'alis'"
+        keyword_alias   "'alias'"
         keyword_BEGIN   "'BEGIN'"
         keyword_END     "'END'"
         keyword__LINE__ "'__LINE__'"
@@ -1666,7 +1706,7 @@ top_stmt        : stmt
                     }
                   '{' top_compstmt '}'
                     {
-                      yyerror(p, "BEGIN not supported");
+                      yyerror(&@1, p, "BEGIN not supported");
                       local_resume(p, $<nd>2);
                       nvars_unnest(p);
                       $$ = 0;
@@ -1755,7 +1795,7 @@ stmt            : keyword_alias fsym {p->lstate = EXPR_FNAME;} fsym
                     }
                 | keyword_END '{' compstmt '}'
                     {
-                      yyerror(p, "END not supported");
+                      yyerror(&@1, p, "END not supported");
                       $$ = new_postexe(p, $3);
                     }
                 | command_asgn
@@ -1806,7 +1846,7 @@ command_asgn    : lhs '=' command_rhs
                     }
                 | primary_value tCOLON2 tCONSTANT tOP_ASGN command_call
                     {
-                      yyerror(p, "constant re-assignment");
+                      yyerror(&@1, p, "constant re-assignment");
                       $$ = 0;
                     }
                 | primary_value tCOLON2 tIDENTIFIER tOP_ASGN command_rhs
@@ -2103,13 +2143,13 @@ mlhs_node       : variable
                 | primary_value tCOLON2 tCONSTANT
                     {
                       if (p->in_def || p->in_single)
-                        yyerror(p, "dynamic constant assignment");
+                        yyerror(&@1, p, "dynamic constant assignment");
                       $$ = new_colon2(p, $1, $3);
                     }
                 | tCOLON3 tCONSTANT
                     {
                       if (p->in_def || p->in_single)
-                        yyerror(p, "dynamic constant assignment");
+                        yyerror(&@1, p, "dynamic constant assignment");
                       $$ = new_colon3(p, $2);
                     }
                 | backref
@@ -2142,13 +2182,13 @@ lhs             : variable
                 | primary_value tCOLON2 tCONSTANT
                     {
                       if (p->in_def || p->in_single)
-                        yyerror(p, "dynamic constant assignment");
+                        yyerror(&@1, p, "dynamic constant assignment");
                       $$ = new_colon2(p, $1, $3);
                     }
                 | tCOLON3 tCONSTANT
                     {
                       if (p->in_def || p->in_single)
-                        yyerror(p, "dynamic constant assignment");
+                        yyerror(&@1, p, "dynamic constant assignment");
                       $$ = new_colon3(p, $2);
                     }
                 | backref
@@ -2158,13 +2198,13 @@ lhs             : variable
                     }
                 | tNUMPARAM
                     {
-                      yyerror(p, "can't assign to numbered parameter");
+                      yyerror(&@1, p, "can't assign to numbered parameter");
                     }
                 ;
 
 cname           : tIDENTIFIER
                     {
-                      yyerror(p, "class/module name must be CONSTANT");
+                      yyerror(&@1, p, "class/module name must be CONSTANT");
                     }
                 | tCONSTANT
                 ;
@@ -2285,12 +2325,12 @@ arg             : lhs '=' arg_rhs
                     }
                 | primary_value tCOLON2 tCONSTANT tOP_ASGN arg_rhs
                     {
-                      yyerror(p, "constant re-assignment");
+                      yyerror(&@1, p, "constant re-assignment");
                       $$ = new_begin(p, 0);
                     }
                 | tCOLON3 tCONSTANT tOP_ASGN arg_rhs
                     {
-                      yyerror(p, "constant re-assignment");
+                      yyerror(&@1, p, "constant re-assignment");
                       $$ = new_begin(p, 0);
                     }
                 | backref tOP_ASGN arg_rhs
@@ -2540,7 +2580,7 @@ paren_args      : '(' opt_call_args ')'
                                           new_block_arg(p, new_lvar(p, b)));
                       }
                       else {
-                        yyerror(p, "unexpected argument forwarding ...");
+                        yyerror(&@1, p, "unexpected argument forwarding ...");
                         $$ = 0;
                       }
                     }
@@ -2683,10 +2723,6 @@ primary         : literal
                 | heredoc
                 | var_ref
                 | backref
-                | tNUMPARAM
-                    {
-                      $$ = new_nvar(p, $1);
-                    }
                 | tFID
                     {
                       $$ = new_fcall(p, $1, 0);
@@ -2839,7 +2875,7 @@ primary         : literal
                   cpath superclass
                     {
                       if (p->in_def || p->in_single)
-                        yyerror(p, "class definition in method body");
+                        yyerror(&@1, p, "class definition in method body");
                       $<nd>$ = local_switch(p);
                       nvars_block(p);
                     }
@@ -2877,7 +2913,7 @@ primary         : literal
                   cpath
                     {
                       if (p->in_def || p->in_single)
-                        yyerror(p, "module definition in method body");
+                        yyerror(&@1, p, "module definition in method body");
                       $<nd>$ = local_switch(p);
                       nvars_block(p);
                     }
@@ -3103,7 +3139,7 @@ block_param     : f_arg ',' f_block_optarg ',' f_rest_arg opt_block_args_tail
 
 opt_block_param : none
                     {
-                      local_add_blk(p, 0);
+                      local_add_blk(p);
                       $$ = 0;
                     }
                 | block_param_def
@@ -3113,13 +3149,13 @@ opt_block_param : none
                     }
                 ;
 
-block_param_def : '|' {local_add_blk(p, 0);} opt_bv_decl '|'
+block_param_def : '|' {local_add_blk(p);} opt_bv_decl '|'
                     {
                       $$ = 0;
                     }
                 | tOROP
                     {
-                      local_add_blk(p, 0);
+                      local_add_blk(p);
                       $$ = 0;
                     }
                 | '|' block_param opt_bv_decl '|'
@@ -3191,7 +3227,7 @@ do_block        : keyword_do_block
 block_call      : command do_block
                     {
                       if (typen($1->car) == NODE_YIELD) {
-                        yyerror(p, "block given to yield");
+                        yyerror(&@1, p, "block given to yield");
                       }
                       else {
                         call_with_block(p, $1, $2);
@@ -3486,7 +3522,6 @@ words           : tWORDS_BEG tSTRING
 
 symbol          : basic_symbol
                     {
-                      p->lstate = EXPR_ENDARG;
                       $$ = new_sym(p, $1);
                     }
                 | tSYMBEG tSTRING_BEG string_rep tSTRING
@@ -3501,10 +3536,16 @@ symbol          : basic_symbol
                       }
                       $$ = new_dsym(p, new_dstr(p, n));
                     }
+                | tSYMBEG tNUMPARAM
+                    {
+                      mrb_sym sym = intern_numparam($2);
+                      $$ = new_sym(p, sym);
+                    }
                 ;
 
 basic_symbol    : tSYMBEG sym
                     {
+                      p->lstate = EXPR_END;
                       $$ = $2;
                     }
                 ;
@@ -3577,13 +3618,17 @@ var_lhs         : variable
                     }
                 | tNUMPARAM
                     {
-                      yyerror(p, "can't assign to numbered parameter");
+                      yyerror(&@1, p, "can't assign to numbered parameter");
                     }
                 ;
 
 var_ref         : variable
                     {
                       $$ = var_reference(p, $1);
+                    }
+                | tNUMPARAM
+                    {
+                      $$ = new_nvar(p, $1);
                     }
                 | keyword_nil
                     {
@@ -3845,27 +3890,27 @@ f_args          : f_arg ',' f_optarg ',' f_rest_arg opt_args_tail
 
 f_bad_arg       : tCONSTANT
                     {
-                      yyerror(p, "formal argument cannot be a constant");
+                      yyerror(&@1, p, "formal argument cannot be a constant");
                       $$ = 0;
                     }
                 | tIVAR
                     {
-                      yyerror(p, "formal argument cannot be an instance variable");
+                      yyerror(&@1, p, "formal argument cannot be an instance variable");
                       $$ = 0;
                     }
                 | tGVAR
                     {
-                      yyerror(p, "formal argument cannot be a global variable");
+                      yyerror(&@1, p, "formal argument cannot be a global variable");
                       $$ = 0;
                     }
                 | tCVAR
                     {
-                      yyerror(p, "formal argument cannot be a class variable");
+                      yyerror(&@1, p, "formal argument cannot be a class variable");
                       $$ = 0;
                     }
                 | tNUMPARAM
                     {
-                      yyerror(p, "formal argument cannot be a numbered parameter");
+                      yyerror(&@1, p, "formal argument cannot be a numbered parameter");
                       $$ = 0;
                     }
                 ;
@@ -3993,30 +4038,13 @@ opt_f_block_arg : ',' f_block_arg
 
 singleton       : var_ref
                     {
+                      prohibit_literals(p, $1);
                       $$ = $1;
                       if (!$$) $$ = new_nil(p);
                     }
                 | '(' {p->lstate = EXPR_BEG;} expr rparen
                     {
-                      if ($3 == 0) {
-                        yyerror(p, "can't define singleton method for ().");
-                      }
-                      else {
-                        switch (typen($3->car)) {
-                        case NODE_STR:
-                        case NODE_DSTR:
-                        case NODE_XSTR:
-                        case NODE_DXSTR:
-                        case NODE_DREGX:
-                        case NODE_MATCH:
-                        case NODE_FLOAT:
-                        case NODE_ARRAY:
-                        case NODE_HEREDOC:
-                          yyerror(p, "can't define singleton method for literals");
-                        default:
-                          break;
-                        }
-                      }
+                      prohibit_literals(p, $3);
                       $$ = $3;
                     }
                 ;
@@ -4163,7 +4191,7 @@ none            : /* none */
 #define pylval  (*((YYSTYPE*)(p->ylval)))
 
 static void
-yyerror(parser_state *p, const char *s)
+yyerror(void *lp, parser_state *p, const char *s)
 {
   char* c;
   size_t n;
@@ -4198,7 +4226,7 @@ yyerror_c(parser_state *p, const char *msg, char c)
   strncpy(buf, msg, sizeof(buf) - 2);
   buf[sizeof(buf) - 2] = '\0';
   strncat(buf, &c, 1);
-  yyerror(p, buf);
+  yyerror(NULL, p, buf);
 }
 
 static void
@@ -4255,7 +4283,7 @@ backref_error(parser_state *p, node *n)
     yyerror_c(p, "can't set variable $", (char)intn(n->cdr));
   }
   else {
-    yyerror(p, "Internal error in backref_error()");
+    yyerror(NULL, p, "Internal error in backref_error()");
   }
 }
 
@@ -4272,7 +4300,7 @@ void_expr_error(parser_state *p, node *n)
   case NODE_NEXT:
   case NODE_REDO:
   case NODE_RETRY:
-    yyerror(p, "void value expression");
+    yyerror(NULL, p, "void value expression");
     break;
   case NODE_AND:
   case NODE_OR:
@@ -4465,7 +4493,7 @@ static int
 newtok(parser_state *p)
 {
   if (p->tokbuf != p->buf) {
-    mrb_free(p->mrb, p->tokbuf);
+    mrbc_free(p->tokbuf);
     p->tokbuf = p->buf;
     p->tsiz = MRB_PARSER_TOKBUF_SIZE;
   }
@@ -4518,11 +4546,11 @@ tokadd(parser_state *p, int32_t c)
     }
     p->tsiz *= 2;
     if (p->tokbuf == p->buf) {
-      p->tokbuf = (char*)mrb_malloc(p->mrb, p->tsiz);
+      p->tokbuf = (char*)mrbc_malloc(p->tsiz);
       memcpy(p->tokbuf, p->buf, MRB_PARSER_TOKBUF_SIZE);
     }
     else {
-      p->tokbuf = (char*)mrb_realloc(p->mrb, p->tokbuf, p->tsiz);
+      p->tokbuf = (char*)mrbc_realloc(p->tokbuf, p->tsiz);
     }
   }
   for (i = 0; i < len; i++) {
@@ -4541,7 +4569,7 @@ tokfix(parser_state *p)
 {
   if (p->tidx >= MRB_PARSER_TOKBUF_MAX) {
     p->tidx = MRB_PARSER_TOKBUF_MAX-1;
-    yyerror(p, "string too long (truncated)");
+    yyerror(NULL, p, "string too long (truncated)");
   }
   p->tokbuf[p->tidx] = '\0';
 }
@@ -4612,7 +4640,7 @@ read_escape_unicode(parser_state *p, int limit)
   buf[0] = nextc(p);
   if (buf[0] < 0) {
   eof:
-    yyerror(p, "invalid escape character syntax");
+    yyerror(NULL, p, "invalid escape character syntax");
     return -1;
   }
   if (ISXDIGIT(buf[0])) {
@@ -4631,7 +4659,7 @@ read_escape_unicode(parser_state *p, int limit)
   }
   hex = scan_hex(p, buf, i, &i);
   if (i == 0 || hex > 0x10FFFF || (hex & 0xFFFFF800) == 0xD800) {
-    yyerror(p, "invalid Unicode code point");
+    yyerror(NULL, p, "invalid Unicode code point");
     return -1;
   }
   return hex;
@@ -4701,7 +4729,7 @@ read_escape(parser_state *p)
       }
     }
     if (i == 0) {
-      yyerror(p, "invalid hex escape");
+      yyerror(NULL, p, "invalid hex escape");
       return -1;
     }
     return scan_hex(p, buf, i, &i);
@@ -4729,7 +4757,7 @@ read_escape(parser_state *p)
 
   case 'M':
     if ((c = nextc(p)) != '-') {
-      yyerror(p, "Invalid escape character syntax");
+      yyerror(NULL, p, "Invalid escape character syntax");
       pushback(p, c);
       return '\0';
     }
@@ -4743,7 +4771,7 @@ read_escape(parser_state *p)
 
   case 'C':
     if ((c = nextc(p)) != '-') {
-      yyerror(p, "Invalid escape character syntax");
+      yyerror(NULL, p, "Invalid escape character syntax");
       pushback(p, c);
       return '\0';
     }
@@ -4759,7 +4787,7 @@ read_escape(parser_state *p)
     eof:
   case -1:
   case -2:                      /* end of a file */
-    yyerror(p, "Invalid escape character syntax");
+    yyerror(NULL, p, "Invalid escape character syntax");
     return '\0';
 
   default:
@@ -4903,13 +4931,13 @@ parse_string(parser_state *p)
         const char s2[] = "\" anywhere before EOF";
 
         if (sizeof(s1)+sizeof(s2)+strlen(hinfo->term)+1 >= sizeof(buf)) {
-          yyerror(p, "can't find heredoc delimiter anywhere before EOF");
+          yyerror(NULL, p, "can't find heredoc delimiter anywhere before EOF");
         }
         else {
           strcpy(buf, s1);
           strcat(buf, hinfo->term);
           strcat(buf, s2);
-          yyerror(p, buf);
+          yyerror(NULL, p, buf);
         }
         return 0;
       }
@@ -4930,7 +4958,7 @@ parse_string(parser_state *p)
         empty = FALSE;
     }
     if (c < 0) {
-      yyerror(p, "unterminated string meets end of file");
+      yyerror(NULL, p, "unterminated string meets end of file");
       return 0;
     }
     else if (c == beg) {
@@ -5053,7 +5081,7 @@ parse_string(parser_state *p)
   }
 
   tokfix(p);
-  p->lstate = EXPR_ENDARG;
+  p->lstate = EXPR_END;
   end_strterm(p);
 
   if (type & STR_FUNC_XQUOTE) {
@@ -5094,7 +5122,7 @@ parse_string(parser_state *p)
       }
       strcat(msg, " - ");
       strncat(msg, tok(p), sizeof(msg) - strlen(msg) - 1);
-      yyerror(p, msg);
+      yyerror(NULL, p, msg);
     }
     if (f != 0) {
       if (f & 1) *flag++ = 'i';
@@ -5199,7 +5227,7 @@ heredoc_identifier(parser_state *p)
       tokadd(p, c);
     }
     if (c < 0) {
-      yyerror(p, "unterminated here document identifier");
+      yyerror(NULL, p, "unterminated here document identifier");
       return 0;
     }
   }
@@ -5428,7 +5456,7 @@ parser_yylex(parser_state *p)
         if (c < 0 || ISSPACE(c)) {
           do {
             if (!skips(p, end)) {
-              yyerror(p, "embedded document meets end of file");
+              yyerror(NULL, p, "embedded document meets end of file");
               return 0;
             }
             c = nextc(p);
@@ -5553,7 +5581,7 @@ parser_yylex(parser_state *p)
     }
     c = nextc(p);
     if (c < 0) {
-      yyerror(p, "incomplete character syntax");
+      yyerror(NULL, p, "incomplete character syntax");
       return 0;
     }
     if (ISSPACE(c)) {
@@ -5588,7 +5616,7 @@ parser_yylex(parser_state *p)
 
           strcpy(buf, "invalid character syntax; use ?\\");
           strncat(buf, cc, 2);
-          yyerror(p, buf);
+          yyerror(NULL, p, buf);
         }
       }
       ternary:
@@ -5614,7 +5642,7 @@ parser_yylex(parser_state *p)
     }
     tokfix(p);
     pylval.nd = new_str(p, tok(p), toklen(p));
-    p->lstate = EXPR_ENDARG;
+    p->lstate = EXPR_END;
     return tCHAR;
 
   case '&':
@@ -5754,7 +5782,7 @@ parser_yylex(parser_state *p)
       pushback(p, c);
       p->lstate = EXPR_BEG;
       if (c >= 0 && ISDIGIT(c)) {
-        yyerror(p, "no .<digit> floating literal anymore; put 0 before dot");
+        yyerror(NULL, p, "no .<digit> floating literal anymore; put 0 before dot");
       }
       p->lstate = EXPR_DOT;
       return '.';
@@ -5768,14 +5796,17 @@ parser_yylex(parser_state *p)
     int suffix = 0;
 
     is_float = seen_point = seen_e = nondigit = 0;
-    p->lstate = EXPR_ENDARG;
+    p->lstate = EXPR_END;
     newtok(p);
-    if (c == '-' || c == '+') {
+    if (c == '-') {
       tokadd(p, c);
       c = nextc(p);
     }
+    else if (c == '+') {
+      c = nextc(p);
+    }
     if (c == '0') {
-#define no_digits() do {yyerror(p,"numeric literal without digits"); return 0;} while (0)
+#define no_digits() do {yyerror(NULL, p,"numeric literal without digits"); return 0;} while (0)
       int start = toklen(p);
       c = nextc(p);
       if (c == 'x' || c == 'X') {
@@ -5894,7 +5925,7 @@ parser_yylex(parser_state *p)
       }
       if (c > '7' && c <= '9') {
         invalid_octal:
-        yyerror(p, "Invalid octal digit");
+        yyerror(NULL, p, "Invalid octal digit");
       }
       else if (c == '.' || c == 'e' || c == 'E') {
         tokadd(p, '0');
@@ -6180,12 +6211,12 @@ parser_yylex(parser_state *p)
       else {
         term = nextc(p);
         if (ISALNUM(term)) {
-          yyerror(p, "unknown type of %string");
+          yyerror(NULL, p, "unknown type of %string");
           return 0;
         }
       }
       if (c < 0 || term < 0) {
-        yyerror(p, "unterminated quoted string meets end of file");
+        yyerror(NULL, p, "unterminated quoted string meets end of file");
         return 0;
       }
       paren = term;
@@ -6233,7 +6264,7 @@ parser_yylex(parser_state *p)
         return tSYMBOLS_BEG;
 
       default:
-        yyerror(p, "unknown type of %string");
+        yyerror(NULL, p, "unknown type of %string");
         return 0;
       }
     }
@@ -6259,7 +6290,7 @@ parser_yylex(parser_state *p)
     token_column = newtok(p);
     c = nextc(p);
     if (c < 0) {
-      yyerror(p, "incomplete global variable syntax");
+      yyerror(NULL, p, "incomplete global variable syntax");
       return 0;
     }
     switch (c) {
@@ -6358,10 +6389,10 @@ parser_yylex(parser_state *p)
       }
       if (c < 0) {
         if (p->tidx == 1) {
-          yyerror(p, "incomplete instance variable syntax");
+          yyerror(NULL, p, "incomplete instance variable syntax");
         }
         else {
-          yyerror(p, "incomplete class variable syntax");
+          yyerror(NULL, p, "incomplete class variable syntax");
         }
         return 0;
       }
@@ -6394,7 +6425,7 @@ parser_yylex(parser_state *p)
         buf[sizeof(s)-1] = hexdigits[(c & 0xf0) >> 4];
         buf[sizeof(s)]   = hexdigits[(c & 0x0f)];
         buf[sizeof(s)+1] = 0;
-        yyerror(p, buf);
+        yyerror(NULL, p, buf);
         goto retry;
       }
 
@@ -6441,31 +6472,13 @@ parser_yylex(parser_state *p)
       break;
 
     case '_':
-      if (p->lstate != EXPR_FNAME && toklen(p) == 2 && ISDIGIT(tok(p)[1]) && p->nvars) {
+      if (toklen(p) == 2 && ISDIGIT(tok(p)[1]) && p->nvars) {
         int n = tok(p)[1] - '0';
         int nvar;
 
         if (n > 0) {
-          node *nvars = p->nvars->cdr;
-
-          while (nvars) {
-            nvar = intn(nvars->car);
-            if (nvar == -2) break; /* top of the scope */
-            if (nvar > 0) {
-              yywarning(p, "numbered parameter used in outer block");
-              break;
-            }
-            nvars->car = nint(-1);
-            nvars = nvars->cdr;
-          }
           nvar = intn(p->nvars->car);
           if (nvar != -2) {     /* numbered parameters never appear on toplevel */
-            if (nvar == -1) {
-              yywarning(p, "numbered parameter used in inner block");
-            }
-            else {
-              p->nvars->car = nint(nvar > n ? nvar : n);
-            }
             pylval.num = n;
             p->lstate = EXPR_END;
             return tNUMPARAM;
@@ -6581,7 +6594,7 @@ parser_yylex(parser_state *p)
 }
 
 static int
-yylex(void *lval, parser_state *p)
+yylex(void *lval, void *lp, parser_state *p)
 {
   p->ylval = lval;
   return parser_yylex(p);
@@ -6624,7 +6637,7 @@ parser_update_cxt(parser_state *p, mrb_ccontext *cxt)
     i++;
     n = n->cdr;
   }
-  cxt->syms = (mrb_sym*)mrb_realloc(p->mrb, cxt->syms, i*sizeof(mrb_sym));
+  cxt->syms = (mrb_sym*)mrbc_realloc(cxt->syms, i*sizeof(mrb_sym));
   cxt->slen = i;
   for (i=0, n=n0; n; i++,n=n->cdr) {
     cxt->syms[i] = sym(n->car);
@@ -6663,7 +6676,7 @@ mrb_parser_parse(parser_state *p, mrb_ccontext *c)
   MRB_CATCH(p->mrb->jmp) {
     p->nerr++;
     if (p->mrb->exc == NULL) {
-      yyerror(p, "memory allocation error");
+      yyerror(NULL, p, "memory allocation error");
       p->nerr++;
       p->tree = 0;
     }
@@ -6675,13 +6688,13 @@ mrb_parser_parse(parser_state *p, mrb_ccontext *c)
 MRB_API parser_state*
 mrb_parser_new(mrb_state *mrb)
 {
-  mrb_pool *pool;
+  mempool *pool;
   parser_state *p;
   static const parser_state parser_state_zero = { 0 };
 
-  pool = mrb_pool_open(mrb);
+  pool = mempool_open();
   if (!pool) return NULL;
-  p = (parser_state*)mrb_pool_alloc(pool, sizeof(parser_state));
+  p = (parser_state*)mempool_alloc(pool, sizeof(parser_state));
   if (!p) return NULL;
 
   *p = parser_state_zero;
@@ -6717,23 +6730,26 @@ mrb_parser_new(mrb_state *mrb)
 MRB_API void
 mrb_parser_free(parser_state *p) {
   if (p->tokbuf != p->buf) {
-    mrb_free(p->mrb, p->tokbuf);
+    mrbc_free(p->tokbuf);
   }
-  mrb_pool_close(p->pool);
+  mempool_close(p->pool);
 }
 
 MRB_API mrb_ccontext*
 mrb_ccontext_new(mrb_state *mrb)
 {
-  return (mrb_ccontext*)mrb_calloc(mrb, 1, sizeof(mrb_ccontext));
+  static const mrb_ccontext cc_zero = { 0 };
+  mrb_ccontext *cc = (mrb_ccontext*)mrbc_malloc(sizeof(mrb_ccontext));
+  *cc = cc_zero;
+  return cc;
 }
 
 MRB_API void
 mrb_ccontext_free(mrb_state *mrb, mrb_ccontext *cxt)
 {
-  mrb_free(mrb, cxt->filename);
-  mrb_free(mrb, cxt->syms);
-  mrb_free(mrb, cxt);
+  mrbc_free(cxt->filename);
+  mrbc_free(cxt->syms);
+  mrbc_free(cxt);
 }
 
 MRB_API const char*
@@ -6741,12 +6757,12 @@ mrb_ccontext_filename(mrb_state *mrb, mrb_ccontext *c, const char *s)
 {
   if (s) {
     size_t len = strlen(s);
-    char *p = (char*)mrb_malloc_simple(mrb, len + 1);
+    char *p = (char*)mrbc_malloc(len + 1);
 
     if (p == NULL) return NULL;
     memcpy(p, s, len + 1);
     if (c->filename) {
-      mrb_free(mrb, c->filename);
+      mrbc_free(c->filename);
     }
     c->filename = p;
   }
@@ -6754,17 +6770,17 @@ mrb_ccontext_filename(mrb_state *mrb, mrb_ccontext *c, const char *s)
 }
 
 MRB_API void
-mrb_ccontext_partial_hook(mrb_state *mrb, mrb_ccontext *c, int (*func)(struct mrb_parser_state*), void *data)
+mrb_ccontext_partial_hook(mrb_ccontext *c, int (*func)(struct mrb_parser_state*), void *data)
 {
   c->partial_hook = func;
   c->partial_data = data;
 }
 
 MRB_API void
-mrb_ccontext_cleanup_local_variables(mrb_state *mrb, mrb_ccontext *c)
+mrb_ccontext_cleanup_local_variables(mrb_ccontext *c)
 {
   if (c->syms) {
-    mrb_free(mrb, c->syms);
+    mrbc_free(c->syms);
     c->syms = NULL;
     c->slen = 0;
   }
@@ -6790,7 +6806,7 @@ mrb_parser_set_filename(struct mrb_parser_state *p, const char *f)
   }
 
   if (p->filename_table_length == UINT16_MAX) {
-    yyerror(p, "too many files to compile");
+    yyerror(NULL, p, "too many files to compile");
     return;
   }
   p->current_filename_index = p->filename_table_length++;
@@ -7171,7 +7187,7 @@ mrb_parser_dump(mrb_state *mrb, node *tree, int offset)
 
   case NODE_LAMBDA:
     printf("NODE_LAMBDA:\n");
-    dump_prefix(tree, offset);
+    dump_prefix(tree, offset+1);
     goto block;
 
   case NODE_BLOCK:

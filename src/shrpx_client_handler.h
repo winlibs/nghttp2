@@ -36,9 +36,9 @@
 #ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
 #  include <wolfssl/options.h>
 #  include <wolfssl/openssl/ssl.h>
-#else // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#else // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 #  include <openssl/ssl.h>
-#endif // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#endif // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 
 #include "shrpx_rate_limit.h"
 #include "shrpx_connection.h"
@@ -63,12 +63,13 @@ struct SharedDownstreamAddr;
 struct DownstreamAddr;
 #ifdef ENABLE_HTTP3
 class Http3Upstream;
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 class ClientHandler {
 public:
-  ClientHandler(Worker *worker, int fd, SSL *ssl, const StringRef &ipaddr,
-                const StringRef &port, int family, const UpstreamAddr *faddr);
+  ClientHandler(Worker *worker, int fd, SSL *ssl,
+                const std::string_view &ipaddr, const std::string_view &port,
+                int family, const UpstreamAddr *faddr);
   ~ClientHandler();
 
   int noop();
@@ -106,7 +107,7 @@ public:
   void reset_upstream_write_timeout(ev_tstamp t);
 
   int validate_next_proto();
-  const StringRef &get_ipaddr() const;
+  const std::string_view &get_ipaddr() const;
   bool get_should_close_after_write() const;
   void set_should_close_after_write(bool f);
   Upstream *get_upstream();
@@ -132,7 +133,7 @@ public:
   int perform_http2_upgrade(HttpsUpstream *http);
   bool get_http2_upgrade_allowed() const;
   // Returns upstream scheme, either "http" or "https"
-  StringRef get_upstream_scheme() const;
+  std::string_view get_upstream_scheme() const;
   void start_immediate_shutdown();
 
   // Writes upstream accesslog using |downstream|.  The |downstream|
@@ -142,7 +143,7 @@ public:
   Worker *get_worker() const;
 
   // Initializes forwarded_for_.
-  void init_forwarded_for(int family, const StringRef &ipaddr);
+  void init_forwarded_for(int family, const std::string_view &ipaddr);
 
   using ReadBuf = DefaultMemchunkBuffer;
 
@@ -162,14 +163,14 @@ public:
                 const Address &local_addr, const ngtcp2_pkt_info &pi,
                 std::span<const uint8_t> data);
   int write_quic();
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
   // Returns string suitable for use in "by" parameter of Forwarded
   // header field.
-  StringRef get_forwarded_by() const;
+  std::string_view get_forwarded_by() const;
   // Returns string suitable for use in "for" parameter of Forwarded
   // header field.
-  StringRef get_forwarded_for() const;
+  std::string_view get_forwarded_for() const;
 
   Http2Session *
   get_http2_session(const std::shared_ptr<DownstreamAddrGroup> &group,
@@ -178,7 +179,7 @@ public:
   // Returns an affinity cookie value for |downstream|.  |cookie_name|
   // is used to inspect cookie header field in request header fields.
   uint32_t get_affinity_cookie(Downstream *downstream,
-                               const StringRef &cookie_name);
+                               const std::string_view &cookie_name);
 
   DownstreamAddr *get_downstream_addr_strict_affinity(
     int &err, const std::shared_ptr<SharedDownstreamAddr> &shared_addr,
@@ -193,16 +194,18 @@ public:
 
   // Stores |sni| which is TLS SNI extension value client sent in this
   // connection.
-  void set_tls_sni(const StringRef &sni);
+  void set_tls_sni(const std::string_view &sni);
   // Returns TLS SNI extension value client sent in this connection.
-  StringRef get_tls_sni() const;
+  std::string_view get_tls_sni() const;
 
   // Returns ALPN negotiated in this connection.
-  StringRef get_alpn() const;
+  std::string_view get_alpn() const;
 
   BlockAllocator &get_block_allocator();
 
   void set_alpn_from_conn();
+
+  void set_local_hostport(const sockaddr *addr, socklen_t addrlen);
 
 private:
   // Allocator to allocate memory for connection-wide objects.  Make
@@ -215,15 +218,20 @@ private:
   std::unique_ptr<Upstream> upstream_;
   // IP address of client.  If UNIX domain socket is used, this is
   // "localhost".
-  StringRef ipaddr_;
-  StringRef port_;
+  std::string_view ipaddr_;
+  std::string_view port_;
   // The ALPN identifier negotiated for this connection.
-  StringRef alpn_;
+  std::string_view alpn_;
   // The client address used in "for" parameter of Forwarded header
   // field.
-  StringRef forwarded_for_;
+  std::string_view forwarded_for_;
   // lowercased TLS SNI which client sent.
-  StringRef sni_;
+  std::string_view sni_;
+  // The host and port of local address where the connection is
+  // accepted.  For QUIC connection, the local address may change due
+  // to client address migration, but this value stays the same for
+  // now.
+  std::string_view local_hostport_;
   std::function<int(ClientHandler &)> read_, write_;
   std::function<int(ClientHandler &)> on_read_, on_write_;
   // Address of frontend listening socket
@@ -240,4 +248,4 @@ private:
 
 } // namespace shrpx
 
-#endif // SHRPX_CLIENT_HANDLER_H
+#endif // !defined(SHRPX_CLIENT_HANDLER_H)

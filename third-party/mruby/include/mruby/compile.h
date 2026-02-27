@@ -8,6 +8,7 @@
 #define MRUBY_COMPILE_H
 
 #include "common.h"
+#include "mruby/mempool.h"
 
 /**
  * mruby Compiler
@@ -40,8 +41,8 @@ typedef struct mrb_ccontext {
 MRB_API mrb_ccontext* mrb_ccontext_new(mrb_state *mrb);
 MRB_API void mrb_ccontext_free(mrb_state *mrb, mrb_ccontext *cxt);
 MRB_API const char *mrb_ccontext_filename(mrb_state *mrb, mrb_ccontext *c, const char *s);
-MRB_API void mrb_ccontext_partial_hook(mrb_state *mrb, mrb_ccontext *c, int (*partial_hook)(struct mrb_parser_state*), void*data);
-MRB_API void mrb_ccontext_cleanup_local_variables(mrb_state *mrb, mrb_ccontext *c);
+MRB_API void mrb_ccontext_partial_hook(mrb_ccontext *c, int (*partial_hook)(struct mrb_parser_state*), void*data);
+MRB_API void mrb_ccontext_cleanup_local_variables(mrb_ccontext *c);
 
 /* compatibility macros */
 #define mrbc_context mrb_ccontext
@@ -122,7 +123,7 @@ struct mrb_parser_heredoc_info {
 /* parser structure */
 struct mrb_parser_state {
   mrb_state *mrb;
-  struct mrb_pool *pool;
+  mempool *pool;
   mrb_ast_node *cells;
   const char *s, *send;
 #ifndef MRB_NO_STDIO
@@ -190,15 +191,22 @@ MRB_API struct mrb_parser_state* mrb_parse_nstring(mrb_state*,const char*,size_t
 MRB_API struct RProc* mrb_generate_code(mrb_state*, struct mrb_parser_state*);
 MRB_API mrb_value mrb_load_exec(mrb_state *mrb, struct mrb_parser_state *p, mrb_ccontext *c);
 
-/** program load functions
-* Please note! Currently due to interactions with the GC calling these functions will
-* leak one RProc object per function call.
-* To prevent this save the current memory arena before calling and restore the arena
-* right after, like so
-* int ai = mrb_gc_arena_save(mrb);
-* mrb_value status = mrb_load_string(mrb, buffer);
-* mrb_gc_arena_restore(mrb, ai);
-*/
+/**
+ * program load functions
+ *
+ * Please note! Currently due to interactions with the GC calling these functions will
+ * leak one RProc object per function call.
+ * To prevent this save the current memory arena before calling and restore the arena
+ * right after, like so
+ *
+ *      int ai = mrb_gc_arena_save(mrb);
+ *      mrb_value status = mrb_load_string(mrb, buffer);
+ *      mrb_gc_arena_restore(mrb, ai);
+ *
+ * Also, when called from a C function defined as a method, the current stack is destroyed.
+ * If processing continues after this function, the objects obtained from the arguments
+ * must be protected as needed before this function.
+ */
 #ifndef MRB_NO_STDIO
 MRB_API mrb_value mrb_load_file(mrb_state*,FILE*);
 MRB_API mrb_value mrb_load_file_cxt(mrb_state*,FILE*, mrb_ccontext *cxt);

@@ -26,7 +26,7 @@
 
 #ifdef HAVE_UNISTD_H
 #  include <unistd.h>
-#endif // HAVE_UNISTD_H
+#endif // defined(HAVE_UNISTD_H)
 
 #include "llhttp.h"
 
@@ -77,8 +77,9 @@ Http2DownstreamConnection::~Http2DownstreamConnection() {
 
       auto &resp = downstream_->response();
 
-      http2session_->consume(downstream_->get_downstream_stream_id(),
-                             resp.unconsumed_body_length);
+      http2session_->consume(
+        static_cast<int32_t>(downstream_->get_downstream_stream_id()),
+        resp.unconsumed_body_length);
 
       resp.unconsumed_body_length = 0;
 
@@ -124,8 +125,9 @@ void Http2DownstreamConnection::detach_downstream(Downstream *downstream) {
       http2session_->signal_write();
     }
 
-    http2session_->consume(downstream_->get_downstream_stream_id(),
-                           resp.unconsumed_body_length);
+    http2session_->consume(
+      static_cast<int32_t>(downstream_->get_downstream_stream_id()),
+      resp.unconsumed_body_length);
 
     resp.unconsumed_body_length = 0;
 
@@ -155,7 +157,8 @@ int Http2DownstreamConnection::submit_rst_stream(Downstream *downstream,
                           << ", error_code=" << error_code;
       }
       rv = http2session_->submit_rst_stream(
-        downstream->get_downstream_stream_id(), error_code);
+        static_cast<int32_t>(downstream->get_downstream_stream_id()),
+        error_code);
     }
   }
   return rv;
@@ -222,7 +225,7 @@ nghttp2_ssize http2_data_read_callback(nghttp2_session *session,
     return NGHTTP2_ERR_DEFERRED;
   }
 
-  return nread;
+  return as_signed(nread);
 }
 } // namespace
 
@@ -260,11 +263,10 @@ int Http2DownstreamConnection::push_request_headers() {
 
   // http2session_ has already in CONNECTED state, so we can get
   // addr_idx here.
-  const auto &downstream_hostport = http2session_->get_addr()->hostport;
 
   // For HTTP/1.0 request, there is no authority in request.  In that
   // case, we use backend server's host nonetheless.
-  auto authority = StringRef(downstream_hostport);
+  auto authority = http2session_->get_addr()->hostport;
 
   if (no_host_rewrite && !req.authority.empty()) {
     authority = req.authority;
@@ -294,11 +296,11 @@ int Http2DownstreamConnection::push_request_headers() {
               httpconf.add_request_headers.size());
 
   if (req.connect_proto == ConnectProto::WEBSOCKET) {
-    nva.push_back(http2::make_field(":method"_sr, "CONNECT"_sr));
-    nva.push_back(http2::make_field(":protocol"_sr, "websocket"_sr));
+    nva.push_back(http2::make_field(":method"sv, "CONNECT"sv));
+    nva.push_back(http2::make_field(":protocol"sv, "websocket"sv));
   } else {
     nva.push_back(
-      http2::make_field(":method"_sr, http2::to_method_string(req.method)));
+      http2::make_field(":method"sv, http2::to_method_string(req.method)));
   }
 
   if (!req.regular_connect_method()) {
@@ -307,25 +309,25 @@ int Http2DownstreamConnection::push_request_headers() {
     auto addr = http2session_->get_addr();
     assert(addr);
     // We will handle more protocol scheme upgrade in the future.
-    if (addr->tls && addr->upgrade_scheme && req.scheme == "http"_sr) {
-      nva.push_back(http2::make_field(":scheme"_sr, "https"_sr));
+    if (addr->tls && addr->upgrade_scheme && req.scheme == "http"sv) {
+      nva.push_back(http2::make_field(":scheme"sv, "https"sv));
     } else {
-      nva.push_back(http2::make_field(":scheme"_sr, req.scheme));
+      nva.push_back(http2::make_field(":scheme"sv, req.scheme));
     }
 
     if (req.method == HTTP_OPTIONS && req.path.empty()) {
-      nva.push_back(http2::make_field(":path"_sr, "*"_sr));
+      nva.push_back(http2::make_field(":path"sv, "*"sv));
     } else {
-      nva.push_back(http2::make_field(":path"_sr, req.path));
+      nva.push_back(http2::make_field(":path"sv, req.path));
     }
 
     if (!req.no_authority || req.connect_proto != ConnectProto::NONE) {
-      nva.push_back(http2::make_field(":authority"_sr, authority));
+      nva.push_back(http2::make_field(":authority"sv, authority));
     } else {
-      nva.push_back(http2::make_field("host"_sr, authority));
+      nva.push_back(http2::make_field("host"sv, authority));
     }
   } else {
-    nva.push_back(http2::make_field(":authority"_sr, authority));
+    nva.push_back(http2::make_field(":authority"sv, authority));
   }
 
   auto &fwdconf = httpconf.forwarded;
@@ -354,10 +356,11 @@ int Http2DownstreamConnection::push_request_headers() {
   auto conn = handler->get_connection();
 
   if (conn->tls.ssl && !SSL_is_init_finished(conn->tls.ssl)) {
-    nva.push_back(http2::make_field("early-data"_sr, "1"_sr));
+    nva.push_back(http2::make_field("early-data"sv, "1"sv));
   }
-#endif // NGHTTP2_GENUINE_OPENSSL || NGHTTP2_OPENSSL_IS_BORINGSSL ||
-       // NGHTTP2_OPENSSL_IS_WOLFSSL
+#endif // defined(NGHTTP2_GENUINE_OPENSSL) ||
+       // defined(NGHTTP2_OPENSSL_IS_BORINGSSL) ||
+       // defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 
   auto fwd =
     fwdconf.strip_incoming ? nullptr : req.fs.header(http2::HD_FORWARDED);
@@ -366,7 +369,7 @@ int Http2DownstreamConnection::push_request_headers() {
     auto params = fwdconf.params;
 
     if (config->http2_proxy || req.regular_connect_method()) {
-      params &= ~FORWARDED_PROTO;
+      params &= static_cast<uint32_t>(~FORWARDED_PROTO);
     }
 
     auto value = http::create_forwarded(
@@ -378,30 +381,30 @@ int Http2DownstreamConnection::push_request_headers() {
         if (value.empty()) {
           value = fwd->value;
         } else {
-          value = concat_string_ref(balloc, fwd->value, ", "_sr, value);
+          value = concat_string_ref(balloc, fwd->value, ", "sv, value);
         }
       }
 
-      nva.push_back(http2::make_field("forwarded"_sr, value));
+      nva.push_back(http2::make_field("forwarded"sv, value));
     }
   } else if (fwd) {
-    nva.push_back(http2::make_field("forwarded"_sr, fwd->value));
+    nva.push_back(http2::make_field("forwarded"sv, fwd->value));
   }
 
   auto xff =
     xffconf.strip_incoming ? nullptr : req.fs.header(http2::HD_X_FORWARDED_FOR);
 
   if (xffconf.add) {
-    StringRef xff_value;
+    std::string_view xff_value;
     const auto &addr = upstream->get_client_handler()->get_ipaddr();
     if (xff) {
-      xff_value = concat_string_ref(balloc, xff->value, ", "_sr, addr);
+      xff_value = concat_string_ref(balloc, xff->value, ", "sv, addr);
     } else {
       xff_value = addr;
     }
-    nva.push_back(http2::make_field("x-forwarded-for"_sr, xff_value));
+    nva.push_back(http2::make_field("x-forwarded-for"sv, xff_value));
   } else if (xff) {
-    nva.push_back(http2::make_field("x-forwarded-for"_sr, xff->value));
+    nva.push_back(http2::make_field("x-forwarded-for"sv, xff->value));
   }
 
   if (!config->http2_proxy && !req.regular_connect_method()) {
@@ -410,23 +413,23 @@ int Http2DownstreamConnection::push_request_headers() {
                  : req.fs.header(http2::HD_X_FORWARDED_PROTO);
 
     if (xfpconf.add) {
-      StringRef xfp_value;
+      std::string_view xfp_value;
       // We use same protocol with :scheme header field
       if (xfp) {
-        xfp_value = concat_string_ref(balloc, xfp->value, ", "_sr, req.scheme);
+        xfp_value = concat_string_ref(balloc, xfp->value, ", "sv, req.scheme);
       } else {
         xfp_value = req.scheme;
       }
-      nva.push_back(http2::make_field("x-forwarded-proto"_sr, xfp_value));
+      nva.push_back(http2::make_field("x-forwarded-proto"sv, xfp_value));
     } else if (xfp) {
-      nva.push_back(http2::make_field("x-forwarded-proto"_sr, xfp->value));
+      nva.push_back(http2::make_field("x-forwarded-proto"sv, xfp->value));
     }
   }
 
   auto via = req.fs.header(http2::HD_VIA);
   if (httpconf.no_via) {
     if (via) {
-      nva.push_back(http2::make_field("via"_sr, (*via).value));
+      nva.push_back(http2::make_field("via"sv, (*via).value));
     }
   } else {
     size_t vialen = 16;
@@ -435,17 +438,17 @@ int Http2DownstreamConnection::push_request_headers() {
     }
 
     auto iov = make_byte_ref(balloc, vialen + 1);
-    auto p = std::begin(iov);
+    auto p = std::ranges::begin(iov);
 
     if (via) {
-      p = std::copy(std::begin(via->value), std::end(via->value), p);
-      p = util::copy_lit(p, ", ");
+      p = std::ranges::copy(via->value, p).out;
+      p = std::ranges::copy(", "sv, p).out;
     }
     p = http::create_via_header_value(p, req.http_major, req.http_minor);
     *p = '\0';
 
     nva.push_back(
-      http2::make_field("via"_sr, StringRef{std::span{std::begin(iov), p}}));
+      http2::make_field("via"sv, as_string_view(std::ranges::begin(iov), p)));
   }
 
   auto te = req.fs.header(http2::HD_TE);
@@ -453,7 +456,7 @@ int Http2DownstreamConnection::push_request_headers() {
   // "trailers".  We just forward "trailers".
   // TODO more strict handling required here.
   if (te && http2::contains_trailers(te->value)) {
-    nva.push_back(http2::make_field("te"_sr, "trailers"_sr));
+    nva.push_back(http2::make_field("te"sv, "trailers"sv));
   }
 
   for (auto &p : httpconf.add_request_headers) {
@@ -463,14 +466,14 @@ int Http2DownstreamConnection::push_request_headers() {
   if (LOG_ENABLED(INFO)) {
     std::stringstream ss;
     for (auto &nv : nva) {
-      auto name = StringRef{nv.name, nv.namelen};
+      auto name = as_string_view(nv.name, nv.namelen);
 
-      if ("authorization"_sr == name) {
+      if ("authorization"sv == name) {
         ss << TTY_HTTP_HD << name << TTY_RST << ": <redacted>\n";
         continue;
       }
       ss << TTY_HTTP_HD << name << TTY_RST << ": "
-         << StringRef{nv.value, nv.valuelen} << "\n";
+         << as_string_view(nv.value, nv.valuelen) << "\n";
     }
     DCLOG(INFO, this) << "HTTP request headers\n" << ss.str();
   }
@@ -562,8 +565,8 @@ int Http2DownstreamConnection::resume_read(IOCtrlReason reason,
   }
 
   if (consumed > 0) {
-    rv =
-      http2session_->consume(downstream_->get_downstream_stream_id(), consumed);
+    rv = http2session_->consume(
+      static_cast<int32_t>(downstream_->get_downstream_stream_id()), consumed);
 
     if (rv != 0) {
       return -1;

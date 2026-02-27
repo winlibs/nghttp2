@@ -137,7 +137,7 @@ client_OBJECTS = $(am_client_OBJECTS)
 client_LDADD = $(LDADD)
 @ENABLE_EXAMPLES_TRUE@client_DEPENDENCIES =  \
 @ENABLE_EXAMPLES_TRUE@	$(top_builddir)/lib/libnghttp2.la \
-@ENABLE_EXAMPLES_TRUE@	$(top_builddir)/third-party/liburl-parser.la
+@ENABLE_EXAMPLES_TRUE@	$(top_builddir)/third-party/liburlparse.la
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
 am__v_lt_0 = --silent
@@ -148,7 +148,7 @@ deflate_OBJECTS = $(am_deflate_OBJECTS)
 deflate_LDADD = $(LDADD)
 @ENABLE_EXAMPLES_TRUE@deflate_DEPENDENCIES =  \
 @ENABLE_EXAMPLES_TRUE@	$(top_builddir)/lib/libnghttp2.la \
-@ENABLE_EXAMPLES_TRUE@	$(top_builddir)/third-party/liburl-parser.la
+@ENABLE_EXAMPLES_TRUE@	$(top_builddir)/third-party/liburlparse.la
 am__libevent_client_SOURCES_DIST = libevent-client.c
 @ENABLE_EXAMPLES_TRUE@am_libevent_client_OBJECTS =  \
 @ENABLE_EXAMPLES_TRUE@	libevent-client.$(OBJEXT)
@@ -156,7 +156,7 @@ libevent_client_OBJECTS = $(am_libevent_client_OBJECTS)
 libevent_client_LDADD = $(LDADD)
 @ENABLE_EXAMPLES_TRUE@libevent_client_DEPENDENCIES =  \
 @ENABLE_EXAMPLES_TRUE@	$(top_builddir)/lib/libnghttp2.la \
-@ENABLE_EXAMPLES_TRUE@	$(top_builddir)/third-party/liburl-parser.la
+@ENABLE_EXAMPLES_TRUE@	$(top_builddir)/third-party/liburlparse.la
 am__libevent_server_SOURCES_DIST = libevent-server.c
 @ENABLE_EXAMPLES_TRUE@am_libevent_server_OBJECTS =  \
 @ENABLE_EXAMPLES_TRUE@	libevent-server.$(OBJEXT)
@@ -164,7 +164,7 @@ libevent_server_OBJECTS = $(am_libevent_server_OBJECTS)
 libevent_server_LDADD = $(LDADD)
 @ENABLE_EXAMPLES_TRUE@libevent_server_DEPENDENCIES =  \
 @ENABLE_EXAMPLES_TRUE@	$(top_builddir)/lib/libnghttp2.la \
-@ENABLE_EXAMPLES_TRUE@	$(top_builddir)/third-party/liburl-parser.la
+@ENABLE_EXAMPLES_TRUE@	$(top_builddir)/third-party/liburlparse.la
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
 am__v_P_0 = false
@@ -301,6 +301,10 @@ LIBNGHTTP3_LIBS = @LIBNGHTTP3_LIBS@
 LIBNGTCP2_CFLAGS = @LIBNGTCP2_CFLAGS@
 LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS = @LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS@
 LIBNGTCP2_CRYPTO_BORINGSSL_LIBS = @LIBNGTCP2_CRYPTO_BORINGSSL_LIBS@
+LIBNGTCP2_CRYPTO_LIBRESSL_CFLAGS = @LIBNGTCP2_CRYPTO_LIBRESSL_CFLAGS@
+LIBNGTCP2_CRYPTO_LIBRESSL_LIBS = @LIBNGTCP2_CRYPTO_LIBRESSL_LIBS@
+LIBNGTCP2_CRYPTO_OSSL_CFLAGS = @LIBNGTCP2_CRYPTO_OSSL_CFLAGS@
+LIBNGTCP2_CRYPTO_OSSL_LIBS = @LIBNGTCP2_CRYPTO_OSSL_LIBS@
 LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS = @LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS@
 LIBNGTCP2_CRYPTO_QUICTLS_LIBS = @LIBNGTCP2_CRYPTO_QUICTLS_LIBS@
 LIBNGTCP2_CRYPTO_WOLFSSL_CFLAGS = @LIBNGTCP2_CRYPTO_WOLFSSL_CFLAGS@
@@ -430,14 +434,14 @@ EXTRA_DIST = CMakeLists.txt
 @ENABLE_EXAMPLES_TRUE@AM_CPPFLAGS = \
 @ENABLE_EXAMPLES_TRUE@	-I$(top_srcdir)/lib/includes \
 @ENABLE_EXAMPLES_TRUE@	-I$(top_builddir)/lib/includes \
-@ENABLE_EXAMPLES_TRUE@	-I$(top_srcdir)/third-party \
+@ENABLE_EXAMPLES_TRUE@	-I$(top_srcdir)/third-party/urlparse \
 @ENABLE_EXAMPLES_TRUE@	@LIBEVENT_OPENSSL_CFLAGS@ \
 @ENABLE_EXAMPLES_TRUE@	@OPENSSL_CFLAGS@ \
 @ENABLE_EXAMPLES_TRUE@	@DEFS@
 
 @ENABLE_EXAMPLES_TRUE@AM_LDFLAGS = @LIBTOOL_LDFLAGS@
 @ENABLE_EXAMPLES_TRUE@LDADD = $(top_builddir)/lib/libnghttp2.la \
-@ENABLE_EXAMPLES_TRUE@	$(top_builddir)/third-party/liburl-parser.la \
+@ENABLE_EXAMPLES_TRUE@	$(top_builddir)/third-party/liburlparse.la \
 @ENABLE_EXAMPLES_TRUE@	@LIBEVENT_OPENSSL_LIBS@ \
 @ENABLE_EXAMPLES_TRUE@	@OPENSSL_LIBS@ \
 @ENABLE_EXAMPLES_TRUE@	@APPLDFLAGS@

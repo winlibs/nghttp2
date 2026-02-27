@@ -26,7 +26,7 @@
 
 #ifdef HAVE_UNISTD_H
 #  include <unistd.h>
-#endif // HAVE_UNISTD_H
+#endif // defined(HAVE_UNISTD_H)
 #include <sys/types.h>
 #include <sys/wait.h>
 
@@ -41,7 +41,6 @@
 #include "shrpx_http2_session.h"
 #include "shrpx_connect_blocker.h"
 #include "shrpx_downstream_connection.h"
-#include "shrpx_accept_handler.h"
 #include "shrpx_memcached_dispatcher.h"
 #include "shrpx_signal.h"
 #include "shrpx_log.h"
@@ -53,51 +52,6 @@
 using namespace nghttp2;
 
 namespace shrpx {
-
-namespace {
-void acceptor_disable_cb(struct ev_loop *loop, ev_timer *w, int revent) {
-  auto h = static_cast<ConnectionHandler *>(w->data);
-
-  // If we are in graceful shutdown period, we must not enable
-  // acceptors again.
-  if (h->get_graceful_shutdown()) {
-    return;
-  }
-
-  h->enable_acceptor();
-}
-} // namespace
-
-namespace {
-void ocsp_cb(struct ev_loop *loop, ev_timer *w, int revent) {
-  auto h = static_cast<ConnectionHandler *>(w->data);
-
-  // If we are in graceful shutdown period, we won't do ocsp query.
-  if (h->get_graceful_shutdown()) {
-    return;
-  }
-
-  LOG(NOTICE) << "Start ocsp update";
-
-  h->proceed_next_cert_ocsp();
-}
-} // namespace
-
-namespace {
-void ocsp_read_cb(struct ev_loop *loop, ev_io *w, int revent) {
-  auto h = static_cast<ConnectionHandler *>(w->data);
-
-  h->read_ocsp_chunk();
-}
-} // namespace
-
-namespace {
-void ocsp_chld_cb(struct ev_loop *loop, ev_child *w, int revent) {
-  auto h = static_cast<ConnectionHandler *>(w->data);
-
-  h->handle_ocsp_complete();
-}
-} // namespace
 
 namespace {
 void thread_join_async_cb(struct ev_loop *loop, ev_async *w, int revent) {
@@ -117,50 +71,28 @@ ConnectionHandler::ConnectionHandler(struct ev_loop *loop, std::mt19937 &gen)
   :
 #ifdef ENABLE_HTTP3
     quic_ipc_fd_(-1),
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
     gen_(gen),
     single_worker_(nullptr),
     loop_(loop),
 #ifdef HAVE_NEVERBLEED
     nb_(nullptr),
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
     tls_ticket_key_memcached_get_retry_count_(0),
     tls_ticket_key_memcached_fail_count_(0),
     worker_round_robin_cnt_(get_config()->api.enabled ? 1 : 0),
-    graceful_shutdown_(false),
-    enable_acceptor_on_ocsp_completion_(false) {
-  ev_timer_init(&disable_acceptor_timer_, acceptor_disable_cb, 0., 0.);
-  disable_acceptor_timer_.data = this;
-
-  ev_timer_init(&ocsp_timer_, ocsp_cb, 0., 0.);
-  ocsp_timer_.data = this;
-
-  ev_io_init(&ocsp_.rev, ocsp_read_cb, -1, EV_READ);
-  ocsp_.rev.data = this;
-
+    graceful_shutdown_(false) {
   ev_async_init(&thread_join_asyncev_, thread_join_async_cb);
 
   ev_async_init(&serial_event_asyncev_, serial_event_async_cb);
   serial_event_asyncev_.data = this;
 
   ev_async_start(loop_, &serial_event_asyncev_);
-
-  ev_child_init(&ocsp_.chldev, ocsp_chld_cb, 0, 0);
-  ocsp_.chldev.data = this;
-
-  ocsp_.next = 0;
-  ocsp_.proc.rfd = -1;
-
-  reset_ocsp();
 }
 
 ConnectionHandler::~ConnectionHandler() {
-  ev_child_stop(loop_, &ocsp_.chldev);
   ev_async_stop(loop_, &serial_event_asyncev_);
   ev_async_stop(loop_, &thread_join_asyncev_);
-  ev_io_stop(loop_, &ocsp_.rev);
-  ev_timer_stop(loop_, &ocsp_timer_);
-  ev_timer_stop(loop_, &disable_acceptor_timer_);
 
 #ifdef ENABLE_HTTP3
   for (auto ssl_ctx : quic_all_ssl_ctx_) {
@@ -173,7 +105,7 @@ ConnectionHandler::~ConnectionHandler() {
     delete tls_ctx_data;
     SSL_CTX_free(ssl_ctx);
   }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
   for (auto ssl_ctx : all_ssl_ctx_) {
     auto tls_ctx_data =
@@ -199,23 +131,19 @@ void ConnectionHandler::set_ticket_keys_to_worker(
 
 void ConnectionHandler::worker_reopen_log_files() {
   for (auto &worker : workers_) {
-    WorkerEvent wev{};
-
-    wev.type = WorkerEventType::REOPEN_LOG;
-
-    worker->send(std::move(wev));
+    worker->send(WorkerEvent{
+      .type = WorkerEventType::REOPEN_LOG,
+    });
   }
 }
 
 void ConnectionHandler::worker_replace_downstream(
   std::shared_ptr<DownstreamConfig> downstreamconf) {
   for (auto &worker : workers_) {
-    WorkerEvent wev{};
-
-    wev.type = WorkerEventType::REPLACE_DOWNSTREAM;
-    wev.downstreamconf = downstreamconf;
-
-    worker->send(std::move(wev));
+    worker->send(WorkerEvent{
+      .type = WorkerEventType::REPLACE_DOWNSTREAM,
+      .downstreamconf = downstreamconf,
+    });
   }
 }
 
@@ -226,7 +154,7 @@ int ConnectionHandler::create_single_worker() {
 #ifdef HAVE_NEVERBLEED
                                       ,
     nb_
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
   );
 
 #ifdef ENABLE_HTTP3
@@ -236,72 +164,55 @@ int ConnectionHandler::create_single_worker() {
 #  ifdef HAVE_NEVERBLEED
                                                 ,
     nb_
-#  endif // HAVE_NEVERBLEED
+#  endif // defined(HAVE_NEVERBLEED)
   );
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
   auto cl_ssl_ctx = tls::setup_downstream_client_ssl_context(
 #ifdef HAVE_NEVERBLEED
     nb_
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
   );
 
   if (cl_ssl_ctx) {
     all_ssl_ctx_.push_back(cl_ssl_ctx);
 #ifdef ENABLE_HTTP3
     quic_all_ssl_ctx_.push_back(nullptr);
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
   }
 
   auto config = get_config();
-  auto &tlsconf = config->tls;
-
-  SSL_CTX *session_cache_ssl_ctx = nullptr;
-  {
-    auto &memcachedconf = config->tls.session_cache.memcached;
-    if (memcachedconf.tls) {
-      session_cache_ssl_ctx = tls::create_ssl_client_context(
-#ifdef HAVE_NEVERBLEED
-        nb_,
-#endif // HAVE_NEVERBLEED
-        tlsconf.cacert, memcachedconf.cert_file,
-        memcachedconf.private_key_file);
-      all_ssl_ctx_.push_back(session_cache_ssl_ctx);
-#ifdef ENABLE_HTTP3
-      quic_all_ssl_ctx_.push_back(nullptr);
-#endif // ENABLE_HTTP3
-    }
-  }
 
 #if defined(ENABLE_HTTP3) && defined(HAVE_LIBBPF)
   quic_bpf_refs_.resize(config->conn.quic_listener.addrs.size());
-#endif // ENABLE_HTTP3 && HAVE_LIBBPF
+#endif // defined(ENABLE_HTTP3) && defined(HAVE_LIBBPF)
 
 #ifdef ENABLE_HTTP3
   assert(worker_ids_.size() == 1);
   const auto &wid = worker_ids_[0];
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
   single_worker_ = std::make_unique<Worker>(
-    loop_, sv_ssl_ctx, cl_ssl_ctx, session_cache_ssl_ctx, cert_tree_.get(),
+    loop_, sv_ssl_ctx, cl_ssl_ctx, cert_tree_.get(),
 #ifdef ENABLE_HTTP3
     quic_sv_ssl_ctx, quic_cert_tree_.get(), wid,
-#  ifdef HAVE_LIBBPF
-    /* index = */ 0,
-#  endif // HAVE_LIBBPF
-#endif   // ENABLE_HTTP3
-    ticket_keys_, this, config->conn.downstream);
+#endif // defined(ENABLE_HTTP3)
+    /* index = */ 0, ticket_keys_, this, config->conn.downstream);
 #ifdef HAVE_MRUBY
   if (single_worker_->create_mruby_context() != 0) {
     return -1;
   }
-#endif // HAVE_MRUBY
+#endif // defined(HAVE_MRUBY)
+
+  if (single_worker_->setup_server_socket() != 0) {
+    return -1;
+  }
 
 #ifdef ENABLE_HTTP3
   if (single_worker_->setup_quic_server_socket() != 0) {
     return -1;
   }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
   return 0;
 }
@@ -316,7 +227,7 @@ int ConnectionHandler::create_worker_thread(size_t num) {
 #  ifdef HAVE_NEVERBLEED
                                       ,
     nb_
-#  endif // HAVE_NEVERBLEED
+#  endif // defined(HAVE_NEVERBLEED)
   );
 
 #  ifdef ENABLE_HTTP3
@@ -326,86 +237,68 @@ int ConnectionHandler::create_worker_thread(size_t num) {
 #    ifdef HAVE_NEVERBLEED
                                                 ,
     nb_
-#    endif // HAVE_NEVERBLEED
+#    endif // defined(HAVE_NEVERBLEED)
   );
-#  endif // ENABLE_HTTP3
+#  endif // defined(ENABLE_HTTP3)
 
   auto cl_ssl_ctx = tls::setup_downstream_client_ssl_context(
 #  ifdef HAVE_NEVERBLEED
     nb_
-#  endif // HAVE_NEVERBLEED
+#  endif // defined(HAVE_NEVERBLEED)
   );
 
   if (cl_ssl_ctx) {
     all_ssl_ctx_.push_back(cl_ssl_ctx);
 #  ifdef ENABLE_HTTP3
     quic_all_ssl_ctx_.push_back(nullptr);
-#  endif // ENABLE_HTTP3
+#  endif // defined(ENABLE_HTTP3)
   }
 
   auto config = get_config();
-  auto &tlsconf = config->tls;
   auto &apiconf = config->api;
 
 #  if defined(ENABLE_HTTP3) && defined(HAVE_LIBBPF)
   quic_bpf_refs_.resize(config->conn.quic_listener.addrs.size());
-#  endif // ENABLE_HTTP3 && HAVE_LIBBPF
+#  endif // defined(ENABLE_HTTP3) && defined(HAVE_LIBBPF)
 
   // We have dedicated worker for API request processing.
   if (apiconf.enabled) {
     ++num;
   }
 
-  SSL_CTX *session_cache_ssl_ctx = nullptr;
-  {
-    auto &memcachedconf = config->tls.session_cache.memcached;
-
-    if (memcachedconf.tls) {
-      session_cache_ssl_ctx = tls::create_ssl_client_context(
-#  ifdef HAVE_NEVERBLEED
-        nb_,
-#  endif // HAVE_NEVERBLEED
-        tlsconf.cacert, memcachedconf.cert_file,
-        memcachedconf.private_key_file);
-      all_ssl_ctx_.push_back(session_cache_ssl_ctx);
-#  ifdef ENABLE_HTTP3
-      quic_all_ssl_ctx_.push_back(nullptr);
-#  endif // ENABLE_HTTP3
-    }
-  }
-
 #  ifdef ENABLE_HTTP3
   assert(worker_ids_.size() == num);
-#  endif // ENABLE_HTTP3
+#  endif // defined(ENABLE_HTTP3)
 
   for (size_t i = 0; i < num; ++i) {
     auto loop = ev_loop_new(config->ev_loop_flags);
 
 #  ifdef ENABLE_HTTP3
     const auto &wid = worker_ids_[i];
-#  endif // ENABLE_HTTP3
+#  endif // defined(ENABLE_HTTP3)
 
-    auto worker = std::make_unique<Worker>(
-      loop, sv_ssl_ctx, cl_ssl_ctx, session_cache_ssl_ctx, cert_tree_.get(),
+    auto worker =
+      std::make_unique<Worker>(loop, sv_ssl_ctx, cl_ssl_ctx, cert_tree_.get(),
 #  ifdef ENABLE_HTTP3
-      quic_sv_ssl_ctx, quic_cert_tree_.get(), wid,
-#    ifdef HAVE_LIBBPF
-      i,
-#    endif // HAVE_LIBBPF
-#  endif   // ENABLE_HTTP3
-      ticket_keys_, this, config->conn.downstream);
+                               quic_sv_ssl_ctx, quic_cert_tree_.get(), wid,
+#  endif // defined(ENABLE_HTTP3)
+                               i, ticket_keys_, this, config->conn.downstream);
 #  ifdef HAVE_MRUBY
     if (worker->create_mruby_context() != 0) {
       return -1;
     }
-#  endif // HAVE_MRUBY
+#  endif // defined(HAVE_MRUBY)
+
+    if (worker->setup_server_socket() != 0) {
+      return -1;
+    }
 
 #  ifdef ENABLE_HTTP3
     if ((!apiconf.enabled || i != 0) &&
         worker->setup_quic_server_socket() != 0) {
       return -1;
     }
-#  endif // ENABLE_HTTP3
+#  endif // defined(ENABLE_HTTP3)
 
     workers_.push_back(std::move(worker));
     worker_loops_.push_back(loop);
@@ -417,7 +310,7 @@ int ConnectionHandler::create_worker_thread(size_t num) {
     worker->run_async();
   }
 
-#endif // NOTHREADS
+#endif // !defined(NOTHREADS)
 
   return 0;
 }
@@ -438,7 +331,7 @@ void ConnectionHandler::join_worker() {
     }
     ++n;
   }
-#endif // NOTHREADS
+#endif // !defined(NOTHREADS)
 }
 
 void ConnectionHandler::graceful_shutdown_worker() {
@@ -451,10 +344,9 @@ void ConnectionHandler::graceful_shutdown_worker() {
   }
 
   for (auto &worker : workers_) {
-    WorkerEvent wev{};
-    wev.type = WorkerEventType::GRACEFUL_SHUTDOWN;
-
-    worker->send(std::move(wev));
+    worker->send(WorkerEvent{
+      .type = WorkerEventType::GRACEFUL_SHUTDOWN,
+    });
   }
 
 #ifndef NOTHREADS
@@ -464,122 +356,14 @@ void ConnectionHandler::graceful_shutdown_worker() {
     (void)reopen_log_files(get_config()->logging);
     join_worker();
     ev_async_send(get_loop(), &thread_join_asyncev_);
-    delete_log_config();
   });
-#endif // NOTHREADS
-}
-
-int ConnectionHandler::handle_connection(int fd, sockaddr *addr, int addrlen,
-                                         const UpstreamAddr *faddr) {
-  if (LOG_ENABLED(INFO)) {
-    LLOG(INFO, this) << "Accepted connection from "
-                     << util::numeric_name(addr, addrlen) << ", fd=" << fd;
-  }
-
-  auto config = get_config();
-
-  if (single_worker_) {
-    auto &upstreamconf = config->conn.upstream;
-    if (single_worker_->get_worker_stat()->num_connections >=
-        upstreamconf.worker_connections) {
-      if (LOG_ENABLED(INFO)) {
-        LLOG(INFO, this) << "Too many connections >="
-                         << upstreamconf.worker_connections;
-      }
-
-      close(fd);
-      return -1;
-    }
-
-    auto client =
-      tls::accept_connection(single_worker_.get(), fd, addr, addrlen, faddr);
-    if (!client) {
-      LLOG(ERROR, this) << "ClientHandler creation failed";
-
-      close(fd);
-      return -1;
-    }
-
-    return 0;
-  }
-
-  Worker *worker;
-
-  if (faddr->alt_mode == UpstreamAltMode::API) {
-    worker = workers_[0].get();
-
-    if (LOG_ENABLED(INFO)) {
-      LOG(INFO) << "Dispatch connection to API worker #0";
-    }
-  } else {
-    worker = workers_[worker_round_robin_cnt_].get();
-
-    if (LOG_ENABLED(INFO)) {
-      LOG(INFO) << "Dispatch connection to worker #" << worker_round_robin_cnt_;
-    }
-
-    if (++worker_round_robin_cnt_ == workers_.size()) {
-      auto &apiconf = config->api;
-
-      if (apiconf.enabled) {
-        worker_round_robin_cnt_ = 1;
-      } else {
-        worker_round_robin_cnt_ = 0;
-      }
-    }
-  }
-
-  WorkerEvent wev{};
-  wev.type = WorkerEventType::NEW_CONNECTION;
-  wev.client_fd = fd;
-  memcpy(&wev.client_addr, addr, addrlen);
-  wev.client_addrlen = addrlen;
-  wev.faddr = faddr;
-
-  worker->send(std::move(wev));
-
-  return 0;
+#endif // !defined(NOTHREADS)
 }
 
 struct ev_loop *ConnectionHandler::get_loop() const { return loop_; }
 
 Worker *ConnectionHandler::get_single_worker() const {
   return single_worker_.get();
-}
-
-void ConnectionHandler::add_acceptor(std::unique_ptr<AcceptHandler> h) {
-  acceptors_.push_back(std::move(h));
-}
-
-void ConnectionHandler::delete_acceptor() { acceptors_.clear(); }
-
-void ConnectionHandler::enable_acceptor() {
-  for (auto &a : acceptors_) {
-    a->enable();
-  }
-}
-
-void ConnectionHandler::disable_acceptor() {
-  for (auto &a : acceptors_) {
-    a->disable();
-  }
-}
-
-void ConnectionHandler::sleep_acceptor(ev_tstamp t) {
-  if (t == 0. || ev_is_active(&disable_acceptor_timer_)) {
-    return;
-  }
-
-  disable_acceptor();
-
-  ev_timer_set(&disable_acceptor_timer_, t, 0.);
-  ev_timer_start(loop_, &disable_acceptor_timer_);
-}
-
-void ConnectionHandler::accept_pending_connection() {
-  for (auto &a : acceptors_) {
-    a->accept_connection();
-  }
 }
 
 void ConnectionHandler::set_ticket_keys(
@@ -603,215 +387,6 @@ void ConnectionHandler::set_graceful_shutdown(bool f) {
 
 bool ConnectionHandler::get_graceful_shutdown() const {
   return graceful_shutdown_;
-}
-
-void ConnectionHandler::cancel_ocsp_update() {
-  enable_acceptor_on_ocsp_completion_ = false;
-  ev_timer_stop(loop_, &ocsp_timer_);
-
-  if (ocsp_.proc.pid == 0) {
-    return;
-  }
-
-  int rv;
-
-  rv = kill(ocsp_.proc.pid, SIGTERM);
-  if (rv != 0) {
-    auto error = errno;
-    LOG(ERROR) << "Could not send signal to OCSP query process: errno="
-               << error;
-  }
-
-  while ((rv = waitpid(ocsp_.proc.pid, nullptr, 0)) == -1 && errno == EINTR)
-    ;
-  if (rv == -1) {
-    auto error = errno;
-    LOG(ERROR) << "Error occurred while we were waiting for the completion of "
-                  "OCSP query process: errno="
-               << error;
-  }
-}
-
-// inspired by h2o_read_command function from h2o project:
-// https://github.com/h2o/h2o
-int ConnectionHandler::start_ocsp_update(const char *cert_file) {
-  int rv;
-
-  if (LOG_ENABLED(INFO)) {
-    LOG(INFO) << "Start ocsp update for " << cert_file;
-  }
-
-  assert(!ev_is_active(&ocsp_.rev));
-  assert(!ev_is_active(&ocsp_.chldev));
-
-  char *const argv[] = {
-    const_cast<char *>(get_config()->tls.ocsp.fetch_ocsp_response_file.data()),
-    const_cast<char *>(cert_file), nullptr};
-
-  Process proc;
-  rv = exec_read_command(proc, argv);
-  if (rv != 0) {
-    return -1;
-  }
-
-  ocsp_.proc = proc;
-
-  ev_io_set(&ocsp_.rev, ocsp_.proc.rfd, EV_READ);
-  ev_io_start(loop_, &ocsp_.rev);
-
-  ev_child_set(&ocsp_.chldev, ocsp_.proc.pid, 0);
-  ev_child_start(loop_, &ocsp_.chldev);
-
-  return 0;
-}
-
-void ConnectionHandler::read_ocsp_chunk() {
-  std::array<uint8_t, 4_k> buf;
-  for (;;) {
-    ssize_t n;
-    while ((n = read(ocsp_.proc.rfd, buf.data(), buf.size())) == -1 &&
-           errno == EINTR)
-      ;
-
-    if (n == -1) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        return;
-      }
-      auto error = errno;
-      LOG(WARN) << "Reading from ocsp query command failed: errno=" << error;
-      ocsp_.error = error;
-
-      break;
-    }
-
-    if (n == 0) {
-      break;
-    }
-
-    std::copy_n(std::begin(buf), n, std::back_inserter(ocsp_.resp));
-  }
-
-  ev_io_stop(loop_, &ocsp_.rev);
-}
-
-void ConnectionHandler::handle_ocsp_complete() {
-  ev_io_stop(loop_, &ocsp_.rev);
-  ev_child_stop(loop_, &ocsp_.chldev);
-
-  assert(ocsp_.next < all_ssl_ctx_.size());
-#ifdef ENABLE_HTTP3
-  assert(all_ssl_ctx_.size() == quic_all_ssl_ctx_.size());
-#endif // ENABLE_HTTP3
-
-  auto ssl_ctx = all_ssl_ctx_[ocsp_.next];
-  auto tls_ctx_data =
-    static_cast<tls::TLSContextData *>(SSL_CTX_get_app_data(ssl_ctx));
-
-  auto rstatus = ocsp_.chldev.rstatus;
-  auto status = WEXITSTATUS(rstatus);
-  if (ocsp_.error || !WIFEXITED(rstatus) || status != 0) {
-    LOG(WARN) << "ocsp query command for " << tls_ctx_data->cert_file
-              << " failed: error=" << ocsp_.error << ", rstatus=" << log::hex
-              << rstatus << log::dec << ", status=" << status;
-    ++ocsp_.next;
-    proceed_next_cert_ocsp();
-    return;
-  }
-
-  if (LOG_ENABLED(INFO)) {
-    LOG(INFO) << "ocsp update for " << tls_ctx_data->cert_file
-              << " finished successfully";
-  }
-
-  auto config = get_config();
-  auto &tlsconf = config->tls;
-
-  if (tlsconf.ocsp.no_verify ||
-      tls::verify_ocsp_response(ssl_ctx, ocsp_.resp.data(),
-                                ocsp_.resp.size()) == 0) {
-#ifdef ENABLE_HTTP3
-    // We have list of SSL_CTX with the same certificate in
-    // quic_all_ssl_ctx_ as well.  Some SSL_CTXs are missing there in
-    // that case we get nullptr.
-    auto quic_ssl_ctx = quic_all_ssl_ctx_[ocsp_.next];
-    if (quic_ssl_ctx) {
-      auto quic_tls_ctx_data =
-        static_cast<tls::TLSContextData *>(SSL_CTX_get_app_data(quic_ssl_ctx));
-#  ifdef HAVE_ATOMIC_STD_SHARED_PTR
-      quic_tls_ctx_data->ocsp_data.store(
-        std::make_shared<std::vector<uint8_t>>(ocsp_.resp),
-        std::memory_order_release);
-#  else  // !HAVE_ATOMIC_STD_SHARED_PTR
-      std::lock_guard<std::mutex> g(quic_tls_ctx_data->mu);
-      quic_tls_ctx_data->ocsp_data =
-        std::make_shared<std::vector<uint8_t>>(ocsp_.resp);
-#  endif // !HAVE_ATOMIC_STD_SHARED_PTR
-    }
-#endif // ENABLE_HTTP3
-
-#ifdef HAVE_ATOMIC_STD_SHARED_PTR
-    tls_ctx_data->ocsp_data.store(
-      std::make_shared<std::vector<uint8_t>>(std::move(ocsp_.resp)),
-      std::memory_order_release);
-#else  // !HAVE_ATOMIC_STD_SHARED_PTR
-    std::lock_guard<std::mutex> g(tls_ctx_data->mu);
-    tls_ctx_data->ocsp_data =
-      std::make_shared<std::vector<uint8_t>>(std::move(ocsp_.resp));
-#endif // !HAVE_ATOMIC_STD_SHARED_PTR
-  }
-
-  ++ocsp_.next;
-  proceed_next_cert_ocsp();
-}
-
-void ConnectionHandler::reset_ocsp() {
-  if (ocsp_.proc.rfd != -1) {
-    close(ocsp_.proc.rfd);
-  }
-
-  ocsp_.proc.rfd = -1;
-  ocsp_.proc.pid = 0;
-  ocsp_.error = 0;
-  ocsp_.resp = std::vector<uint8_t>();
-}
-
-void ConnectionHandler::proceed_next_cert_ocsp() {
-  for (;;) {
-    reset_ocsp();
-    if (ocsp_.next == all_ssl_ctx_.size()) {
-      ocsp_.next = 0;
-      // We have updated all ocsp response, and schedule next update.
-      ev_timer_set(&ocsp_timer_, get_config()->tls.ocsp.update_interval, 0.);
-      ev_timer_start(loop_, &ocsp_timer_);
-
-      if (enable_acceptor_on_ocsp_completion_) {
-        enable_acceptor_on_ocsp_completion_ = false;
-        enable_acceptor();
-      }
-
-      return;
-    }
-
-    auto ssl_ctx = all_ssl_ctx_[ocsp_.next];
-    auto tls_ctx_data =
-      static_cast<tls::TLSContextData *>(SSL_CTX_get_app_data(ssl_ctx));
-
-    // client SSL_CTX is also included in all_ssl_ctx_, but has no
-    // tls_ctx_data.
-    if (!tls_ctx_data) {
-      ++ocsp_.next;
-      continue;
-    }
-
-    auto cert_file = tls_ctx_data->cert_file;
-
-    if (start_ocsp_update(cert_file) != 0) {
-      ++ocsp_.next;
-      continue;
-    }
-
-    break;
-  }
 }
 
 void ConnectionHandler::set_tls_ticket_key_memcached_dispatcher(
@@ -919,20 +494,20 @@ SSL_CTX *ConnectionHandler::create_tls_ticket_key_memcached_ssl_ctx() {
   auto ssl_ctx = tls::create_ssl_client_context(
 #ifdef HAVE_NEVERBLEED
     nb_,
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
     tlsconf.cacert, memcachedconf.cert_file, memcachedconf.private_key_file);
 
   all_ssl_ctx_.push_back(ssl_ctx);
 #ifdef ENABLE_HTTP3
   quic_all_ssl_ctx_.push_back(nullptr);
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
   return ssl_ctx;
 }
 
 #ifdef HAVE_NEVERBLEED
 void ConnectionHandler::set_neverbleed(neverbleed_t *nb) { nb_ = nb; }
-#endif // HAVE_NEVERBLEED
+#endif // defined(HAVE_NEVERBLEED)
 
 void ConnectionHandler::handle_serial_event() {
   std::vector<SerialEvent> q;
@@ -993,11 +568,7 @@ const std::vector<SSL_CTX *> &
 ConnectionHandler::get_quic_indexed_ssl_ctx(size_t idx) const {
   return quic_indexed_ssl_ctx_[idx];
 }
-#endif // ENABLE_HTTP3
-
-void ConnectionHandler::set_enable_acceptor_on_ocsp_completion(bool f) {
-  enable_acceptor_on_ocsp_completion_ = f;
-}
+#endif // defined(ENABLE_HTTP3)
 
 #ifdef ENABLE_HTTP3
 int ConnectionHandler::forward_quic_packet(const UpstreamAddr *faddr,
@@ -1013,12 +584,11 @@ int ConnectionHandler::forward_quic_packet(const UpstreamAddr *faddr,
     return -1;
   }
 
-  WorkerEvent wev{};
-  wev.type = WorkerEventType::QUIC_PKT_FORWARD;
-  wev.quic_pkt = std::make_unique<QUICPacket>(faddr->index, remote_addr,
-                                              local_addr, pi, data);
-
-  worker->send(std::move(wev));
+  worker->send(WorkerEvent{
+    .type = WorkerEventType::QUIC_PKT_FORWARD,
+    .quic_pkt = std::make_unique<QUICPacket>(faddr->index, remote_addr,
+                                             local_addr, pi, data),
+  });
 
   return 0;
 }
@@ -1058,7 +628,7 @@ Worker *ConnectionHandler::find_worker(const WorkerID &wid) const {
     return nullptr;
   }
 
-  return workers_[idx].get();
+  return workers_[as_unsigned(idx)].get();
 }
 
 QUICLingeringWorkerProcess *
@@ -1091,7 +661,7 @@ void ConnectionHandler::unload_bpf_objects() {
     ref.obj = nullptr;
   }
 }
-#  endif // HAVE_LIBBPF
+#  endif // defined(HAVE_LIBBPF)
 
 void ConnectionHandler::set_quic_ipc_fd(int fd) { quic_ipc_fd_ = fd; }
 
@@ -1114,11 +684,13 @@ int ConnectionHandler::forward_quic_packet_to_lingering_worker_process(
 
   *p++ = static_cast<uint8_t>(QUICIPCType::DGRAM_FORWARD);
   *p++ = static_cast<uint8_t>(remote_addr.len - 1);
-  p = std::copy_n(reinterpret_cast<const uint8_t *>(&remote_addr.su),
-                  remote_addr.len, p);
+  p = std::ranges::copy_n(reinterpret_cast<const uint8_t *>(&remote_addr.su),
+                          as_signed(remote_addr.len), p)
+        .out;
   *p++ = static_cast<uint8_t>(local_addr.len - 1);
-  p = std::copy_n(reinterpret_cast<const uint8_t *>(&local_addr.su),
-                  local_addr.len, p);
+  p = std::ranges::copy_n(reinterpret_cast<const uint8_t *>(&local_addr.su),
+                          as_signed(local_addr.len), p)
+        .out;
   *p++ = pi.ecn;
 
   iovec msg_iov[] = {
@@ -1132,9 +704,10 @@ int ConnectionHandler::forward_quic_packet_to_lingering_worker_process(
     },
   };
 
-  msghdr msg{};
-  msg.msg_iov = msg_iov;
-  msg.msg_iovlen = array_size(msg_iov);
+  msghdr msg{
+    .msg_iov = msg_iov,
+    .msg_iovlen = array_size(msg_iov),
+  };
 
   ssize_t nwrite;
 
@@ -1201,7 +774,7 @@ int ConnectionHandler::quic_ipc_read() {
 
   auto pkt = std::make_unique<QUICPacket>();
 
-  auto remote_addrlen = static_cast<size_t>(*p++) + 1;
+  auto remote_addrlen = static_cast<socklen_t>(*p++) + 1;
   if (remote_addrlen > sizeof(sockaddr_storage)) {
     LOG(ERROR) << "The length of remote address is too large: "
                << remote_addrlen;
@@ -1222,7 +795,7 @@ int ConnectionHandler::quic_ipc_read() {
 
   p += remote_addrlen;
 
-  auto local_addrlen = static_cast<size_t>(*p++) + 1;
+  auto local_addrlen = static_cast<socklen_t>(*p++) + 1;
   if (local_addrlen > sizeof(sockaddr_storage)) {
     LOG(ERROR) << "The length of local address is too large: " << local_addrlen;
 
@@ -1244,7 +817,7 @@ int ConnectionHandler::quic_ipc_read() {
 
   pkt->pi.ecn = *p++;
 
-  auto datalen = nread - (p - buf.data());
+  auto datalen = static_cast<size_t>(nread - (p - buf.data()));
 
   pkt->data.assign(p, p + datalen);
 
@@ -1310,6 +883,6 @@ int ConnectionHandler::quic_ipc_read() {
 
   return 0;
 }
-#endif // ENABLE_HTTP3
+#endif // defined(ENABLE_HTTP3)
 
 } // namespace shrpx

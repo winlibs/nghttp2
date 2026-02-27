@@ -36,32 +36,21 @@ init_gc_and_core(mrb_state *mrb, void *opaque)
 }
 
 MRB_API mrb_state*
-mrb_open_core(mrb_allocf f, void *ud)
+mrb_open_core(void)
 {
   static const mrb_state mrb_state_zero = { 0 };
   mrb_state *mrb;
 
-  if (f == NULL) f = mrb_default_allocf;
-  mrb = (mrb_state*)(f)(NULL, NULL, sizeof(mrb_state), ud);
+  mrb = (mrb_state*)mrb_basic_alloc_func(NULL, sizeof(mrb_state));
   if (mrb == NULL) return NULL;
 
   *mrb = mrb_state_zero;
-  mrb->allocf_ud = ud;
-  mrb->allocf = f;
   mrb->atexit_stack_len = 0;
 
   if (mrb_core_init_protect(mrb, init_gc_and_core, NULL)) {
     mrb_close(mrb);
     return NULL;
   }
-
-  return mrb;
-}
-
-MRB_API mrb_state*
-mrb_open(void)
-{
-  mrb_state *mrb = mrb_open_allocf(mrb_default_allocf, NULL);
 
   return mrb;
 }
@@ -75,9 +64,9 @@ init_mrbgems(mrb_state *mrb, void *opaque)
 #endif
 
 MRB_API mrb_state*
-mrb_open_allocf(mrb_allocf f, void *ud)
+mrb_open(void)
 {
-  mrb_state *mrb = mrb_open_core(f, ud);
+  mrb_state *mrb = mrb_open_core();
 
   if (mrb == NULL) {
     return NULL;
@@ -161,6 +150,9 @@ mrb_irep_free(mrb_state *mrb, mrb_irep *irep)
   }
   mrb_free(mrb, (void*)irep->lv);
   mrb_debug_info_free(mrb, irep->debug_info);
+#ifdef MRB_DEBUG
+  memset(irep, -1, sizeof(*irep));
+#endif
   mrb_free(mrb, irep);
 }
 
@@ -182,9 +174,9 @@ mrb_close(mrb_state *mrb)
   mrb_protect_atexit(mrb);
 
   /* free */
+  mrb_gc_free_gv(mrb);
   mrb_gc_destroy(mrb, &mrb->gc);
   mrb_free_context(mrb, mrb->root_c);
-  mrb_gc_free_gv(mrb);
   mrb_free_symtbl(mrb);
   mrb_free(mrb, mrb);
 }

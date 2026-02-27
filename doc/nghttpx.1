@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "NGHTTPX" "1" "Oct 21, 2024" "1.64.0" "nghttp2"
+.TH "NGHTTPX" "1" "Oct 25, 2025" "1.68.0" "nghttp2"
 .SH NAME
 nghttpx \- HTTP/2 proxy
 .SH SYNOPSIS
@@ -46,8 +46,7 @@ Set  path  to  server\(aqs private  key.   Required  unless
 .TP
 .B <CERT>
 Set  path  to  server\(aqs  certificate.   Required  unless
-\(dqno\-tls\(dq  parameter is  used in  \fI\%\-\-frontend\fP option.   To
-make OCSP stapling work, this must be an absolute path.
+\(dqno\-tls\(dq  parameter is  used in  \fI\%\-\-frontend\fP option.
 .UNINDENT
 .SH OPTIONS
 .sp
@@ -688,8 +687,8 @@ Default: \fB2m\fP
 .B \-\-ciphers=<SUITE>
 Set allowed  cipher list  for frontend  connection.  The
 format of the string is described in OpenSSL ciphers(1).
-This option  sets cipher suites for  TLSv1.2 or earlier.
-Use \fI\%\-\-tls13\-ciphers\fP for TLSv1.3.
+This  option  sets  cipher   suites  for  TLSv1.2.   Use
+\fI\%\-\-tls13\-ciphers\fP for TLSv1.3.
 .sp
 Default: \fBECDHE\-ECDSA\-AES128\-GCM\-SHA256:ECDHE\-RSA\-AES128\-GCM\-SHA256:ECDHE\-ECDSA\-AES256\-GCM\-SHA384:ECDHE\-RSA\-AES256\-GCM\-SHA384:ECDHE\-ECDSA\-CHACHA20\-POLY1305:ECDHE\-RSA\-CHACHA20\-POLY1305:DHE\-RSA\-AES128\-GCM\-SHA256:DHE\-RSA\-AES256\-GCM\-SHA384\fP
 .UNINDENT
@@ -699,7 +698,7 @@ Default: \fBECDHE\-ECDSA\-AES128\-GCM\-SHA256:ECDHE\-RSA\-AES128\-GCM\-SHA256:EC
 Set allowed  cipher list  for frontend  connection.  The
 format of the string is described in OpenSSL ciphers(1).
 This  option  sets  cipher   suites  for  TLSv1.3.   Use
-\fI\%\-\-ciphers\fP for TLSv1.2 or earlier.
+\fI\%\-\-ciphers\fP for TLSv1.2.
 .sp
 Default: \fBTLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256\fP
 .UNINDENT
@@ -708,8 +707,8 @@ Default: \fBTLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_
 .B \-\-client\-ciphers=<SUITE>
 Set  allowed cipher  list for  backend connection.   The
 format of the string is described in OpenSSL ciphers(1).
-This option  sets cipher suites for  TLSv1.2 or earlier.
-Use \fI\%\-\-tls13\-client\-ciphers\fP for TLSv1.3.
+This  option  sets  cipher   suites  for  TLSv1.2.   Use
+\fI\%\-\-tls13\-client\-ciphers\fP for TLSv1.3.
 .sp
 Default: \fBECDHE\-ECDSA\-AES128\-GCM\-SHA256:ECDHE\-RSA\-AES128\-GCM\-SHA256:ECDHE\-ECDSA\-AES256\-GCM\-SHA384:ECDHE\-RSA\-AES256\-GCM\-SHA384:ECDHE\-ECDSA\-CHACHA20\-POLY1305:ECDHE\-RSA\-CHACHA20\-POLY1305:DHE\-RSA\-AES128\-GCM\-SHA256:DHE\-RSA\-AES256\-GCM\-SHA384\fP
 .UNINDENT
@@ -719,15 +718,15 @@ Default: \fBECDHE\-ECDSA\-AES128\-GCM\-SHA256:ECDHE\-RSA\-AES128\-GCM\-SHA256:EC
 Set  allowed cipher  list for  backend connection.   The
 format of the string is described in OpenSSL ciphers(1).
 This  option  sets  cipher   suites  for  TLSv1.3.   Use
-\fI\%\-\-tls13\-client\-ciphers\fP for TLSv1.2 or earlier.
+\fI\%\-\-client\-ciphers\fP for TLSv1.2.
 .sp
 Default: \fBTLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256\fP
 .UNINDENT
 .INDENT 0.0
 .TP
-.B \-\-ecdh\-curves=<LIST>
-Set  supported  curve  list  for  frontend  connections.
-<LIST> is a  colon separated list of curve  NID or names
+.B \-\-groups=<LIST>
+Set the  supported group list for  frontend connections.
+<LIST> is a  colon separated list of group  NID or names
 in the preference order.  The supported curves depend on
 the  linked  OpenSSL  library.  This  function  requires
 OpenSSL >= 1.0.2.
@@ -745,12 +744,10 @@ enabled for backend connections.
 .B \-\-cacert=<PATH>
 Set path to trusted CA  certificate file.  It is used in
 backend  TLS connections  to verify  peer\(aqs certificate.
-It is also used to  verify OCSP response from the script
-set by \fI\%\-\-fetch\-ocsp\-response\-file\fP\&.  The  file must be in
-PEM format.   It can contain multiple  certificates.  If
-the  linked OpenSSL  is configured  to load  system wide
-certificates, they  are loaded at startup  regardless of
-this option.
+The file must be in PEM format.  It can contain multiple
+certificates.  If  the linked  OpenSSL is  configured to
+load  system  wide  certificates,  they  are  loaded  at
+startup regardless of this option.
 .UNINDENT
 .INDENT 0.0
 .TP
@@ -765,13 +762,12 @@ password protected it\(aqll be requested interactively.
 Specify  additional certificate  and  private key  file.
 nghttpx will  choose certificates based on  the hostname
 indicated by client using TLS SNI extension.  If nghttpx
-is  built with  OpenSSL  >= 1.0.2,  the shared  elliptic
-curves (e.g., P\-256) between  client and server are also
-taken into  consideration.  This allows nghttpx  to send
-ECDSA certificate  to modern clients, while  sending RSA
-based certificate to older  clients.  This option can be
-used  multiple  times.   To  make  OCSP  stapling  work,
-<CERTPATH> must be absolute path.
+is built with OpenSSL >= 1.0.2, the signature algorithms
+(e.g., ECDSA+SHA256) presented by  client are also taken
+into consideration.  This allows  nghttpx to send ML\-DSA
+or ECDSA  certificate to  modern clients,  while sending
+RSA based certificate to older clients.  This option can
+be used multiple times.
 .sp
 Additional parameter  can be specified in  <PARAM>.  The
 available <PARAM> is \(dqsct\-dir=<DIR>\(dq.
@@ -798,7 +794,7 @@ protocol comes  first.  The parameter must  be delimited
 by a single comma only  and any white spaces are treated
 as a part of protocol string.
 .sp
-Default: \fBh2,h2\-16,h2\-14,http/1.1\fP
+Default: \fBh2,http/1.1\fP
 .UNINDENT
 .INDENT 0.0
 .TP
@@ -840,12 +836,8 @@ done in  case\-insensitive manner.  The  versions between
 \fI\%\-\-tls\-min\-proto\-version\fP and  \fI\%\-\-tls\-max\-proto\-version\fP are
 enabled.  If the protocol list advertised by client does
 not  overlap  this range,  you  will  receive the  error
-message \(dqunknown protocol\(dq.  If a protocol version lower
-than TLSv1.2 is specified, make sure that the compatible
-ciphers are  included in \fI\%\-\-ciphers\fP option.   The default
-cipher  list  only   includes  ciphers  compatible  with
-TLSv1.2 or above.  The available versions are:
-TLSv1.3, TLSv1.2, TLSv1.1, and TLSv1.0
+message \(dqunknown protocol\(dq.  The available versions are:
+TLSv1.3 and TLSv1.2
 .sp
 Default: \fBTLSv1.2\fP
 .UNINDENT
@@ -858,7 +850,7 @@ done in  case\-insensitive manner.  The  versions between
 enabled.  If the protocol list advertised by client does
 not  overlap  this range,  you  will  receive the  error
 message \(dqunknown protocol\(dq.  The available versions are:
-TLSv1.3, TLSv1.2, TLSv1.1, and TLSv1.0
+TLSv1.3 and TLSv1.2
 .sp
 Default: \fBTLSv1.3\fP
 .UNINDENT
@@ -959,72 +951,6 @@ get TLS ticket keys.
 .B \-\-tls\-ticket\-key\-memcached\-private\-key\-file=<PATH>
 Path to client private  key for memcached connections to
 get TLS ticket keys.
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-\-fetch\-ocsp\-response\-file=<PATH>
-Path to  fetch\-ocsp\-response script file.  It  should be
-absolute path.
-.sp
-Default: \fB/usr/local/share/nghttp2/fetch\-ocsp\-response\fP
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-\-ocsp\-update\-interval=<DURATION>
-Set interval to update OCSP response cache.
-.sp
-Default: \fB4h\fP
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-\-ocsp\-startup
-Start  accepting connections  after initial  attempts to
-get OCSP responses  finish.  It does not  matter some of
-the  attempts  fail.  This  feature  is  useful if  OCSP
-responses   must    be   available    before   accepting
-connections.
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-\-no\-verify\-ocsp
-nghttpx does not verify OCSP response.
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-\-no\-ocsp
-Disable OCSP stapling.
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-\-tls\-session\-cache\-memcached=<HOST>,<PORT>[;tls]
-Specify  address of  memcached server  to store  session
-cache.   This  enables   shared  session  cache  between
-multiple   nghttpx  instances.    Optionally,  memcached
-connection can be encrypted with TLS by specifying \(dqtls\(dq
-parameter.
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-\-tls\-session\-cache\-memcached\-address\-family=(auto|IPv4|IPv6)
-Specify address family of memcached connections to store
-session cache.  If  \(dqauto\(dq is given, both  IPv4 and IPv6
-are considered.   If \(dqIPv4\(dq is given,  only IPv4 address
-is considered.  If \(dqIPv6\(dq is given, only IPv6 address is
-considered.
-.sp
-Default: \fBauto\fP
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-\-tls\-session\-cache\-memcached\-cert\-file=<PATH>
-Path to client certificate  for memcached connections to
-store session cache.
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-\-tls\-session\-cache\-memcached\-private\-key\-file=<PATH>
-Path to client private  key for memcached connections to
-store session cache.
 .UNINDENT
 .INDENT 0.0
 .TP
@@ -1135,8 +1061,7 @@ Default: \fB16K\fP
 .INDENT 0.0
 .TP
 .B \-\-tls\-ktls
-Enable   ktls.    For   server,  ktls   is   enable   if
-\fI\%\-\-tls\-session\-cache\-memcached\fP is not configured.
+Enable ktls.
 .UNINDENT
 .SS HTTP/2
 .INDENT 0.0
@@ -1675,7 +1600,7 @@ initial  DNS  query.  For  the  2nd  and later  queries,
 server is  given time based  on this timeout, and  it is
 scaled linearly.
 .sp
-Default: \fB5s\fP
+Default: \fB250ms\fP
 .UNINDENT
 .INDENT 0.0
 .TP
@@ -1683,7 +1608,7 @@ Default: \fB5s\fP
 Set the number of DNS query before nghttpx gives up name
 lookup.
 .sp
-Default: \fB2\fP
+Default: \fB3\fP
 .UNINDENT
 .INDENT 0.0
 .TP
@@ -2003,11 +1928,9 @@ request header field, do this:
 .INDENT 7.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 add\-request\-header=foo: bar
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2015,11 +1938,9 @@ instead of:
 .INDENT 7.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 add\-request\-header=\(dqfoo: bar\(dq
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2124,12 +2045,10 @@ header field to initiate server push:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 Link: </fonts/font.woff>; rel=preload
 Link: </css/theme.css>; rel=preload
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2160,35 +2079,6 @@ specified socket already exists in the file system, nghttpx first
 deletes it.  However, if SIGUSR2 is used to execute new binary and
 both old and new configurations use same filename, new binary does not
 delete the socket and continues to use it.
-.SH OCSP STAPLING
-.sp
-OCSP query is done using external Python script
-\fBfetch\-ocsp\-response\fP, which has been originally developed in Perl
-as part of h2o project (\X'tty: link https://github.com/h2o/h2o'\fI\%https://github.com/h2o/h2o\fP\X'tty: link'), and was
-translated into Python.
-.sp
-The script file is usually installed under
-\fB$(prefix)/share/nghttp2/\fP directory.  The actual path to script can
-be customized using \fI\%\-\-fetch\-ocsp\-response\-file\fP option.
-.sp
-If OCSP query is failed, previous OCSP response, if any, is continued
-to be used.
-.sp
-\fI\%\-\-fetch\-ocsp\-response\-file\fP option provides wide range of
-possibility to manage OCSP response.  It can take an arbitrary script
-or executable.  The requirement is that it supports the command\-line
-interface of \fBfetch\-ocsp\-response\fP script, and it must return a
-valid DER encoded OCSP response on success.  It must return exit code
-0 on success, and 75 for temporary error, and the other error code for
-generic failure.  For large cluster of servers, it is not efficient
-for each server to perform OCSP query using \fBfetch\-ocsp\-response\fP\&.
-Instead, you can retrieve OCSP response in some way, and store it in a
-disk or a shared database.  Then specify a program in
-\fI\%\-\-fetch\-ocsp\-response\-file\fP to fetch it from those stores.
-This could provide a way to share the OCSP response between fleet of
-servers, and also any OCSP query strategy can be applied which may be
-beyond the ability of nghttpx itself or \fBfetch\-ocsp\-response\fP
-script.
 .SH TLS SESSION RESUMPTION
 .sp
 nghttpx supports TLS session resumption through both session ID and
@@ -2196,16 +2086,6 @@ session ticket.
 .SS SESSION ID RESUMPTION
 .sp
 By default, session ID is shared by all worker threads.
-.sp
-If \fI\%\-\-tls\-session\-cache\-memcached\fP is given, nghttpx will
-insert serialized session data to memcached with
-\fBnghttpx:tls\-session\-cache:\fP + lowercase hex string of session ID
-as a memcached entry key, with expiry time 12 hours.  Session timeout
-is set to 12 hours.
-.sp
-By default, connections to memcached server are not encrypted.  To
-enable encryption, use \fBtls\fP keyword in
-\fI\%\-\-tls\-session\-cache\-memcached\fP option.
 .SS TLS SESSION TICKET RESUMPTION
 .sp
 By default, session ticket is shared by all worker threads.  The
@@ -2224,8 +2104,7 @@ memcached is the binary format described below:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 +\-\-\-\-\-\-\-\-\-\-\-\-\-\-+\-\-\-\-\-\-\-+\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-+
 | VERSION (4)  |LEN (2)|KEY(48 or 80) ...
 +\-\-\-\-\-\-\-\-\-\-\-\-\-\-+\-\-\-\-\-\-\-+\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-+
@@ -2233,8 +2112,7 @@ memcached is the binary format described below:
                |                        |
                +\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-+
                (LEN, KEY) pair can be repeated
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2651,8 +2529,7 @@ Modify request path:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 class App
   def on_req(env)
     env.req.path = \(dq/apps#{env.req.path}\(dq
@@ -2660,8 +2537,7 @@ class App
 end
 
 App.new
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .sp
@@ -2672,8 +2548,7 @@ addresses:
 .INDENT 0.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 class App
   def on_req(env)
     allowed_clients = [\(dq127.0.0.1\(dq, \(dq::1\(dq]
@@ -2687,8 +2562,7 @@ class App
 end
 
 App.new
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .SH API ENDPOINTS

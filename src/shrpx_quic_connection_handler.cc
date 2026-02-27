@@ -29,9 +29,9 @@
 #ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
 #  include <wolfssl/options.h>
 #  include <wolfssl/openssl/rand.h>
-#else // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#else // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 #  include <openssl/rand.h>
-#endif // !NGHTTP2_OPENSSL_IS_WOLFSSL
+#endif // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
 
 #include <ngtcp2/ngtcp2.h>
 #include <ngtcp2/ngtcp2_crypto.h>
@@ -98,9 +98,9 @@ int QUICConnectionHandler::handle_packet(const UpstreamAddr *faddr,
   auto &quicconf = config->quic;
 
   auto it = connections_.find(dcid_key);
-  if (it == std::end(connections_)) {
+  if (it == std::ranges::end(connections_)) {
     auto cwit = close_waits_.find(dcid_key);
-    if (cwit != std::end(close_waits_)) {
+    if (cwit != std::ranges::end(close_waits_)) {
       auto cw = (*cwit).second;
 
       cw->handle_packet(faddr, remote_addr, local_addr, pi, data);
@@ -115,9 +115,9 @@ int QUICConnectionHandler::handle_packet(const UpstreamAddr *faddr,
       }
 
       it = connections_.find(dcid_key);
-      if (it == std::end(connections_)) {
+      if (it == std::ranges::end(connections_)) {
         auto cwit = close_waits_.find(dcid_key);
-        if (cwit != std::end(close_waits_)) {
+        if (cwit != std::ranges::end(close_waits_)) {
           auto cw = (*cwit).second;
 
           cw->handle_packet(faddr, remote_addr, local_addr, pi, data);
@@ -128,7 +128,7 @@ int QUICConnectionHandler::handle_packet(const UpstreamAddr *faddr,
     }
   }
 
-  if (it == std::end(connections_)) {
+  if (it == std::ranges::end(connections_)) {
     ConnectionID decrypted_dcid;
 
     auto &qkms = conn_handler->get_quic_keying_materials();
@@ -334,7 +334,7 @@ int QUICConnectionHandler::handle_packet(const UpstreamAddr *faddr,
           return 0;
         }
 
-        if (data.size() >= SHRPX_QUIC_SCIDLEN + 22) {
+        if (data.size() >= SHRPX_QUIC_SCIDLEN + 21) {
           send_stateless_reset(faddr, data.size(), {vc.dcid, vc.dcidlen},
                                remote_addr, local_addr);
         }
@@ -388,9 +388,11 @@ ClientHandler *QUICConnectionHandler::handle_new_connection(
     return nullptr;
   }
 
-#if defined(NGHTTP2_GENUINE_OPENSSL) || defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
+#if !OPENSSL_3_5_0_API &&                                                      \
+  (defined(NGHTTP2_GENUINE_OPENSSL) || defined(NGHTTP2_OPENSSL_IS_WOLFSSL))
   assert(SSL_is_quic(ssl));
-#endif // NGHTTP2_GENUINE_OPENSSL || NGHTTP2_OPENSSL_IS_WOLFSSL
+#endif // !OPENSSL_3_5_0_API && (defined(NGHTTP2_GENUINE_OPENSSL) ||
+       // defined(NGHTTP2_OPENSSL_IS_WOLFSSL))
 
   SSL_set_accept_state(ssl);
 
@@ -398,12 +400,14 @@ ClientHandler *QUICConnectionHandler::handle_new_connection(
   auto &quicconf = config->quic;
 
   if (quicconf.upstream.early_data) {
-#if defined(NGHTTP2_GENUINE_OPENSSL) ||                                        \
+#if OPENSSL_3_5_0_API
+    SSL_set_quic_tls_early_data_enabled(ssl, 1);
+#elif defined(NGHTTP2_GENUINE_OPENSSL) ||                                      \
   (defined(NGHTTP2_OPENSSL_IS_WOLFSSL) && defined(WOLFSSL_EARLY_DATA))
     SSL_set_quic_early_data_enabled(ssl, 1);
 #elif defined(NGHTTP2_OPENSSL_IS_BORINGSSL)
     SSL_set_early_data_enabled(ssl, 1);
-#endif // NGHTTP2_OPENSSL_IS_BORINGSSL
+#endif // defined(NGHTTP2_OPENSSL_IS_BORINGSSL)
   }
 
   // Disable TLS session ticket if we don't have working ticket
@@ -413,8 +417,14 @@ ClientHandler *QUICConnectionHandler::handle_new_connection(
   }
 
   auto handler = std::make_unique<ClientHandler>(
-    worker_, faddr->fd, ssl, StringRef{host.data()}, StringRef{service.data()},
-    remote_addr.su.sa.sa_family, faddr);
+    worker_, faddr->fd, ssl, std::string_view{host.data()},
+    std::string_view{service.data()}, remote_addr.su.sa.sa_family, faddr);
+
+  auto &fwdconf = config->http.forwarded;
+
+  if (fwdconf.params & FORWARDED_BY) {
+    handler->set_local_hostport(&local_addr.su.sa, local_addr.len);
+  }
 
   auto upstream = std::make_unique<Http3Upstream>(handler.get());
   if (upstream->init(faddr, remote_addr, local_addr, hd, odcid, token,
@@ -501,11 +511,12 @@ int QUICConnectionHandler::send_retry(
                                           &iscid, &retry_scid, &idcid,
                                           token->data(), token->size());
   if (nwrite < 0) {
-    LOG(ERROR) << "ngtcp2_crypto_write_retry: " << ngtcp2_strerror(nwrite);
+    LOG(ERROR) << "ngtcp2_crypto_write_retry: "
+               << ngtcp2_strerror(static_cast<int>(nwrite));
     return -1;
   }
 
-  buf.resize(nwrite);
+  buf.resize(as_unsigned(nwrite));
 
   quic_send_packet(faddr, &remote_addr.su.sa, remote_addr.len,
                    &local_addr.su.sa, local_addr.len, ngtcp2_pkt_info{}, buf,
@@ -551,11 +562,11 @@ int QUICConnectionHandler::send_version_negotiation(
     ini_dcid.data(), ini_dcid.size(), sv.data(), sv.size());
   if (nwrite < 0) {
     LOG(ERROR) << "ngtcp2_pkt_write_version_negotiation: "
-               << ngtcp2_strerror(nwrite);
+               << ngtcp2_strerror(static_cast<int>(nwrite));
     return -1;
   }
 
-  auto pkt = std::span{std::begin(buf), static_cast<size_t>(nwrite)};
+  auto pkt = std::span{buf}.first(as_unsigned(nwrite));
   return quic_send_packet(faddr, &remote_addr.su.sa, remote_addr.len,
                           &local_addr.su.sa, local_addr.len, ngtcp2_pkt_info{},
                           pkt, pkt.size());
@@ -611,7 +622,8 @@ int QUICConnectionHandler::send_stateless_reset(const UpstreamAddr *faddr,
 
   std::array<uint8_t, max_rand_byteslen> rand_bytes;
 
-  if (RAND_bytes(rand_bytes.data(), rand_byteslen) != 1) {
+  if (RAND_bytes(rand_bytes.data(), static_cast<nghttp2_ssl_rand_length_type>(
+                                      rand_byteslen)) != 1) {
     return -1;
   }
 
@@ -621,7 +633,7 @@ int QUICConnectionHandler::send_stateless_reset(const UpstreamAddr *faddr,
     buf.data(), buf.size(), token.data(), rand_bytes.data(), rand_byteslen);
   if (nwrite < 0) {
     LOG(ERROR) << "ngtcp2_pkt_write_stateless_reset: "
-               << ngtcp2_strerror(nwrite);
+               << ngtcp2_strerror(static_cast<int>(nwrite));
     return -1;
   }
 
@@ -631,7 +643,7 @@ int QUICConnectionHandler::send_stateless_reset(const UpstreamAddr *faddr,
               << " dcid=" << util::format_hex(dcid);
   }
 
-  auto pkt = std::span{std::begin(buf), static_cast<size_t>(nwrite)};
+  auto pkt = std::span{buf}.first(as_unsigned(nwrite));
   return quic_send_packet(faddr, &remote_addr.su.sa, remote_addr.len,
                           &local_addr.su.sa, local_addr.len, ngtcp2_pkt_info{},
                           pkt, pkt.size());
@@ -663,7 +675,7 @@ int QUICConnectionHandler::send_connection_close(
               << util::format_hex(std::span{ini_dcid.data, ini_dcid.datalen});
   }
 
-  auto pkt = std::span{std::begin(buf), static_cast<size_t>(nwrite)};
+  auto pkt = std::span{buf}.first(as_unsigned(nwrite));
   return quic_send_packet(faddr, &remote_addr.su.sa, remote_addr.len,
                           &local_addr.su.sa, local_addr.len, ngtcp2_pkt_info{},
                           pkt, pkt.size());

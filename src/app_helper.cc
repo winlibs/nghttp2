@@ -25,19 +25,19 @@
 #include <sys/types.h>
 #ifdef HAVE_SYS_SOCKET_H
 #  include <sys/socket.h>
-#endif // HAVE_SYS_SOCKET_H
+#endif // defined(HAVE_SYS_SOCKET_H)
 #ifdef HAVE_NETDB_H
 #  include <netdb.h>
-#endif // HAVE_NETDB_H
+#endif // defined(HAVE_NETDB_H)
 #ifdef HAVE_UNISTD_H
 #  include <unistd.h>
-#endif // HAVE_UNISTD_H
+#endif // defined(HAVE_UNISTD_H)
 #ifdef HAVE_FCNTL_H
 #  include <fcntl.h>
-#endif // HAVE_FCNTL_H
+#endif // defined(HAVE_FCNTL_H)
 #ifdef HAVE_NETINET_IN_H
 #  include <netinet/in.h>
-#endif // HAVE_NETINET_IN_H
+#endif // defined(HAVE_NETINET_IN_H)
 #include <netinet/tcp.h>
 #include <poll.h>
 
@@ -49,7 +49,6 @@
 #include <string>
 #include <iostream>
 #include <string>
-#include <set>
 #include <iomanip>
 #include <fstream>
 
@@ -329,7 +328,7 @@ void print_frame(print_type ptype, const nghttp2_frame *frame) {
   case NGHTTP2_PING:
     print_frame_attr_indent();
     fprintf(outfile, "(opaque_data=%s)\n",
-            util::format_hex(frame->ping.opaque_data).c_str());
+            util::format_hex(std::span{frame->ping.opaque_data}).c_str());
     break;
   case NGHTTP2_GOAWAY:
     print_frame_attr_indent();

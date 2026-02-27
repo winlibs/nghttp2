@@ -1,3 +1,5 @@
+<!-- summary: About the Symbols -->
+
 # Symbols
 
 Symbols in `mruby` C source code is represented by `mrb_sym` which is alias of
@@ -61,6 +63,7 @@ header.
 - `MRB_SYM_B(xor)` //=> xor! (Method with Bang)
 - `MRB_SYM_Q(xor)` //=> xor? (Method with Question mark)
 - `MRB_SYM_E(xor)` //=> xor= (Method with Equal)
+- `MRB_GVSYM(xor)` //=> $xor (Global Variable)
 - `MRB_CVSYM(xor)` //=> @@xor (Class Variable)
 - `MRB_IVSYM(xor)` //=> @xor (Instance Variable)
 - `MRB_OPSYM(xor)` //=> ^ (Operator)
@@ -68,7 +71,7 @@ header.
 For `MRB_OPSYM()`, specify the names corresponding to operators (see
 `MRuby::Presym::OPERATORS` in `lib/mruby/presym.rb` for the names that
 can be specified for it). Other than that, describe only word characters
-excluding leading and ending punctuations.
+excluding leading and ending punctuation.
 
 These macros are converted to static symbol IDs at compile time, unless
 preallocate symbols are disabled by `conf.disable_presym`. In that case,

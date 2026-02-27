@@ -20,6 +20,10 @@
 #include <string.h>
 #include <mruby/internal.h>
 
+#define mrbc_malloc(s) mrb_basic_alloc_func(NULL,(s))
+#define mrbc_realloc(p,s) mrb_basic_alloc_func((p),(s))
+#define mrbc_free(p) mrb_basic_alloc_func((p),0)
+
 #ifndef MRB_CODEGEN_LEVEL_MAX
 #define MRB_CODEGEN_LEVEL_MAX 256
 #endif
@@ -48,7 +52,7 @@ struct loopinfo {
 
 typedef struct scope {
   mrb_state *mrb;
-  mrb_pool *mpool;
+  mempool *mpool;
 
   struct scope *prev;
 
@@ -70,7 +74,7 @@ typedef struct scope {
   uint32_t icapa;
 
   mrb_irep *irep;
-  mrb_pool_value *pool;
+  mrb_irep_pool *pool;
   mrb_sym *syms;
   mrb_irep **reps;
   struct mrb_irep_catch_handler *catch_table;
@@ -124,27 +128,27 @@ codegen_error(codegen_scope *s, const char *message)
   while (s->prev) {
     codegen_scope *tmp = s->prev;
     if (s->irep) {
-      mrb_free(s->mrb, s->iseq);
+      mrbc_free(s->iseq);
       for (int i=0; i<s->irep->plen; i++) {
-        mrb_pool_value *pv = &s->pool[i];
-        if ((pv->tt & 0x3) == IREP_TT_STR || pv->tt == IREP_TT_BIGINT) {
-          mrb_free(s->mrb, (void*)pv->u.str);
+        mrb_irep_pool *p = &s->pool[i];
+        if ((p->tt & 0x3) == IREP_TT_STR || p->tt == IREP_TT_BIGINT) {
+          mrbc_free((void*)p->u.str);
         }
       }
-      mrb_free(s->mrb, s->pool);
-      mrb_free(s->mrb, s->syms);
-      mrb_free(s->mrb, s->catch_table);
+      mrbc_free(s->pool);
+      mrbc_free(s->syms);
+      mrbc_free(s->catch_table);
       if (s->reps) {
         /* copied from mrb_irep_free() in state.c */
         for (int i=0; i<s->irep->rlen; i++) {
           if (s->reps[i])
             mrb_irep_decref(s->mrb, (mrb_irep*)s->reps[i]);
         }
-        mrb_free(s->mrb, s->reps);
+        mrbc_free(s->reps);
       }
-      mrb_free(s->mrb, s->lines);
+      mrbc_free(s->lines);
     }
-    mrb_pool_close(s->mpool);
+    mempool_close(s->mpool);
     s = tmp;
   }
   MRB_THROW(s->mrb->jmp);
@@ -153,18 +157,9 @@ codegen_error(codegen_scope *s, const char *message)
 static void*
 codegen_palloc(codegen_scope *s, size_t len)
 {
-  void *p = mrb_pool_alloc(s->mpool, len);
+  void *p = mempool_alloc(s->mpool, len);
 
   if (!p) codegen_error(s, "pool memory allocation");
-  return p;
-}
-
-static void*
-codegen_realloc(codegen_scope *s, void *p, size_t len)
-{
-  p = mrb_realloc_simple(s->mrb, p, len);
-
-  if (!p && len > 0) codegen_error(s, "mrb_realloc");
   return p;
 }
 
@@ -195,9 +190,9 @@ emit_B(codegen_scope *s, uint32_t pc, uint8_t i)
     else {
       s->icapa *= 2;
     }
-    s->iseq = (mrb_code*)codegen_realloc(s, s->iseq, sizeof(mrb_code)*s->icapa);
+    s->iseq = (mrb_code*)mrbc_realloc(s->iseq, sizeof(mrb_code)*s->icapa);
     if (s->lines) {
-      s->lines = (uint16_t*)codegen_realloc(s, s->lines, sizeof(uint16_t)*s->icapa);
+      s->lines = (uint16_t*)mrbc_realloc(s->lines, sizeof(uint16_t)*s->icapa);
     }
   }
   if (s->lines) {
@@ -347,7 +342,7 @@ mrb_decode_insn(const mrb_code *pc)
   switch (insn) {
 #define FETCH_Z() /* empty */
 #define OPCODE(i,x) case OP_ ## i: FETCH_ ## x (); break;
-#include "mruby/ops.h"
+#include <mruby/ops.h>
 #undef OPCODE
   }
   switch (insn) {
@@ -355,7 +350,7 @@ mrb_decode_insn(const mrb_code *pc)
     insn = READ_B();
     switch (insn) {
 #define OPCODE(i,x) case OP_ ## i: FETCH_ ## x ## _1 (); break;
-#include "mruby/ops.h"
+#include <mruby/ops.h>
 #undef OPCODE
     }
     break;
@@ -363,7 +358,7 @@ mrb_decode_insn(const mrb_code *pc)
     insn = READ_B();
     switch (insn) {
 #define OPCODE(i,x) case OP_ ## i: FETCH_ ## x ## _2 (); break;
-#include "mruby/ops.h"
+#include <mruby/ops.h>
 #undef OPCODE
     }
     break;
@@ -371,7 +366,7 @@ mrb_decode_insn(const mrb_code *pc)
     insn = READ_B();
     switch (insn) {
 #define OPCODE(i,x) case OP_ ## i: FETCH_ ## x ## _3 (); break;
-#include "mruby/ops.h"
+#include <mruby/ops.h>
 #undef OPCODE
     }
     break;
@@ -397,7 +392,7 @@ static uint8_t mrb_insn_size[] = {
 #define BBB 4
 #define BS 4
 #define BSS 6
-#include "mruby/ops.h"
+#include <mruby/ops.h>
 #undef B
 #undef BB
 #undef BBB
@@ -411,7 +406,7 @@ static uint8_t mrb_insn_size1[] = {
 #define BBB 5
 #define BS 5
 #define BSS 7
-#include "mruby/ops.h"
+#include <mruby/ops.h>
 #undef B
 #undef BS
 #undef BSS
@@ -421,7 +416,7 @@ static uint8_t mrb_insn_size2[] = {
 #define B 2
 #define BS 4
 #define BSS 6
-#include "mruby/ops.h"
+#include <mruby/ops.h>
 #undef B
 #undef BB
 #undef BBB
@@ -435,7 +430,7 @@ static uint8_t mrb_insn_size2[] = {
 #define BS 5
 #define BSS 7
 static uint8_t mrb_insn_size3[] = {
-#include "mruby/ops.h"
+#include <mruby/ops.h>
 };
 #undef B
 #undef BB
@@ -450,10 +445,10 @@ mrb_prev_pc(codegen_scope *s, const mrb_code *pc)
   const mrb_code *prev_pc = NULL;
   const mrb_code *i = s->iseq;
 
+  mrb_assert(pc < s->iseq + s->icapa);
   while (i<pc) {
-    uint8_t insn = i[0];
     prev_pc = i;
-    switch (insn) {
+    switch (i[0]) {
     case OP_EXT1:
       i += mrb_insn_size1[i[1]] + 1;
       break;
@@ -464,7 +459,7 @@ mrb_prev_pc(codegen_scope *s, const mrb_code *pc)
       i += mrb_insn_size3[i[1]] + 1;
       break;
     default:
-      i += mrb_insn_size[insn];
+      i += mrb_insn_size[i[0]];
       break;
     }
   }
@@ -549,7 +544,7 @@ genjmp2(codegen_scope *s, mrb_code i, uint16_t a, uint32_t pc, int val)
         }
       }
       break;
-    case OP_LOADT: case OP_LOADI: case OP_LOADINEG: case OP_LOADI__1:
+    case OP_LOADT: case OP_LOADI8: case OP_LOADINEG: case OP_LOADI__1:
     case OP_LOADI_0: case OP_LOADI_1: case OP_LOADI_2: case OP_LOADI_3:
     case OP_LOADI_4: case OP_LOADI_5: case OP_LOADI_6: case OP_LOADI_7:
       if (data.a == a || data.a > s->nlocals) {
@@ -623,7 +618,7 @@ gen_move(codegen_scope *s, uint16_t dst, uint16_t src, int nopeep)
     case OP_HASH:
       if (data.b != 0) goto normal;
       /* fall through */
-    case OP_LOADI: case OP_LOADINEG:
+    case OP_LOADI8: case OP_LOADINEG:
     case OP_LOADL: case OP_LOADSYM:
     case OP_GETGV: case OP_GETSV: case OP_GETIV: case OP_GETCV:
     case OP_GETCONST: case OP_STRING:
@@ -765,7 +760,7 @@ get_int_operand(codegen_scope *s, struct mrb_insn_data *data, mrb_int *n)
     *n = data->insn - OP_LOADI_0;
     return TRUE;
 
-  case OP_LOADI:
+  case OP_LOADI8:
   case OP_LOADI16:
     *n = (int16_t)data->b;
     return TRUE;
@@ -776,14 +771,14 @@ get_int_operand(codegen_scope *s, struct mrb_insn_data *data, mrb_int *n)
 
   case OP_LOADL:
     {
-      mrb_pool_value *pv = &s->pool[data->b];
+      mrb_irep_pool *p = &s->pool[data->b];
 
-      if (pv->tt == IREP_TT_INT32) {
-        *n = (mrb_int)pv->u.i32;
+      if (p->tt == IREP_TT_INT32) {
+        *n = (mrb_int)p->u.i32;
       }
 #ifdef MRB_INT64
-      else if (pv->tt == IREP_TT_INT64) {
-        *n = (mrb_int)pv->u.i64;
+      else if (p->tt == IREP_TT_INT64) {
+        *n = (mrb_int)p->u.i64;
       }
 #endif
       else {
@@ -795,6 +790,100 @@ get_int_operand(codegen_scope *s, struct mrb_insn_data *data, mrb_int *n)
   default:
     return FALSE;
   }
+}
+
+static int new_lit_str2(codegen_scope *s, const char *str1, mrb_int len1, const char *str2, mrb_int len2);
+static int find_pool_str(codegen_scope *s, const char *str1, mrb_int len1, const char *str2, mrb_int len2);
+
+static void
+realloc_pool_str(codegen_scope *s, mrb_irep_pool *p, mrb_int len)
+{
+  char *str;
+  if ((p->tt & 3) == IREP_TT_SSTR) {
+    str = (char*)mrbc_malloc(len+1);
+  }
+  else {
+    str = (char*)p->u.str;
+    str = (char*)mrbc_realloc(str, len+1);
+  }
+  p->tt = (uint32_t)(len<<2 | IREP_TT_STR);
+  str[len] = '\0';
+  p->u.str = (const char*)str;
+}
+
+static void
+free_pool_str(codegen_scope *s, mrb_irep_pool *p)
+{
+  if ((p->tt & 3) != IREP_TT_SSTR) {
+    mrbc_free((char*)p->u.str);
+  }
+  p->u.str = NULL;
+  s->irep->plen--;
+}
+
+static void
+merge_op_string(codegen_scope *s, uint16_t dst, uint16_t b1, uint16_t b2, const mrb_code *pc)
+{
+  int used = 0;
+  const mrb_code *i = s->iseq;
+
+  /* scan OP_STRING that refers b1 or b2 */
+  mrb_assert(pc < s->iseq + s->icapa);
+  while (i<pc) {
+    struct mrb_insn_data data = mrb_decode_insn(i);
+    if (data.insn == OP_STRING) {
+      if (data.b == b1) used |= 1;
+      if (data.b == b2) used |= 2;
+    }
+    switch (i[0]) {
+    case OP_EXT1:
+      i += mrb_insn_size1[i[1]] + 1;
+      break;
+    case OP_EXT2:
+      i += mrb_insn_size2[i[1]] + 1;
+      break;
+    case OP_EXT3:
+      i += mrb_insn_size3[i[1]] + 1;
+      break;
+    default:
+      i += mrb_insn_size[i[0]];
+      break;
+    }
+  }
+
+  mrb_irep_pool *p1 = &s->pool[b1];
+  mrb_irep_pool *p2 = &s->pool[b2];
+  mrb_int len1 = p1->tt>>2;
+  mrb_int len2 = p2->tt>>2;
+  int off = find_pool_str(s, p1->u.str, len1, p2->u.str, len2);
+
+  if (off < 0) {
+    switch (used) {
+    case 0:                       /* both pools are free */
+    case 2:                       /* b2 is referenced */
+      /* overwrite p1; free b2 if possible */
+      off = b1;
+      realloc_pool_str(s, p1, len1+len2);
+      memcpy((void*)(p1->u.str+len1), (void*)p2->u.str, len2);
+      if (b1 != b2 && used == 0 && b2+1 == s->irep->plen) {
+        free_pool_str(s, p2);
+      }
+      break;
+    case 1:                       /* b1 is referenced */
+      /* overwrite p2 */
+      off = b2;
+      realloc_pool_str(s, p2, len1+len2);
+      memmove((void*)(p2->u.str+len1), (void*)p2->u.str, len2);
+      memcpy((void*)p2->u.str, p1->u.str, len1);
+      break;
+    case 3:                       /* both b1&b2 are referenced */
+      /* create new pool */
+      off = new_lit_str2(s, p1->u.str, len1, p2->u.str, len2);
+      break;
+    }
+  }
+  s->pc = addr_pc(s, pc);
+  genop_2(s, OP_STRING, dst, off);
 }
 
 static void
@@ -811,13 +900,20 @@ gen_addsub(codegen_scope *s, uint8_t op, uint16_t dst)
 
     if (!get_int_operand(s, &data, &n)) {
       /* not integer immediate */
+      if (op == OP_ADD && data.insn == OP_STRING) {
+        struct mrb_insn_data data0 = mrb_decode_insn(mrb_prev_pc(s, data.addr));
+        if (data0.insn == OP_STRING) {
+          merge_op_string(s, dst, data0.b, data.b, data0.addr);
+          return;
+        }
+      }
       goto normal;
     }
     struct mrb_insn_data data0 = mrb_decode_insn(mrb_prev_pc(s, data.addr));
     mrb_int n0;
     if (addr_pc(s, data.addr) == s->lastlabel || !get_int_operand(s, &data0, &n0)) {
       /* OP_ADDI/OP_SUBI takes upto 8bits */
-      if (n > INT8_MAX || n < INT8_MIN) goto normal;
+      if (n > UINT8_MAX || n < -UINT8_MAX) goto normal;
       rewind_pc(s);
       if (n == 0) return;
       if (n > 0) {
@@ -989,23 +1085,23 @@ pop_n_(codegen_scope *s, int n)
 #define pop_n(n) pop_n_(s,n)
 #define cursp() (s->sp)
 
-static mrb_pool_value*
+static mrb_irep_pool*
 lit_pool_extend(codegen_scope *s)
 {
   if (s->irep->plen == s->pcapa) {
     s->pcapa *= 2;
-    s->pool = (mrb_pool_value*)codegen_realloc(s, s->pool, sizeof(mrb_pool_value)*s->pcapa);
+    s->pool = (mrb_irep_pool*)mrbc_realloc(s->pool, sizeof(mrb_irep_pool)*s->pcapa);
   }
 
   return &s->pool[s->irep->plen++];
 }
 
 static int
-new_litbint(codegen_scope *s, const char *p, int base, mrb_bool neg)
+new_litbint(codegen_scope *s, const char *p, int base)
 {
   int i;
   size_t plen;
-  mrb_pool_value *pv;
+  mrb_irep_pool *pv;
 
   plen = strlen(p);
   if (plen > 255) {
@@ -1024,10 +1120,9 @@ new_litbint(codegen_scope *s, const char *p, int base, mrb_bool neg)
 
   char *buf;
   pv->tt = IREP_TT_BIGINT;
-  buf = (char*)codegen_realloc(s, NULL, plen+3);
+  buf = (char*)mrbc_malloc(plen+3);
   buf[0] = (char)plen;
-  if (neg) buf[1] = -base;
-  else buf[1] = base;
+  buf[1] = base;
   memcpy(buf+2, p, plen);
   buf[plen+2] = '\0';
   pv->u.str = buf;
@@ -1036,36 +1131,56 @@ new_litbint(codegen_scope *s, const char *p, int base, mrb_bool neg)
 }
 
 static int
-new_lit_str(codegen_scope *s, const char *str, mrb_int len)
+find_pool_str(codegen_scope *s, const char *str1, mrb_int len1, const char *str2, mrb_int len2)
 {
+  mrb_irep_pool *pool;
+  mrb_int len = len1 + len2;
   int i;
-  mrb_pool_value *pv;
 
   for (i=0; i<s->irep->plen; i++) {
-    pv = &s->pool[i];
-    if (pv->tt & IREP_TT_NFLAG) continue;
-    mrb_int plen = pv->tt>>2;
+    pool = &s->pool[i];
+    if (pool->tt & IREP_TT_NFLAG) continue;
+    mrb_int plen = pool->tt>>2;
     if (len != plen) continue;
-    if (memcmp(pv->u.str, str, plen) == 0)
+    if (memcmp(pool->u.str, str1, len1) == 0 &&
+        (len2 == 0 || memcmp(pool->u.str + len1, str2, len2) == 0))
       return i;
   }
+  return -1;
+}
 
-  pv = lit_pool_extend(s);
+static int
+new_lit_str2(codegen_scope *s, const char *str1, mrb_int len1, const char *str2, mrb_int len2)
+{
+  int i = find_pool_str(s, str1, len1, str2, len2);
 
-  if (mrb_ro_data_p(str)) {
-    pv->tt = (uint32_t)(len<<2) | IREP_TT_SSTR;
-    pv->u.str = str;
+  if (i >= 0) return i;
+  i = s->irep->plen;
+
+  mrb_irep_pool *pool = lit_pool_extend(s);
+  mrb_int len = len1 + len2;
+
+  if (mrb_ro_data_p(str1) && !str2) {
+    pool->tt = (uint32_t)(len<<2) | IREP_TT_SSTR;
+    pool->u.str = str1;
   }
   else {
     char *p;
-    pv->tt = (uint32_t)(len<<2) | IREP_TT_STR;
-    p = (char*)codegen_realloc(s, NULL, len+1);
-    memcpy(p, str, len);
+    pool->tt = (uint32_t)(len<<2) | IREP_TT_STR;
+    p = (char*)mrbc_malloc(len+1);
+    memcpy(p, str1, len1);
+    if (str2) memcpy(p+len1, str2, len2);
     p[len] = '\0';
-    pv->u.str = p;
+    pool->u.str = p;
   }
 
   return i;
+}
+
+static int
+new_lit_str(codegen_scope *s, const char *str, mrb_int len)
+{
+  return new_lit_str2(s, str, len, NULL, 0);
 }
 
 static int
@@ -1078,29 +1193,29 @@ static int
 new_lit_int(codegen_scope *s, mrb_int num)
 {
   int i;
-  mrb_pool_value *pv;
+  mrb_irep_pool *pool;
 
   for (i=0; i<s->irep->plen; i++) {
-    pv = &s->pool[i];
-    if (pv->tt == IREP_TT_INT32) {
-      if (num == pv->u.i32) return i;
+    pool = &s->pool[i];
+    if (pool->tt == IREP_TT_INT32) {
+      if (num == pool->u.i32) return i;
     }
 #ifdef MRB_64BIT
-    else if (pv->tt == IREP_TT_INT64) {
-      if (num == pv->u.i64) return i;
+    else if (pool->tt == IREP_TT_INT64) {
+      if (num == pool->u.i64) return i;
     }
     continue;
 #endif
   }
 
-  pv = lit_pool_extend(s);
+  pool = lit_pool_extend(s);
 
 #ifdef MRB_INT64
-  pv->tt = IREP_TT_INT64;
-  pv->u.i64 = num;
+  pool->tt = IREP_TT_INT64;
+  pool->u.i64 = num;
 #else
-  pv->tt = IREP_TT_INT32;
-  pv->u.i32 = num;
+  pool->tt = IREP_TT_INT32;
+  pool->u.i32 = num;
 #endif
 
   return i;
@@ -1111,20 +1226,20 @@ static int
 new_lit_float(codegen_scope *s, mrb_float num)
 {
   int i;
-  mrb_pool_value *pv;
+  mrb_irep_pool *pool;
 
   for (i=0; i<s->irep->plen; i++) {
     mrb_float f;
-    pv = &s->pool[i];
-    if (pv->tt != IREP_TT_FLOAT) continue;
-    f = pv->u.f;
+    pool = &s->pool[i];
+    if (pool->tt != IREP_TT_FLOAT) continue;
+    f = pool->u.f;
     if (f == num && !signbit(f) == !signbit(num)) return i;
   }
 
-  pv = lit_pool_extend(s);
+  pool = lit_pool_extend(s);
 
-  pv->tt = IREP_TT_FLOAT;
-  pv->u.f = num;
+  pool->tt = IREP_TT_FLOAT;
+  pool->u.f = num;
 
   return i;
 }
@@ -1146,7 +1261,7 @@ new_sym(codegen_scope *s, mrb_sym sym)
     if (s->scapa > 0xffff) {
       codegen_error(s, "too many symbols");
     }
-    s->syms = (mrb_sym*)codegen_realloc(s, s->syms, sizeof(mrb_sym)*s->scapa);
+    s->syms = (mrb_sym*)mrbc_realloc(s->syms, sizeof(mrb_sym)*s->scapa);
   }
   s->syms[s->irep->slen] = sym;
   return s->irep->slen++;
@@ -1177,7 +1292,7 @@ gen_int(codegen_scope *s, uint16_t dst, mrb_int i)
     else goto int_lit;
   }
   else if (i < 8) genop_1(s, OP_LOADI_0 + (uint8_t)i, dst);
-  else if (i <= 0xff) genop_2(s, OP_LOADI, dst, (uint16_t)i);
+  else if (i <= 0xff) genop_2(s, OP_LOADI8, dst, (uint16_t)i);
   else if (i <= INT16_MAX) genop_2S(s, OP_LOADI16, dst, (uint16_t)i);
   else if (i <= INT32_MAX) genop_2SS(s, OP_LOADI32, dst, (uint32_t)i);
   else {
@@ -1323,6 +1438,7 @@ for_body(codegen_scope *s, node *tree)
   /* construct loop */
   lp = loop_push(s, LOOP_FOR);
   lp->pc1 = new_label(s);
+  genop_0(s, OP_NOP); /* for redo */
 
   /* loop body */
   codegen(s, tree->cdr->cdr->car, VAL);
@@ -1376,7 +1492,7 @@ lambda_body(codegen_scope *s, node *tree, int blk)
     pa = node_len(tree->car->cdr->cdr->cdr->car);
     pargs = tree->car->cdr->cdr->cdr->car;
     /* keyword arguments */
-    ka = tail? node_len(tail->cdr->car) : 0;
+    ka = tail ? node_len(tail->cdr->car) : 0;
     /* keyword dictionary? */
     kd = tail && tail->cdr->cdr->car? 1 : 0;
     /* block argument? */
@@ -1388,16 +1504,16 @@ lambda_body(codegen_scope *s, node *tree, int blk)
     /* (23bits = 5:5:1:5:5:1:1) */
     a = MRB_ARGS_REQ(ma)
       | MRB_ARGS_OPT(oa)
-      | (ra? MRB_ARGS_REST() : 0)
+      | (ra ? MRB_ARGS_REST() : 0)
       | MRB_ARGS_POST(pa)
       | MRB_ARGS_KEY(ka, kd)
-      | (ba? MRB_ARGS_BLOCK() : 0);
+      | (ba ? MRB_ARGS_BLOCK() : 0);
     genop_W(s, OP_ENTER, a);
     /* (12bits = 5:1:5:1) */
     s->ainfo = (((ma+oa) & 0x3f) << 7)
       | ((ra & 0x1) << 6)
       | ((pa & 0x1f) << 1)
-      | ((ka | kd) ? 1 : 0);
+      | (ka || kd);
     /* generate jump table for optional arguments initializer */
     pos = new_label(s);
     for (i=0; i<oa; i++) {
@@ -1474,6 +1590,14 @@ lambda_body(codegen_scope *s, node *tree, int blk)
       }
       if (tail->cdr->car && !kwrest) {
         genop_0(s, OP_KEYEND);
+      }
+      if (ba) {
+        mrb_sym bparam = nsym(tail->cdr->cdr->cdr->car);
+        pos = ma+oa+ra+pa+(ka||kd);
+        if (bparam) {
+          int idx = lv_idx(s, bparam);
+          genop_2(s, OP_MOVE, idx, pos+1);
+        }
       }
     }
 
@@ -1717,9 +1841,23 @@ gen_call(codegen_scope *s, node *tree, int val, int safe)
 {
   mrb_sym sym = nsym(tree->cdr->car);
   int skip = 0, n = 0, nk = 0, noop = no_optimize(s), noself = 0, blk = 0, sp_save = cursp();
+  enum mrb_insn opt_op = OP_NOP;
 
-  if (!tree->car) {
-    noself = noop = 1;
+  if (!noop) {
+    if (sym == MRB_OPSYM_2(s->mrb, add)) opt_op = OP_ADD;
+    else if (sym == MRB_OPSYM_2(s->mrb, sub)) opt_op = OP_SUB;
+    else if (sym == MRB_OPSYM_2(s->mrb, mul)) opt_op = OP_MUL;
+    else if (sym == MRB_OPSYM_2(s->mrb, div)) opt_op = OP_DIV;
+    else if (sym == MRB_OPSYM_2(s->mrb, lt)) opt_op = OP_LT;
+    else if (sym == MRB_OPSYM_2(s->mrb, le)) opt_op = OP_LE;
+    else if (sym == MRB_OPSYM_2(s->mrb, gt)) opt_op = OP_GT;
+    else if (sym == MRB_OPSYM_2(s->mrb, ge)) opt_op = OP_GE;
+    else if (sym == MRB_OPSYM_2(s->mrb, eq)) opt_op = OP_EQ;
+    else if (sym == MRB_OPSYM_2(s->mrb, aref)) opt_op = OP_GETIDX;
+    else if (sym == MRB_OPSYM_2(s->mrb, aset)) opt_op = OP_SETIDX;
+  }
+  if (!tree->car || (opt_op == OP_NOP && nint(tree->car->car) == NODE_SELF)) {
+    noself = 1;
     push();
   }
   else {
@@ -1752,36 +1890,36 @@ gen_call(codegen_scope *s, node *tree, int val, int safe)
     noop = 1;
     blk = 1;
   }
-  push();pop();
+  push();
   s->sp = sp_save;
-  if (!noop && sym == MRB_OPSYM_2(s->mrb, add) && n == 1)  {
+  if (opt_op == OP_ADD && n == 1) {
     gen_addsub(s, OP_ADD, cursp());
   }
-  else if (!noop && sym == MRB_OPSYM_2(s->mrb, sub) && n == 1)  {
+  else if (opt_op == OP_SUB && n == 1) {
     gen_addsub(s, OP_SUB, cursp());
   }
-  else if (!noop && sym == MRB_OPSYM_2(s->mrb, mul) && n == 1)  {
+  else if (opt_op == OP_MUL && n == 1) {
     gen_muldiv(s, OP_MUL, cursp());
   }
-  else if (!noop && sym == MRB_OPSYM_2(s->mrb, div) && n == 1)  {
+  else if (opt_op == OP_DIV && n == 1) {
     gen_muldiv(s, OP_DIV, cursp());
   }
-  else if (!noop && sym == MRB_OPSYM_2(s->mrb, lt) && n == 1)  {
+  else if (opt_op == OP_LT && n == 1) {
     genop_1(s, OP_LT, cursp());
   }
-  else if (!noop && sym == MRB_OPSYM_2(s->mrb, le) && n == 1)  {
+  else if (opt_op == OP_LE && n == 1) {
     genop_1(s, OP_LE, cursp());
   }
-  else if (!noop && sym == MRB_OPSYM_2(s->mrb, gt) && n == 1)  {
+  else if (opt_op == OP_GT && n == 1) {
     genop_1(s, OP_GT, cursp());
   }
-  else if (!noop && sym == MRB_OPSYM_2(s->mrb, ge) && n == 1)  {
+  else if (opt_op == OP_GE && n == 1) {
     genop_1(s, OP_GE, cursp());
   }
-  else if (!noop && sym == MRB_OPSYM_2(s->mrb, eq) && n == 1)  {
+  else if (opt_op == OP_EQ && n == 1) {
     genop_1(s, OP_EQ, cursp());
   }
-  else if (!noop && sym == MRB_OPSYM_2(s->mrb, aset) && n == 2)  {
+  else if (opt_op == OP_SETIDX && n == 2) {
     genop_1(s, OP_SETIDX, cursp());
   }
   else if (!noop && n == 0 && gen_uniop(s, sym, cursp())) {
@@ -1790,7 +1928,7 @@ gen_call(codegen_scope *s, node *tree, int val, int safe)
   else if (!noop && n == 1 && gen_binop(s, sym, cursp())) {
     /* constant folding succeeded */
   }
-  else if (noself){
+  else if (noself) {
     genop_3(s, blk ? OP_SSENDB : OP_SSEND, cursp(), new_sym(s, sym), n|(nk<<4));
   }
   else {
@@ -2581,6 +2719,7 @@ codegen(codegen_scope *s, node *tree, int val)
         pos = genjmp2_0(s, OP_JMPIF, cursp(), NOVAL);
       }
       lp->pc1 = new_label(s);
+      genop_0(s, OP_NOP); /* for redo */
       codegen(s, tree->cdr, NOVAL);
       genjmp(s, OP_JMP, lp->pc0);
       dispatch(s, pos);
@@ -2663,8 +2802,8 @@ codegen(codegen_scope *s, node *tree, int val)
     scope_body(s, tree, NOVAL);
     break;
 
-  case NODE_FCALL:
   case NODE_CALL:
+  case NODE_FCALL:
     gen_call(s, tree, val, 0);
     break;
   case NODE_SCALL:
@@ -3058,6 +3197,7 @@ codegen(codegen_scope *s, node *tree, int val)
       if (s2 && s2->ainfo > 0) {
         ainfo = s2->ainfo;
       }
+      if (lv > 0xf) codegen_error(s, "too deep nesting");
       if (ainfo > 0) {
         genop_2S(s, OP_ARGARY, cursp(), (ainfo<<4)|(lv & 0xf));
         push(); push(); push();   /* ARGARY pushes 3 values at most */
@@ -3078,8 +3218,11 @@ codegen(codegen_scope *s, node *tree, int val)
         if (tree && tree->cdr && tree->cdr->cdr) {
           codegen(s, tree->cdr->cdr, VAL);
         }
-        else {
+        else if (s2) {
           gen_blkmove(s, 0, lv);
+        }
+        else {
+          genop_1(s, OP_LOADNIL, cursp());
         }
         n = 0;
       }
@@ -3109,7 +3252,7 @@ codegen(codegen_scope *s, node *tree, int val)
     {
       codegen_scope *s2 = s;
       int lv = 0, ainfo = -1;
-      int n = 0, sendv = 0;
+      int n = 0, nk = 0, sendv = 0;
 
       while (!s2->mscope) {
         lv++;
@@ -3120,19 +3263,29 @@ codegen(codegen_scope *s, node *tree, int val)
         ainfo = (int)s2->ainfo;
       }
       if (ainfo < 0) codegen_error(s, "invalid yield (SyntaxError)");
+      if (lv > 0xf) codegen_error(s, "too deep nesting");
       push();
       if (tree) {
-        n = gen_values(s, tree, VAL, 14);
-        if (n < 0) {
-          n = sendv = 1;
-          push();
+        if (tree->car) {
+          n = gen_values(s, tree->car, VAL, 14);
+          if (n < 0) {
+            n = sendv = 1;
+            push();
+          }
+        }
+
+        if (tree->cdr->car) {
+          nk = gen_hash(s, tree->cdr->car->cdr, VAL, 14);
+          if (nk < 0) {
+            nk = 15;
+          }
         }
       }
       push();pop(); /* space for a block */
-      pop_n(n+1);
+      pop_n(n + (nk == 15 ? 1 : nk * 2) + 1);
       genop_2S(s, OP_BLKPUSH, cursp(), (ainfo<<4)|(lv & 0xf));
       if (sendv) n = CALL_MAXARGS;
-      genop_3(s, OP_SEND, cursp(), new_sym(s, MRB_SYM_2(s->mrb, call)), n);
+      genop_3(s, OP_SEND, cursp(), new_sym(s, MRB_SYM_2(s->mrb, call)), n|(nk<<4));
       if (val) push();
     }
     break;
@@ -3164,25 +3317,29 @@ codegen(codegen_scope *s, node *tree, int val)
     break;
 
   case NODE_REDO:
-    if (!s->loop || s->loop->type == LOOP_BEGIN || s->loop->type == LOOP_RESCUE) {
-      raise_error(s, "unexpected redo");
-    }
-    else {
-      genjmp(s, OP_JMPUW, s->loop->pc1);
+    for (const struct loopinfo *lp = s->loop; ; lp = lp->prev) {
+      if (!lp) {
+        raise_error(s, "unexpected redo");
+        break;
+      }
+      if (lp->type != LOOP_BEGIN && lp->type != LOOP_RESCUE) {
+        genjmp(s, OP_JMPUW, lp->pc1);
+        break;
+      }
     }
     if (val) push();
     break;
 
   case NODE_RETRY:
     {
-      const char *msg = "unexpected retry";
       const struct loopinfo *lp = s->loop;
 
       while (lp && lp->type != LOOP_RESCUE) {
         lp = lp->prev;
       }
       if (!lp) {
-        raise_error(s, msg);
+        raise_error(s, "unexpected retry");
+        break;
       }
       else {
         genjmp(s, OP_JMPUW, lp->pc0);
@@ -3304,7 +3461,7 @@ codegen(codegen_scope *s, node *tree, int val)
 
       i = readint(s, p, base, FALSE, &overflow);
       if (overflow) {
-        int off = new_litbint(s, p, base, FALSE);
+        int off = new_litbint(s, p, base);
         genop_2(s, OP_LOADL, cursp(), off);
       }
       else {
@@ -3355,7 +3512,8 @@ codegen(codegen_scope *s, node *tree, int val)
 
           i = readint(s, p, base, TRUE, &overflow);
           if (overflow) {
-            int off = new_litbint(s, p, base, TRUE);
+            base = -base;
+            int off = new_litbint(s, p, base);
             genop_2(s, OP_LOADL, cursp(), off);
           }
           else {
@@ -3366,19 +3524,14 @@ codegen(codegen_scope *s, node *tree, int val)
         break;
 
       default:
-        if (val) {
-          codegen(s, tree, VAL);
-          pop();
-          push_n(2);pop_n(2); /* space for receiver&block */
-          mrb_sym minus = MRB_OPSYM_2(s->mrb, minus);
-          if (!gen_uniop(s, minus, cursp())) {
-            genop_3(s, OP_SEND, cursp(), new_sym(s, minus), 0);
-          }
-          push();
+        codegen(s, tree, VAL);
+        pop();
+        push_n(2);pop_n(2); /* space for receiver&block */
+        mrb_sym minus = MRB_OPSYM_2(s->mrb, minus);
+        if (!gen_uniop(s, minus, cursp())) {
+          genop_3(s, OP_SEND, cursp(), new_sym(s, minus), 0);
         }
-        else {
-          codegen(s, tree, NOVAL);
-        }
+        if (val) push();
         break;
       }
     }
@@ -3442,7 +3595,6 @@ codegen(codegen_scope *s, node *tree, int val)
       node *n;
       int sym = new_sym(s, MRB_SYM_2(s->mrb, Kernel));
 
-      genop_1(s, OP_LOADSELF, cursp());
       push();
       codegen(s, tree->car, VAL);
       n = tree->cdr;
@@ -3460,7 +3612,7 @@ codegen(codegen_scope *s, node *tree, int val)
       push();                   /* for block */
       pop_n(3);
       sym = new_sym(s, MRB_OPSYM_2(s->mrb, tick)); /* ` */
-      genop_3(s, OP_SEND, cursp(), sym, 1);
+      genop_3(s, OP_SSEND, cursp(), sym, 1);
       if (val) push();
     }
     break;
@@ -3472,13 +3624,12 @@ codegen(codegen_scope *s, node *tree, int val)
       int off = new_lit_str(s, p, len);
       int sym;
 
-      genop_1(s, OP_LOADSELF, cursp());
       push();
       genop_2(s, OP_STRING, cursp(), off);
       push(); push();
       pop_n(3);
       sym = new_sym(s, MRB_OPSYM_2(s->mrb, tick)); /* ` */
-      genop_3(s, OP_SEND, cursp(), sym, 1);
+      genop_3(s, OP_SSEND, cursp(), sym, 1);
       if (val) push();
     }
     break;
@@ -3812,7 +3963,7 @@ scope_add_irep(codegen_scope *s)
     s->irep = irep = mrb_add_irep(s->mrb);
     if (prev->irep->rlen == prev->rcapa) {
       prev->rcapa *= 2;
-      prev->reps = (mrb_irep**)codegen_realloc(s, prev->reps, sizeof(mrb_irep*)*prev->rcapa);
+      prev->reps = (mrb_irep**)mrbc_realloc(prev->reps, sizeof(mrb_irep*)*prev->rcapa);
     }
     prev->reps[prev->irep->rlen] = irep;
     prev->irep->rlen++;
@@ -3823,8 +3974,8 @@ static codegen_scope*
 scope_new(mrb_state *mrb, codegen_scope *prev, node *nlv)
 {
   static const codegen_scope codegen_scope_zero = { 0 };
-  mrb_pool *pool = mrb_pool_open(mrb);
-  codegen_scope *s = (codegen_scope*)mrb_pool_alloc(pool, sizeof(codegen_scope));
+  mempool *pool = mempool_open();
+  codegen_scope *s = (codegen_scope*)mempool_alloc(pool, sizeof(codegen_scope));
 
   if (!s) {
     if (prev)
@@ -3842,26 +3993,26 @@ scope_new(mrb_state *mrb, codegen_scope *prev, node *nlv)
   scope_add_irep(s);
 
   s->rcapa = 8;
-  s->reps = (mrb_irep**)mrb_malloc(mrb, sizeof(mrb_irep*)*s->rcapa);
+  s->reps = (mrb_irep**)mrbc_malloc(sizeof(mrb_irep*)*s->rcapa);
 
   s->icapa = 1024;
-  s->iseq = (mrb_code*)mrb_malloc(mrb, sizeof(mrb_code)*s->icapa);
+  s->iseq = (mrb_code*)mrbc_malloc(sizeof(mrb_code)*s->icapa);
 
   s->pcapa = 32;
-  s->pool = (mrb_pool_value*)mrb_malloc(mrb, sizeof(mrb_pool_value)*s->pcapa);
+  s->pool = (mrb_irep_pool*)mrbc_malloc(sizeof(mrb_irep_pool)*s->pcapa);
 
   s->scapa = 256;
-  s->syms = (mrb_sym*)mrb_malloc(mrb, sizeof(mrb_sym)*s->scapa);
+  s->syms = (mrb_sym*)mrbc_malloc(sizeof(mrb_sym)*s->scapa);
 
   s->lv = nlv;
   s->sp += node_len(nlv)+1;        /* add self */
-  s->nlocals = s->sp;
+  s->nlocals = s->nregs = s->sp;
   if (nlv) {
     mrb_sym *lv;
     node *n = nlv;
     size_t i = 0;
 
-    s->irep->lv = lv = (mrb_sym*)mrb_malloc(mrb, sizeof(mrb_sym)*(s->nlocals-1));
+    s->irep->lv = lv = (mrb_sym*)mrbc_malloc(sizeof(mrb_sym)*(s->nlocals-1));
     for (i=0, n=nlv; n; i++,n=n->cdr) {
       lv[i] = lv_name(n);
     }
@@ -3871,7 +4022,7 @@ scope_new(mrb_state *mrb, codegen_scope *prev, node *nlv)
 
   s->filename_sym = prev->filename_sym;
   if (s->filename_sym) {
-    s->lines = (uint16_t*)mrb_malloc(mrb, sizeof(short)*s->icapa);
+    s->lines = (uint16_t*)mrbc_malloc(sizeof(short)*s->icapa);
   }
   s->lineno = prev->lineno;
 
@@ -3903,7 +4054,7 @@ scope_finish(codegen_scope *s)
   irep->flags = 0;
   if (s->iseq) {
     size_t catchsize = sizeof(struct mrb_irep_catch_handler) * irep->clen;
-    irep->iseq = (const mrb_code*)codegen_realloc(s, s->iseq, sizeof(mrb_code)*s->pc + catchsize);
+    irep->iseq = (const mrb_code*)mrbc_realloc(s->iseq, sizeof(mrb_code)*s->pc + catchsize);
     irep->ilen = s->pc;
     if (irep->clen > 0) {
       memcpy((void*)(irep->iseq + irep->ilen), s->catch_table, catchsize);
@@ -3912,11 +4063,11 @@ scope_finish(codegen_scope *s)
   else {
     irep->clen = 0;
   }
-  mrb_free(s->mrb, s->catch_table);
+  mrbc_free(s->catch_table);
   s->catch_table = NULL;
-  irep->pool = (const mrb_pool_value*)codegen_realloc(s, s->pool, sizeof(mrb_pool_value)*irep->plen);
-  irep->syms = (const mrb_sym*)codegen_realloc(s, s->syms, sizeof(mrb_sym)*irep->slen);
-  irep->reps = (const mrb_irep**)codegen_realloc(s, s->reps, sizeof(mrb_irep*)*irep->rlen);
+  irep->pool = (const mrb_irep_pool*)mrbc_realloc(s->pool, sizeof(mrb_irep_pool)*irep->plen);
+  irep->syms = (const mrb_sym*)mrbc_realloc(s->syms, sizeof(mrb_sym)*irep->slen);
+  irep->reps = (const mrb_irep**)mrbc_realloc(s->reps, sizeof(mrb_irep*)*irep->rlen);
   if (s->filename_sym) {
     mrb_sym fname = mrb_parser_get_filename(s->parser, s->filename_index);
     const char *filename = mrb_sym_name_len(s->mrb, fname, NULL);
@@ -3924,13 +4075,13 @@ scope_finish(codegen_scope *s)
     mrb_debug_info_append_file(s->mrb, s->irep->debug_info,
                                filename, s->lines, s->debug_start_pos, s->pc);
   }
-  mrb_free(s->mrb, s->lines);
+  mrbc_free(s->lines);
 
   irep->nlocals = s->nlocals;
   irep->nregs = s->nregs;
 
   mrb_gc_arena_restore(mrb, s->ai);
-  mrb_pool_close(s->mpool);
+  mempool_close(s->mpool);
 }
 
 static struct loopinfo*
@@ -4021,7 +4172,7 @@ static int
 catch_handler_new(codegen_scope *s)
 {
   size_t newsize = sizeof(struct mrb_irep_catch_handler) * (s->irep->clen + 1);
-  s->catch_table = (struct mrb_irep_catch_handler*)codegen_realloc(s, (void*)s->catch_table, newsize);
+  s->catch_table = (struct mrb_irep_catch_handler*)mrbc_realloc((void*)s->catch_table, newsize);
   return s->irep->clen++;
 }
 
@@ -4059,7 +4210,7 @@ generate_code(mrb_state *mrb, parser_state *p, int val)
     codegen(scope, p->tree, val);
     proc = mrb_proc_new(mrb, scope->irep);
     mrb_irep_decref(mrb, scope->irep);
-    mrb_pool_close(scope->mpool);
+    mempool_close(scope->mpool);
     proc->c = NULL;
     if (mrb->c->cibase && mrb->c->cibase->proc == proc->upper) {
       proc->upper = NULL;
@@ -4069,7 +4220,7 @@ generate_code(mrb_state *mrb, parser_state *p, int val)
   }
   MRB_CATCH(mrb->jmp) {
     mrb_irep_decref(mrb, scope->irep);
-    mrb_pool_close(scope->mpool);
+    mempool_close(scope->mpool);
     mrb->jmp = prev_jmp;
     return NULL;
   }
@@ -4080,20 +4231,4 @@ MRB_API struct RProc*
 mrb_generate_code(mrb_state *mrb, parser_state *p)
 {
   return generate_code(mrb, p, VAL);
-}
-
-void
-mrb_irep_remove_lv(mrb_state *mrb, mrb_irep *irep)
-{
-  int i;
-
-  if (irep->flags & MRB_IREP_NO_FREE) return;
-  if (irep->lv) {
-    mrb_free(mrb, (void*)irep->lv);
-    irep->lv = NULL;
-  }
-  if (!irep->reps) return;
-  for (i = 0; i < irep->rlen; i++) {
-    mrb_irep_remove_lv(mrb, (mrb_irep*)irep->reps[i]);
-  }
 }

@@ -112,22 +112,36 @@ get_history_path(mrb_state *mrb)
 #endif
 
 static void
-p(mrb_state *mrb, mrb_value obj, int prompt)
+p(mrb_state *mrb, mrb_value obj)
 {
   mrb_value val;
   char* msg;
 
   val = mrb_funcall_argv(mrb, obj, MRB_SYM(inspect), 0, NULL);
-  if (prompt) {
-    if (!mrb->exc) {
-      fputs(" => ", stdout);
-    }
-    else {
-      val = mrb_funcall_id(mrb, mrb_obj_value(mrb->exc), MRB_SYM(inspect), 0);
-    }
+  if (!mrb->exc) {
+    fputs(" => ", stdout);
+  }
+  else {
+    val = mrb_exc_get_output(mrb, mrb->exc);
   }
   if (!mrb_string_p(val)) {
     val = mrb_obj_as_string(mrb, obj);
+  }
+  msg = mrb_locale_from_utf8(RSTRING_PTR(val), (int)RSTRING_LEN(val));
+  fwrite(msg, strlen(msg), 1, stdout);
+  mrb_locale_free(msg);
+  putc('\n', stdout);
+}
+
+static void
+p_error(mrb_state *mrb, struct RObject* exc)
+{
+  mrb_value val;
+  char* msg;
+
+  val = mrb_exc_get_output(mrb, exc);
+  if (!mrb_string_p(val)) {
+    val = mrb_obj_as_string(mrb, val);
   }
   msg = mrb_locale_from_utf8(RSTRING_PTR(val), (int)RSTRING_LEN(val));
   fwrite(msg, strlen(msg), 1, stdout);
@@ -517,7 +531,7 @@ main(int argc, char **argv)
     mrb_load_file_cxt(mrb, lfp, cxt);
     fclose(lfp);
     mrb_vm_ci_env_clear(mrb, mrb->c->cibase);
-    mrb_ccontext_cleanup_local_variables(mrb, cxt);
+    mrb_ccontext_cleanup_local_variables(cxt);
   }
 
 #ifndef MRB_NO_MIRB_UNDERSCORE
@@ -593,7 +607,9 @@ main(int argc, char **argv)
     }
     strcpy(last_code_line, line);
     strcat(last_code_line, "\n");
-    MIRB_ADD_HISTORY(line);
+    if (strlen(line) > 0) {
+      MIRB_ADD_HISTORY(line);
+    }
     MIRB_LINE_FREE(line);
 #endif
 
@@ -672,7 +688,7 @@ main(int argc, char **argv)
         /* did an exception occur? */
         if (mrb->exc) {
           MRB_EXC_CHECK_EXIT(mrb, mrb->exc);
-          p(mrb, mrb_obj_value(mrb->exc), 0);
+          p_error(mrb, mrb->exc);
           mrb->exc = 0;
         }
         else {
@@ -680,7 +696,7 @@ main(int argc, char **argv)
           if (!mrb_respond_to(mrb, result, MRB_SYM(inspect))){
             result = mrb_any_to_s(mrb, result);
           }
-          p(mrb, result, 1);
+          p(mrb, result);
 #ifndef MRB_NO_MIRB_UNDERSCORE
           *(mrb->c->ci->stack + 1) = result;
 #endif

@@ -137,7 +137,7 @@ DNSResolver::~DNSResolver() {
   ev_timer_stop(loop_, &timer_);
 }
 
-int DNSResolver::resolve(const StringRef &name, int family) {
+int DNSResolver::resolve(const std::string_view &name, int family) {
   if (status_ != DNSResolverStatus::IDLE) {
     return -1;
   }
@@ -154,11 +154,12 @@ int DNSResolver::resolve(const StringRef &name, int family) {
 
   auto &dnsconf = get_config()->dns;
 
-  ares_options opts{};
-  opts.sock_state_cb = sock_state_cb;
-  opts.sock_state_cb_data = this;
-  opts.timeout = static_cast<int>(dnsconf.timeout.lookup * 1000);
-  opts.tries = dnsconf.max_try;
+  ares_options opts{
+    .timeout = static_cast<int>(dnsconf.timeout.lookup * 1000),
+    .tries = static_cast<int>(dnsconf.max_try),
+    .sock_state_cb = sock_state_cb,
+    .sock_state_cb_data = this,
+  };
 
   auto optmask = ARES_OPT_SOCK_STATE_CB | ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES;
 
@@ -175,8 +176,9 @@ int DNSResolver::resolve(const StringRef &name, int family) {
   channel_ = chan;
   status_ = DNSResolverStatus::RUNNING;
 
-  ares_addrinfo_hints hints{};
-  hints.ai_family = family_;
+  ares_addrinfo_hints hints{
+    .ai_family = family_,
+  };
 
   ares_getaddrinfo(channel_, name_.data(), nullptr, &hints, addrinfo_cb, this);
   reset_timeout();
@@ -225,7 +227,8 @@ void DNSResolver::reset_timeout() {
   }
   // To avoid that timer_.repeat becomes 0, which makes ev_timer_again
   // useless, add tiny fraction of time.
-  timer_.repeat = tv->tv_sec + tv->tv_usec / 1000000. + 1e-9;
+  timer_.repeat = static_cast<double>(tv->tv_sec) +
+                  static_cast<double>(tv->tv_usec) / 1000000. + 1e-9;
   ev_timer_again(loop_, &timer_);
 }
 

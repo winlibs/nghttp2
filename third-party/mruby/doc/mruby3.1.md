@@ -37,7 +37,7 @@ We have added several new build configurations in the `build_config` directory.
 - `nintendo_switch.rb`
 - `serenity.rb`
 - `minimal`: minimal configuration
-- `host-f32`: compiles with `mrb_float` as 32 bit `float`
+- `host-f32`: compiles with `mrb_float` as 32-bit `float`
 - `host-nofloat`: compiles with no float configuration
 - `android_arm64_v8a.rb`: renamed from `android_arm64-v8a.rb`
 
@@ -197,7 +197,7 @@ For better and faster hash values.
 
 ---
 
-# Major bug fixes
+# Major bugfixes
 
 - Fix infinite recursive call bugs in integer division [98799aa6](https://github.com/mruby/mruby/commit/98799aa6)
 - Fix to raise TypeError with super inside instance_eval / class_eval [#5476](https://github.com/mruby/mruby/pull/5476)

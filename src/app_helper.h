@@ -31,10 +31,9 @@
 #include <cstdlib>
 #ifdef HAVE_SYS_TIME_H
 #  include <sys/time.h>
-#endif // HAVE_SYS_TIME_H
+#endif // defined(HAVE_SYS_TIME_H)
 #include <poll.h>
 
-#include <map>
 #include <chrono>
 
 #include <nghttp2/nghttp2.h>
@@ -92,4 +91,4 @@ void set_output(FILE *file);
 
 } // namespace nghttp2
 
-#endif // APP_HELPER_H
+#endif // !defined(APP_HELPER_H)
