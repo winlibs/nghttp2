@@ -88,7 +88,7 @@ mrb_value env_get_remote_addr(mrb_state *mrb, mrb_value self) {
   auto upstream = downstream->get_upstream();
   auto handler = upstream->get_client_handler();
 
-  auto &ipaddr = handler->get_ipaddr();
+  auto ipaddr = handler->get_ipaddr();
 
   return mrb_str_new(mrb, ipaddr.data(), static_cast<mrb_int>(ipaddr.size()));
 }
@@ -183,13 +183,13 @@ mrb_value env_get_tls_client_fingerprint_md(mrb_state *mrb, const EVP_MD *md) {
 namespace {
 mrb_value env_get_tls_client_fingerprint_sha256(mrb_state *mrb,
                                                 mrb_value self) {
-  return env_get_tls_client_fingerprint_md(mrb, EVP_sha256());
+  return env_get_tls_client_fingerprint_md(mrb, nghttp2::tls::sha256());
 }
 } // namespace
 
 namespace {
 mrb_value env_get_tls_client_fingerprint_sha1(mrb_state *mrb, mrb_value self) {
-  return env_get_tls_client_fingerprint_md(mrb, EVP_sha1());
+  return env_get_tls_client_fingerprint_md(mrb, nghttp2::tls::sha1());
 }
 } // namespace
 

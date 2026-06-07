@@ -37,6 +37,7 @@
 #include <unordered_map>
 #include <memory>
 #include <string_view>
+#include <span>
 
 #include "ssl_compat.h"
 
@@ -178,21 +179,21 @@ public:
   int connection_made();
   int verify_alpn_result();
 
-  int submit_file_response(const std::string_view &status, Stream *stream,
+  int submit_file_response(std::string_view status, Stream *stream,
                            time_t last_modified, off_t file_length,
                            const std::string *content_type,
                            nghttp2_data_provider2 *data_prd);
 
-  int submit_response(const std::string_view &status, int32_t stream_id,
+  int submit_response(std::string_view status, int32_t stream_id,
                       nghttp2_data_provider2 *data_prd);
 
-  int submit_response(const std::string_view &status, int32_t stream_id,
+  int submit_response(std::string_view status, int32_t stream_id,
                       const HeaderRefs &headers,
                       nghttp2_data_provider2 *data_prd);
 
   int submit_non_final_response(const std::string &status, int32_t stream_id);
 
-  int submit_push_promise(Stream *stream, const std::string_view &push_path);
+  int submit_push_promise(Stream *stream, std::string_view push_path);
 
   int submit_rst_stream(Stream *stream, uint32_t error_code);
 
@@ -230,8 +231,7 @@ private:
   nghttp2_session *session_;
   Sessions *sessions_;
   SSL *ssl_;
-  const uint8_t *data_pending_;
-  size_t data_pendinglen_;
+  std::span<const uint8_t> data_pending_;
   int fd_;
 };
 

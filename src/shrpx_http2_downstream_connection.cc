@@ -54,8 +54,8 @@ Http2DownstreamConnection::Http2DownstreamConnection(Http2Session *http2session)
     sd_(nullptr) {}
 
 Http2DownstreamConnection::~Http2DownstreamConnection() {
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Deleting";
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Deleting";
   }
   if (downstream_) {
     downstream_->disable_downstream_rtimer();
@@ -88,14 +88,14 @@ Http2DownstreamConnection::~Http2DownstreamConnection() {
   }
   http2session_->remove_downstream_connection(this);
 
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Deleted";
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Deleted";
   }
 }
 
 int Http2DownstreamConnection::attach_downstream(Downstream *downstream) {
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Attaching to DOWNSTREAM:" << downstream;
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Attaching to DOWNSTREAM:" << downstream;
   }
   http2session_->add_downstream_connection(this);
   http2session_->signal_write();
@@ -114,8 +114,8 @@ int Http2DownstreamConnection::attach_downstream(Downstream *downstream) {
 }
 
 void Http2DownstreamConnection::detach_downstream(Downstream *downstream) {
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Detaching from DOWNSTREAM:" << downstream;
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Detaching from DOWNSTREAM:" << downstream;
   }
 
   auto &resp = downstream_->response();
@@ -147,19 +147,19 @@ int Http2DownstreamConnection::submit_rst_stream(Downstream *downstream,
     switch (downstream->get_response_state()) {
     case DownstreamState::MSG_RESET:
     case DownstreamState::MSG_BAD_HEADER:
-    case DownstreamState::MSG_COMPLETE:
-      break;
+      return rv;
     default:
-      if (LOG_ENABLED(INFO)) {
-        DCLOG(INFO, this) << "Submit RST_STREAM for DOWNSTREAM:" << downstream
-                          << ", stream_id="
-                          << downstream->get_downstream_stream_id()
-                          << ", error_code=" << error_code;
-      }
-      rv = http2session_->submit_rst_stream(
-        static_cast<int32_t>(downstream->get_downstream_stream_id()),
-        error_code);
+      break;
     }
+
+    if (log_enabled(INFO)) {
+      Log{INFO, this} << "Submit RST_STREAM for DOWNSTREAM:" << downstream
+                      << ", stream_id="
+                      << downstream->get_downstream_stream_id()
+                      << ", error_code=" << error_code;
+    }
+    rv = http2session_->submit_rst_stream(
+      static_cast<int32_t>(downstream->get_downstream_stream_id()), error_code);
   }
   return rv;
 }
@@ -463,7 +463,7 @@ int Http2DownstreamConnection::push_request_headers() {
     nva.push_back(http2::make_field(p.name, p.value));
   }
 
-  if (LOG_ENABLED(INFO)) {
+  if (log_enabled(INFO)) {
     std::stringstream ss;
     for (auto &nv : nva) {
       auto name = as_string_view(nv.name, nv.namelen);
@@ -475,7 +475,7 @@ int Http2DownstreamConnection::push_request_headers() {
       ss << TTY_HTTP_HD << name << TTY_RST << ": "
          << as_string_view(nv.value, nv.valuelen) << "\n";
     }
-    DCLOG(INFO, this) << "HTTP request headers\n" << ss.str();
+    Log{INFO, this} << "HTTP request headers\n" << ss.str();
   }
 
   auto transfer_encoding = req.fs.header(http2::HD_TRANSFER_ENCODING);
@@ -494,7 +494,7 @@ int Http2DownstreamConnection::push_request_headers() {
 
   rv = http2session_->submit_request(this, nva.data(), nva.size(), data_prdptr);
   if (rv != 0) {
-    DCLOG(FATAL, this) << "nghttp2_submit_request() failed";
+    Log{FATAL, this} << "nghttp2_submit_request() failed";
     return -1;
   }
 
@@ -506,19 +506,19 @@ int Http2DownstreamConnection::push_request_headers() {
   return 0;
 }
 
-int Http2DownstreamConnection::push_upload_data_chunk(const uint8_t *data,
-                                                      size_t datalen) {
+int Http2DownstreamConnection::push_upload_data_chunk(
+  std::span<const uint8_t> data) {
   if (!downstream_->get_request_header_sent()) {
     auto output = downstream_->get_blocked_request_buf();
     auto &req = downstream_->request();
-    output->append(data, datalen);
-    req.unconsumed_body_length += datalen;
+    output->append(data);
+    req.unconsumed_body_length += data.size();
     return 0;
   }
 
   int rv;
   auto output = downstream_->get_request_buf();
-  output->append(data, datalen);
+  output->append(data);
   if (downstream_->get_downstream_stream_id() != -1) {
     rv = http2session_->resume_data(this);
     if (rv != 0) {

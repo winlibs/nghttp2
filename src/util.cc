@@ -75,6 +75,7 @@
 #include <nghttp2/nghttp2.h>
 
 #include "timegm.h"
+#include "tls.h"
 
 namespace nghttp2 {
 
@@ -135,7 +136,6 @@ O cpydig4(uint32_t n, O result) {
 }
 } // namespace
 
-namespace {
 constexpr auto MONTH = std::to_array({
   "Jan"sv,
   "Feb"sv,
@@ -160,7 +160,6 @@ constexpr auto WEEKDAY = std::to_array({
   "Fri"sv,
   "Sat"sv,
 });
-} // namespace
 
 std::string format_http_date(const std::chrono::system_clock::time_point &tp) {
   // Sat, 27 Sep 2014 06:31:15 GMT
@@ -585,7 +584,7 @@ format_http_date(char *out, const std::chrono::system_clock::time_point &tp) {
 }
 #endif   // !defined(HAVE_STD_CHRONO_TIME_ZONE)
 
-time_t parse_http_date(const std::string_view &s) {
+time_t parse_http_date(std::string_view s) {
   tm tm{};
 #ifdef _WIN32
   // there is no strptime - use std::get_time
@@ -603,7 +602,7 @@ time_t parse_http_date(const std::string_view &s) {
   return nghttp2_timegm_without_yday(&tm);
 }
 
-time_t parse_openssl_asn1_time_print(const std::string_view &s) {
+time_t parse_openssl_asn1_time_print(std::string_view s) {
   tm tm{};
   auto r = strptime(s.data(), "%b %d %H:%M:%S %Y GMT", &tm);
   if (r == nullptr) {
@@ -630,7 +629,7 @@ void to_token68(std::string &base64str) {
 }
 
 std::string_view to_base64(BlockAllocator &balloc,
-                           const std::string_view &token68str) {
+                           std::string_view token68str) {
   // At most 3 padding '='
   auto len = token68str.size() + 3;
   auto iov = make_byte_ref(balloc, len + 1);
@@ -662,9 +661,8 @@ namespace {
 // with given costs.  swapcost, subcost, addcost and delcost are cost
 // to swap 2 adjacent characters, substitute characters, add character
 // and delete character respectively.
-uint32_t levenshtein(const std::string_view &a, const std::string_view &b,
-                     uint32_t swapcost, uint32_t subcost, uint32_t addcost,
-                     uint32_t delcost) {
+uint32_t levenshtein(std::string_view a, std::string_view b, uint32_t swapcost,
+                     uint32_t subcost, uint32_t addcost, uint32_t delcost) {
   auto dp =
     std::vector<std::vector<uint32_t>>(3, std::vector<uint32_t>(b.size() + 1));
   for (uint32_t i = 0; i <= static_cast<uint32_t>(b.size()); ++i) {
@@ -771,7 +769,7 @@ bool fieldeq(const char *uri, const urlparse_url &u, urlparse_url_fields field,
 }
 
 bool fieldeq(const char *uri, const urlparse_url &u, urlparse_url_fields field,
-             const std::string_view &t) {
+             std::string_view t) {
   if (!has_uri_field(u, field)) {
     return t.empty();
   }
@@ -840,7 +838,7 @@ std::string numeric_name(const struct sockaddr *sa, socklen_t salen) {
 }
 
 std::string to_numeric_addr(const Address *addr) {
-  return to_numeric_addr(&addr->su.sa, addr->len);
+  return to_numeric_addr(addr->as_sockaddr(), addr->size());
 }
 
 std::string to_numeric_addr(const struct sockaddr *sa, socklen_t salen) {
@@ -885,28 +883,6 @@ std::string to_numeric_addr(const struct sockaddr *sa, socklen_t salen) {
   return s;
 }
 
-void set_port(Address &addr, uint16_t port) {
-  switch (addr.su.storage.ss_family) {
-  case AF_INET:
-    addr.su.in.sin_port = htons(port);
-    break;
-  case AF_INET6:
-    addr.su.in6.sin6_port = htons(port);
-    break;
-  }
-}
-
-uint16_t get_port(const sockaddr_union *su) {
-  switch (su->storage.ss_family) {
-  case AF_INET:
-    return ntohs(su->in.sin_port);
-  case AF_INET6:
-    return ntohs(su->in6.sin6_port);
-  default:
-    return 0;
-  }
-}
-
 bool quic_prohibited_port(uint16_t port) {
   switch (port) {
   case 1900:
@@ -927,7 +903,7 @@ std::string ascii_dump(const uint8_t *data, size_t len) {
     auto c = data[i];
 
     if (c >= 0x20 && c < 0x7f) {
-      res += as_signed(c);
+      res += static_cast<char>(c);
     } else {
       res += '.';
     }
@@ -979,14 +955,14 @@ int64_t to_time64(const timeval &tv) {
   return tv.tv_sec * 1000000 + tv.tv_usec;
 }
 
-bool check_h2_is_selected(const std::string_view &proto) {
+bool check_h2_is_selected(std::string_view proto) {
   return NGHTTP2_H2 == proto;
 }
 
 namespace {
 bool select_proto(const unsigned char **out, unsigned char *outlen,
                   const unsigned char *in, unsigned int inlen,
-                  const std::string_view &key) {
+                  std::string_view key) {
   for (auto p = in, end = in + inlen; p + key.size() <= end; p += *p + 1) {
     if (std::ranges::equal(key, as_string_view(p, key.size()))) {
       *out = p + 1;
@@ -1015,7 +991,7 @@ bool select_protocol(const unsigned char **out, unsigned char *outlen,
   return false;
 }
 
-std::vector<std::string_view> split_str(const std::string_view &s, char delim) {
+std::vector<std::string_view> split_str(std::string_view s, char delim) {
   size_t len = 1;
   auto last = std::ranges::end(s);
   std::string_view::const_iterator d;
@@ -1038,7 +1014,7 @@ std::vector<std::string_view> split_str(const std::string_view &s, char delim) {
   return list;
 }
 
-std::vector<std::string_view> split_str(const std::string_view &s, char delim,
+std::vector<std::string_view> split_str(std::string_view s, char delim,
                                         size_t n) {
   if (n == 0) {
     return split_str(s, delim);
@@ -1075,8 +1051,7 @@ std::vector<std::string_view> split_str(const std::string_view &s, char delim,
   return list;
 }
 
-std::vector<std::string> parse_config_str_list(const std::string_view &s,
-                                               char delim) {
+std::vector<std::string> parse_config_str_list(std::string_view s, char delim) {
   auto sublist = split_str(s, delim);
   auto res = std::vector<std::string>();
   res.reserve(sublist.size());
@@ -1231,7 +1206,7 @@ bool ipv6_numeric_addr(const char *host) {
 
 namespace {
 std::optional<std::pair<int64_t, std::string_view>>
-parse_uint_digits(const std::string_view &s) {
+parse_uint_digits(std::string_view s) {
   if (s.empty()) {
     return {};
   }
@@ -1269,7 +1244,7 @@ parse_uint_digits(const std::string_view &s) {
 }
 } // namespace
 
-std::optional<int64_t> parse_uint_with_unit(const std::string_view &s) {
+std::optional<int64_t> parse_uint_with_unit(std::string_view s) {
   auto r = parse_uint_digits(s);
   if (!r) {
     return {};
@@ -1311,7 +1286,7 @@ std::optional<int64_t> parse_uint_with_unit(const std::string_view &s) {
   return n * mul;
 }
 
-std::optional<int64_t> parse_uint(const std::string_view &s) {
+std::optional<int64_t> parse_uint(std::string_view s) {
   auto r = parse_uint_digits(s);
   if (!r || !(*r).second.empty()) {
     return {};
@@ -1320,7 +1295,7 @@ std::optional<int64_t> parse_uint(const std::string_view &s) {
   return (*r).first;
 }
 
-std::optional<double> parse_duration_with_unit(const std::string_view &s) {
+std::optional<double> parse_duration_with_unit(std::string_view s) {
   constexpr auto max = std::numeric_limits<int64_t>::max();
 
   auto r = parse_uint_digits(s);
@@ -1434,14 +1409,13 @@ std::string dtos(double n) {
 }
 
 std::string_view make_http_hostport(BlockAllocator &balloc,
-                                    const std::string_view &host,
-                                    uint16_t port) {
+                                    std::string_view host, uint16_t port) {
   auto iov = make_byte_ref(balloc, host.size() + 2 + 1 + 5 + 1);
   return make_http_hostport(host, port, std::ranges::begin(iov));
 }
 
-std::string_view make_hostport(BlockAllocator &balloc,
-                               const std::string_view &host, uint16_t port) {
+std::string_view make_hostport(BlockAllocator &balloc, std::string_view host,
+                               uint16_t port) {
   auto iov = make_byte_ref(balloc, host.size() + 2 + 1 + 5 + 1);
   return make_hostport(host, port, std::ranges::begin(iov));
 }
@@ -1682,7 +1656,7 @@ double int_pow(double x, size_t y) {
   return res;
 }
 
-uint32_t hash32(const std::string_view &s) {
+uint32_t hash32(std::string_view s) {
   /* 32 bit FNV-1a: http://isthe.com/chongo/tech/comp/fnv/ */
   uint32_t h = 2166136261u;
   size_t i;
@@ -1696,8 +1670,7 @@ uint32_t hash32(const std::string_view &s) {
 }
 
 namespace {
-int message_digest(uint8_t *res, const EVP_MD *meth,
-                   const std::string_view &s) {
+int message_digest(uint8_t *res, const EVP_MD *meth, std::string_view s) {
   int rv;
 
   auto ctx = EVP_MD_CTX_new();
@@ -1705,7 +1678,7 @@ int message_digest(uint8_t *res, const EVP_MD *meth,
     return -1;
   }
 
-  auto ctx_deleter = defer(EVP_MD_CTX_free, ctx);
+  auto ctx_deleter = defer([ctx] { EVP_MD_CTX_free(ctx); });
 
   rv = EVP_DigestInit_ex(ctx, meth, nullptr);
   if (rv != 1) {
@@ -1728,15 +1701,15 @@ int message_digest(uint8_t *res, const EVP_MD *meth,
 }
 } // namespace
 
-int sha256(uint8_t *res, const std::string_view &s) {
-  return message_digest(res, EVP_sha256(), s);
+int sha256(uint8_t *res, std::string_view s) {
+  return message_digest(res, tls::sha256(), s);
 }
 
-int sha1(uint8_t *res, const std::string_view &s) {
-  return message_digest(res, EVP_sha1(), s);
+int sha1(uint8_t *res, std::string_view s) {
+  return message_digest(res, tls::sha1(), s);
 }
 
-std::string_view extract_host(const std::string_view &hostport) {
+std::string_view extract_host(std::string_view hostport) {
   if (hostport.empty()) {
     return ""sv;
   }
@@ -1761,7 +1734,7 @@ std::string_view extract_host(const std::string_view &hostport) {
 }
 
 std::pair<std::string_view, std::string_view>
-split_hostport(const std::string_view &hostport) {
+split_hostport(std::string_view hostport) {
   if (hostport.empty()) {
     return {};
   }
@@ -1846,7 +1819,7 @@ int daemonize(int nochdir, int noclose) {
 #endif // !defined(__APPLE__) && !defined(__sgi)
 }
 
-std::string_view rstrip(BlockAllocator &balloc, const std::string_view &s) {
+std::string_view rstrip(BlockAllocator &balloc, std::string_view s) {
   auto it = std::ranges::rbegin(s);
   for (; it != std::ranges::rend(s) && (*it == ' ' || *it == '\t'); ++it)
     ;
@@ -1875,9 +1848,10 @@ int msghdr_get_local_addr(Address &dest, msghdr *msg, int family) {
     for (auto cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
       if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_PKTINFO) {
         in_pktinfo pktinfo;
+
         memcpy(&pktinfo, CMSG_DATA(cmsg), sizeof(pktinfo));
-        dest.len = sizeof(dest.su.in);
-        auto &sa = dest.su.in;
+
+        auto &sa = dest.skaddr.emplace<sockaddr_in>();
         sa.sin_family = AF_INET;
         sa.sin_addr = pktinfo.ipi_addr;
 
@@ -1890,11 +1864,13 @@ int msghdr_get_local_addr(Address &dest, msghdr *msg, int family) {
     for (auto cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
       if (cmsg->cmsg_level == IPPROTO_IPV6 && cmsg->cmsg_type == IPV6_PKTINFO) {
         in6_pktinfo pktinfo;
+
         memcpy(&pktinfo, CMSG_DATA(cmsg), sizeof(pktinfo));
-        dest.len = sizeof(dest.su.in6);
-        auto &sa = dest.su.in6;
+
+        auto &sa = dest.skaddr.emplace<sockaddr_in6>();
         sa.sin6_family = AF_INET6;
         sa.sin6_addr = pktinfo.ipi6_addr;
+
         return 0;
       }
     }

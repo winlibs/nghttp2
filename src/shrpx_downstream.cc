@@ -51,9 +51,9 @@ void header_timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
   auto downstream = static_cast<Downstream *>(w->data);
   auto upstream = downstream->get_upstream();
 
-  if (LOG_ENABLED(INFO)) {
-    DLOG(INFO, downstream) << "request header timeout stream_id="
-                           << downstream->get_stream_id();
+  if (log_enabled(INFO)) {
+    Log{INFO, downstream} << "request header timeout stream_id="
+                          << downstream->get_stream_id();
   }
 
   downstream->disable_upstream_rtimer();
@@ -70,9 +70,9 @@ void upstream_timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
 
   auto which = revents == EV_READ ? "read" : "write";
 
-  if (LOG_ENABLED(INFO)) {
-    DLOG(INFO, downstream) << "upstream timeout stream_id="
-                           << downstream->get_stream_id() << " event=" << which;
+  if (log_enabled(INFO)) {
+    Log{INFO, downstream} << "upstream timeout stream_id="
+                          << downstream->get_stream_id() << " event=" << which;
   }
 
   downstream->disable_upstream_rtimer();
@@ -100,10 +100,10 @@ void downstream_timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
 
   auto which = revents == EV_READ ? "read" : "write";
 
-  if (LOG_ENABLED(INFO)) {
-    DLOG(INFO, downstream) << "downstream timeout stream_id="
-                           << downstream->get_downstream_stream_id()
-                           << " event=" << which;
+  if (log_enabled(INFO)) {
+    Log{INFO, downstream} << "downstream timeout stream_id="
+                          << downstream->get_downstream_stream_id()
+                          << " event=" << which;
   }
 
   downstream->disable_downstream_rtimer();
@@ -194,8 +194,8 @@ Downstream::Downstream(Upstream *upstream, MemchunkPool *mcpool,
 }
 
 Downstream::~Downstream() {
-  if (LOG_ENABLED(INFO)) {
-    DLOG(INFO, this) << "Deleting";
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Deleting";
   }
 
   // check nullptr for unittest
@@ -241,8 +241,8 @@ Downstream::~Downstream() {
     nghttp2_rcbuf_decref(rcbuf);
   }
 
-  if (LOG_ENABLED(INFO)) {
-    DLOG(INFO, this) << "Deleted";
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Deleted";
   }
 }
 
@@ -321,7 +321,7 @@ void Downstream::force_resume_read() {
 namespace {
 const HeaderRefs::value_type *
 search_header_linear_backwards(const HeaderRefs &headers,
-                               const std::string_view &name) {
+                               std::string_view name) {
   for (auto it = headers.rbegin(); it != headers.rend(); ++it) {
     auto &kv = *it;
     if (kv.name == name) {
@@ -374,7 +374,7 @@ std::string_view Downstream::assemble_request_cookie() {
   return as_string_view(std::ranges::begin(iov), p);
 }
 
-uint32_t Downstream::find_affinity_cookie(const std::string_view &name) {
+uint32_t Downstream::find_affinity_cookie(std::string_view name) {
   for (auto &kv : req_.fs.headers()) {
     if (kv.token != http2::HD_COOKIE) {
       continue;
@@ -467,8 +467,8 @@ void Downstream::crumble_request_cookie(std::vector<nghttp2_nv> &nva) {
 }
 
 namespace {
-void add_header(size_t &sum, HeaderRefs &headers, const std::string_view &name,
-                const std::string_view &value, bool no_index, int32_t token) {
+void add_header(size_t &sum, HeaderRefs &headers, std::string_view name,
+                std::string_view value, bool no_index, int32_t token) {
   sum += name.size() + value.size();
   headers.emplace_back(name, value, no_index, token);
 }
@@ -476,7 +476,7 @@ void add_header(size_t &sum, HeaderRefs &headers, const std::string_view &name,
 
 namespace {
 std::string_view alloc_header_name(BlockAllocator &balloc,
-                                   const std::string_view &name) {
+                                   std::string_view name) {
   auto iov = make_byte_ref(balloc, name.size() + 1);
   auto p = util::tolower(name, std::ranges::begin(iov));
   *p = '\0';
@@ -487,7 +487,7 @@ std::string_view alloc_header_name(BlockAllocator &balloc,
 
 namespace {
 void append_last_header_key(BlockAllocator &balloc, bool &key_prev, size_t &sum,
-                            HeaderRefs &headers, const std::string_view &data) {
+                            HeaderRefs &headers, std::string_view data) {
   assert(key_prev);
   sum += data.size();
   auto &item = headers.back();
@@ -502,7 +502,7 @@ void append_last_header_key(BlockAllocator &balloc, bool &key_prev, size_t &sum,
 namespace {
 void append_last_header_value(BlockAllocator &balloc, bool &key_prev,
                               size_t &sum, HeaderRefs &headers,
-                              const std::string_view &data) {
+                              std::string_view data) {
   key_prev = false;
   sum += data.size();
   auto &item = headers.back();
@@ -550,30 +550,28 @@ HeaderRefs::value_type *FieldStore::header(int32_t token) {
   return nullptr;
 }
 
-const HeaderRefs::value_type *
-FieldStore::header(const std::string_view &name) const {
+const HeaderRefs::value_type *FieldStore::header(std::string_view name) const {
   return search_header_linear_backwards(headers_, name);
 }
 
-void FieldStore::add_header_token(const std::string_view &name,
-                                  const std::string_view &value, bool no_index,
-                                  int32_t token) {
+void FieldStore::add_header_token(std::string_view name, std::string_view value,
+                                  bool no_index, int32_t token) {
   shrpx::add_header(buffer_size_, headers_, name, value, no_index, token);
 }
 
-void FieldStore::alloc_add_header_name(const std::string_view &name) {
+void FieldStore::alloc_add_header_name(std::string_view name) {
   auto name_ref = alloc_header_name(balloc_, name);
   auto token = http2::lookup_token(name_ref);
   add_header_token(name_ref, ""sv, false, token);
   header_key_prev_ = true;
 }
 
-void FieldStore::append_last_header_key(const std::string_view &data) {
+void FieldStore::append_last_header_key(std::string_view data) {
   shrpx::append_last_header_key(balloc_, header_key_prev_, buffer_size_,
                                 headers_, data);
 }
 
-void FieldStore::append_last_header_value(const std::string_view &data) {
+void FieldStore::append_last_header_value(std::string_view data) {
   shrpx::append_last_header_value(balloc_, header_key_prev_, buffer_size_,
                                   headers_, data);
 }
@@ -583,27 +581,27 @@ void FieldStore::clear_headers() {
   header_key_prev_ = false;
 }
 
-void FieldStore::add_trailer_token(const std::string_view &name,
-                                   const std::string_view &value, bool no_index,
+void FieldStore::add_trailer_token(std::string_view name,
+                                   std::string_view value, bool no_index,
                                    int32_t token) {
   // Header size limit should be applied to all header and trailer
   // fields combined.
   shrpx::add_header(buffer_size_, trailers_, name, value, no_index, token);
 }
 
-void FieldStore::alloc_add_trailer_name(const std::string_view &name) {
+void FieldStore::alloc_add_trailer_name(std::string_view name) {
   auto name_ref = alloc_header_name(balloc_, name);
   auto token = http2::lookup_token(name_ref);
   add_trailer_token(name_ref, ""sv, false, token);
   trailer_key_prev_ = true;
 }
 
-void FieldStore::append_last_trailer_key(const std::string_view &data) {
+void FieldStore::append_last_trailer_key(std::string_view data) {
   shrpx::append_last_header_key(balloc_, trailer_key_prev_, buffer_size_,
                                 trailers_, data);
 }
 
-void FieldStore::append_last_trailer_value(const std::string_view &data) {
+void FieldStore::append_last_trailer_value(std::string_view data) {
   shrpx::append_last_header_value(balloc_, trailer_key_prev_, buffer_size_,
                                   trailers_, data);
 }
@@ -678,32 +676,32 @@ DefaultMemchunks *Downstream::get_request_buf() { return &request_buf_; }
 // Downstream. Otherwise, the program will crash.
 int Downstream::push_request_headers() {
   if (!dconn_) {
-    DLOG(INFO, this) << "dconn_ is NULL";
+    Log{INFO, this} << "dconn_ is NULL";
     return -1;
   }
   return dconn_->push_request_headers();
 }
 
-int Downstream::push_upload_data_chunk(const uint8_t *data, size_t datalen) {
-  req_.recv_body_length += datalen;
+int Downstream::push_upload_data_chunk(std::span<const uint8_t> data) {
+  req_.recv_body_length += data.size();
 
   if (!dconn_ && !request_header_sent_) {
-    blocked_request_buf_.append(data, datalen);
-    req_.unconsumed_body_length += datalen;
+    blocked_request_buf_.append(data);
+    req_.unconsumed_body_length += data.size();
     return 0;
   }
 
   // Assumes that request headers have already been pushed to output
   // buffer using push_request_headers().
   if (!dconn_) {
-    DLOG(INFO, this) << "dconn_ is NULL";
+    Log{INFO, this} << "dconn_ is NULL";
     return -1;
   }
-  if (dconn_->push_upload_data_chunk(data, datalen) != 0) {
+  if (dconn_->push_upload_data_chunk(data) != 0) {
     return -1;
   }
 
-  req_.unconsumed_body_length += datalen;
+  req_.unconsumed_body_length += data.size();
 
   return 0;
 }
@@ -714,14 +712,14 @@ int Downstream::end_upload_data() {
     return 0;
   }
   if (!dconn_) {
-    DLOG(INFO, this) << "dconn_ is NULL";
+    Log{INFO, this} << "dconn_ is NULL";
     return -1;
   }
   return dconn_->end_upload_data();
 }
 
 void Downstream::rewrite_location_response_header(
-  const std::string_view &upstream_scheme) {
+  std::string_view upstream_scheme) {
   auto hd = resp_.fs.header(http2::HD_LOCATION);
   if (!hd) {
     return;
@@ -754,7 +752,7 @@ void Downstream::set_chunked_response(bool f) { chunked_response_ = f; }
 
 int Downstream::on_read() {
   if (!dconn_) {
-    DLOG(INFO, this) << "dconn_ is NULL";
+    Log{INFO, this} << "dconn_ is NULL";
     return -1;
   }
   return dconn_->on_read();
@@ -788,10 +786,10 @@ bool Downstream::validate_request_recv_body_length() const {
   }
 
   if (req_.fs.content_length != req_.recv_body_length) {
-    if (LOG_ENABLED(INFO)) {
-      DLOG(INFO, this) << "request invalid bodylen: content-length="
-                       << req_.fs.content_length
-                       << ", received=" << req_.recv_body_length;
+    if (log_enabled(INFO)) {
+      Log{INFO, this} << "request invalid bodylen: content-length="
+                      << req_.fs.content_length
+                      << ", received=" << req_.recv_body_length;
     }
     return false;
   }
@@ -805,10 +803,10 @@ bool Downstream::validate_response_recv_body_length() const {
   }
 
   if (resp_.fs.content_length != resp_.recv_body_length) {
-    if (LOG_ENABLED(INFO)) {
-      DLOG(INFO, this) << "response invalid bodylen: content-length="
-                       << resp_.fs.content_length
-                       << ", received=" << resp_.recv_body_length;
+    if (log_enabled(INFO)) {
+      Log{INFO, this} << "response invalid bodylen: content-length="
+                      << resp_.fs.content_length
+                      << ", received=" << resp_.recv_body_length;
     }
     return false;
   }
@@ -1104,7 +1102,7 @@ void Downstream::add_retry() { ++num_retry_; }
 
 bool Downstream::no_more_retry() const { return num_retry_ > 50; }
 
-void Downstream::set_request_downstream_host(const std::string_view &host) {
+void Downstream::set_request_downstream_host(std::string_view host) {
   request_downstream_host_ = host;
 }
 
@@ -1210,7 +1208,7 @@ void Downstream::set_blocked_request_data_eof(bool f) {
   blocked_request_data_eof_ = f;
 }
 
-void Downstream::set_ws_key(const std::string_view &key) { ws_key_ = key; }
+void Downstream::set_ws_key(std::string_view key) { ws_key_ = key; }
 
 bool Downstream::get_expect_100_continue() const {
   return expect_100_continue_;

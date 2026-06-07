@@ -18,4 +18,4 @@ Synopsis
     regenerated per second.  When a suspicious activity is detected,
     some amount of tokens are consumed.  If there is no token
     available, GOAWAY is sent to tear down the connection.  *burst* and
-    *rate* default to 1000 and 33 respectively.
+    *rate* default to 10000 and 330 respectively.

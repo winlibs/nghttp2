@@ -243,6 +243,10 @@ exists and serves incoming requests.
 If you want to just reload configuration file without executing new
 binary, send SIGHUP to nghttpx main process.
 
+For TCP connections, nghttpx does moderate effort not to lose a
+connection during this process.  To make it more robust, consider to
+enable ``net.ipv4.tcp_migrate_req``.
+
 Re-opening log files
 --------------------
 
@@ -506,6 +510,23 @@ Because TLSv1.3 completely changes the semantics of cipher suite
 naming scheme and structure, nghttpx provides the new option
 :option:`--tls13-ciphers` and :option:`--tls13-client-ciphers` to
 change preferred cipher list for TLSv1.3.
+
+Encrypted Client Hello
+----------------------
+
+nghttpx supports `RFC 9849
+<https://datatracker.ietf.org/doc/html/rfc9849>`_ Encrypted Client
+Hello (ECH) on the frontend connections if the underlying TLS stack
+supports it.  To setup ECH, use the following options:
+
+- :option:`--ech-config-file`
+- :option:`--ech-retry-config-file`
+
+These options take the path to PEM ECH file as described in `RFC 9934
+<https://datatracker.ietf.org/doc/html/rfc9934>`_.  They can be used
+repeatedly to specify the multiple HPKE private keys and ECH
+configurations.  :option:`--ech-retry-config-file` must be used at
+least once when enabling ECH.
 
 WebSockets over HTTP/2
 ----------------------

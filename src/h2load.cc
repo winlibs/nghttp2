@@ -142,6 +142,10 @@ Config::Config()
     ktls(false) {}
 
 Config::~Config() {
+  if (tls_session) {
+    SSL_SESSION_free(tls_session);
+  }
+
   if (addrs) {
     if (base_uri_unix) {
       delete addrs;
@@ -169,9 +173,7 @@ bool Config::is_quic() const {
 }
 Config config;
 
-namespace {
 constexpr size_t MAX_SAMPLES = 1000000;
-} // namespace
 
 Stats::Stats(size_t req_todo, size_t nclients)
   : req_todo(req_todo),
@@ -263,8 +265,8 @@ void rate_period_timeout_w_cb(struct ev_loop *loop, ev_timer *w, int revents) {
       ++req_todo;
       --worker->nreqs_rem;
     }
-    auto client =
-      std::make_unique<Client>(worker->next_client_id++, worker, req_todo);
+    auto client_id = worker->next_client_id++;
+    auto client = std::make_unique<Client>(client_id, worker, req_todo);
 
     ++worker->nconns_made;
 
@@ -273,7 +275,7 @@ void rate_period_timeout_w_cb(struct ev_loop *loop, ev_timer *w, int revents) {
       client->fail();
     } else {
       if (worker->config->is_timing_based_mode()) {
-        worker->clients.push_back(client.release());
+        worker->clients.emplace(client_id, client.release());
       } else {
         client.release();
       }
@@ -317,7 +319,7 @@ void warmup_timeout_cb(struct ev_loop *loop, ev_timer *w, int revents) {
   assert(worker->stats.req_started == 0);
   assert(worker->stats.req_done == 0);
 
-  for (auto client : worker->clients) {
+  for (const auto [_, client] : worker->clients) {
     if (client) {
       assert(client->req_todo == 0);
       assert(client->req_left == 1);
@@ -568,14 +570,16 @@ int Client::make_socket(addrinfo *addr) {
       return -1;
     }
 
-    socklen_t addrlen = sizeof(local_addr.su.storage);
-    rv = getsockname(fd, &local_addr.su.sa, &addrlen);
+    sockaddr_storage ss;
+    socklen_t addrlen = sizeof(ss);
+    rv = getsockname(fd, reinterpret_cast<sockaddr *>(&ss), &addrlen);
     if (rv == -1) {
       return -1;
     }
-    local_addr.len = addrlen;
 
-    if (quic_init(&local_addr.su.sa, local_addr.len, addr->ai_addr,
+    local_addr.set(reinterpret_cast<const sockaddr *>(&ss));
+
+    if (quic_init(local_addr.as_sockaddr(), local_addr.size(), addr->ai_addr,
                   addr->ai_addrlen) != 0) {
       std::cerr << "quic_init failed" << std::endl;
       return -1;
@@ -589,6 +593,14 @@ int Client::make_socket(addrinfo *addr) {
     if (config.scheme == "https") {
       if (!ssl) {
         ssl = SSL_new(worker->ssl_ctx);
+
+        if (config.tls_session && !SSL_set_session(ssl, config.tls_session)) {
+          std::cerr << "Could not set TLS session" << std::endl;
+        }
+
+        if (!config.tls_session_file.empty()) {
+          SSL_set_ex_data(ssl, 1, worker);
+        }
       }
 
       SSL_set_connect_state(ssl);
@@ -851,6 +863,95 @@ void Client::process_request_failure() {
             << std::endl;
 }
 
+namespace {
+#if OPENSSL_3_0_0_API
+std::string pkey_get_group_name(EVP_PKEY *pkey) {
+  std::array<char, 64> name;
+  size_t nwrite;
+
+  if (!EVP_PKEY_get_group_name(pkey, name.data(), name.size(), &nwrite)) {
+    return ""s;
+  }
+
+  return name.data();
+}
+#else  // !OPENSSL_3_0_0_API
+std::string_view pkey_get_group_name(EVP_PKEY *pkey) {
+  auto nid = EVP_PKEY_id(pkey);
+  if (nid == EVP_PKEY_EC) {
+    auto ec = EVP_PKEY_get0_EC_KEY(pkey);
+
+    nid = EC_GROUP_get_curve_name(EC_KEY_get0_group(ec));
+  }
+
+  auto cname = EC_curve_nid2nist(nid);
+  if (cname) {
+    return cname;
+  }
+
+  cname = OBJ_nid2sn(nid);
+  if (cname) {
+    return cname;
+  }
+
+  return ""sv;
+}
+#endif // !OPENSSL_3_0_0_API
+} // namespace
+
+namespace {
+std::string_view get_negotiated_group_name(SSL *ssl) {
+#if OPENSSL_3_5_0_API
+  auto name = SSL_get0_group_name(ssl);
+  if (!name) {
+    return ""sv;
+  }
+
+  return name;
+#elif OPENSSL_3_0_0_API
+  auto name =
+    SSL_group_to_name(ssl, static_cast<int>(SSL_get_negotiated_group(ssl)));
+  if (!name) {
+    return ""sv;
+  }
+
+  return name;
+#elif defined(NGHTTP2_OPENSSL_IS_BORINGSSL)
+  auto name = SSL_get_group_name(SSL_get_group_id(ssl));
+  if (!name) {
+    return ""sv;
+  }
+
+  return name;
+#elif defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
+  auto name = wolfSSL_get_curve_name(ssl);
+  if (!name) {
+    return ""sv;
+  }
+
+  return name;
+#elif defined(NGHTTP2_OPENSSL_IS_LIBRESSL)
+  return ""sv;
+#else  // !OPENSSL_3_5_0_API && !OPENSSL_3_0_0_API &&
+       // !defined(NGHTTP2_OPENSSL_IS_BORINGSSL) &&
+       // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL) &&
+       // !defined(NGHTTP2_OPENSSL_IS_LIBRESSL)
+  EVP_PKEY *pkey;
+
+  if (!SSL_get_tmp_key(ssl, &pkey)) {
+    return ""sv;
+  }
+
+  auto key_del = defer([pkey] { EVP_PKEY_free(pkey); });
+
+  return pkey_get_group_name(pkey);
+#endif // !OPENSSL_3_5_0_API && !OPENSSL_3_0_0_API &&
+       // !defined(NGHTTP2_OPENSSL_IS_BORINGSSL) &&
+       // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL) &&
+       // !defined(NGHTTP2_OPENSSL_IS_LIBRESSL)
+}
+} // namespace
+
 #ifndef NGHTTP2_OPENSSL_IS_BORINGSSL
 namespace {
 void print_server_tmp_key(SSL *ssl) {
@@ -860,7 +961,7 @@ void print_server_tmp_key(SSL *ssl) {
     return;
   }
 
-  auto key_del = defer(EVP_PKEY_free, key);
+  auto key_del = defer([key] { EVP_PKEY_free(key); });
 
   std::cout << "Server Temp Key: ";
 
@@ -873,29 +974,12 @@ void print_server_tmp_key(SSL *ssl) {
     std::cout << "DH " << EVP_PKEY_bits(key) << " bits" << std::endl;
     break;
   case EVP_PKEY_EC: {
-#  if OPENSSL_3_0_0_API
-    std::array<char, 64> curve_name;
-    const char *cname;
-    if (!EVP_PKEY_get_utf8_string_param(key, "group", curve_name.data(),
-                                        curve_name.size(), nullptr)) {
-      cname = "<unknown>";
-    } else {
-      cname = curve_name.data();
+    auto group = pkey_get_group_name(key);
+    if (group.empty()) {
+      group = "<unknown>"sv;
     }
-#  else  // !OPENSSL_3_0_0_API
-    auto ec = EVP_PKEY_get1_EC_KEY(key);
-    auto ec_del = defer(EC_KEY_free, ec);
-    auto nid = EC_GROUP_get_curve_name(EC_KEY_get0_group(ec));
-    auto cname = EC_curve_nid2nist(nid);
-    if (!cname) {
-      cname = OBJ_nid2sn(nid);
-      if (!cname) {
-        cname = "<unknown>";
-      }
-    }
-#  endif // !OPENSSL_3_0_0_API
 
-    std::cout << "ECDH " << cname << " " << EVP_PKEY_bits(key) << " bits"
+    std::cout << "ECDH " << group << " " << EVP_PKEY_bits(key) << " bits"
               << std::endl;
     break;
   }
@@ -908,6 +992,73 @@ void print_server_tmp_key(SSL *ssl) {
 } // namespace
 #endif // !defined(NGHTTP2_OPENSSL_IS_BORINGSSL)
 
+namespace {
+void print_server_cert(SSL *ssl) {
+#if OPENSSL_3_0_0_API
+  auto cert = SSL_get0_peer_certificate(ssl);
+#else  // !OPENSSL_3_0_0_API
+  auto cert = SSL_get_peer_certificate(ssl);
+#endif // !OPENSSL_3_0_0_API
+  if (!cert) {
+    return;
+  }
+
+#if !OPENSSL_3_0_0_API
+  auto cert_d = defer([cert] { X509_free(cert); });
+#endif // !OPENSSL_3_0_0_API
+
+  auto pkey = X509_get0_pubkey(cert);
+  if (!pkey) {
+    return;
+  }
+
+#ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
+  auto pkey_d = defer([pkey] {
+    // X509_get0_pubkey is mapped to wolfSSL_X509_get_pubkey, which
+    // increases the reference count despite the name "get0" suggests.
+    EVP_PKEY_free(pkey);
+  });
+#endif // defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
+
+  std::cout << "Certificate: ";
+
+  switch (EVP_PKEY_id(pkey)) {
+  case EVP_PKEY_RSA:
+    std::cout << "RSA ";
+    break;
+  case EVP_PKEY_EC:
+    std::cout << "ECDSA " << pkey_get_group_name(pkey) << " ";
+    break;
+#ifdef NGHTTP2_GENUINE_OPENSSL
+  case EVP_PKEY_ED448:
+    std::cout << "ED448 ";
+    break;
+  case EVP_PKEY_ED25519:
+    std::cout << "ED25519 ";
+    break;
+#endif // defined(NGHTTP2_GENUINE_OPENSSL)
+  default:
+#if OPENSSL_3_0_0_API
+    if (auto name = EVP_PKEY_get0_type_name(pkey); name) {
+      std::cout << name << " ";
+      break;
+    }
+#endif // OPENSSL_3_0_0_API
+
+    std::cout << "<unknown> ";
+  }
+
+  std::cout << EVP_PKEY_bits(pkey) << " bits" << std::endl;
+}
+} // namespace
+
+namespace {
+void print_negotiated_group(SSL *ssl) {
+  std::cout << "Negotiated Group: " << get_negotiated_group_name(ssl)
+            << std::endl;
+}
+} // namespace
+
 void Client::report_tls_info() {
   if (worker->id == 0 && !worker->tls_info_report_done) {
     worker->tls_info_report_done = true;
@@ -917,6 +1068,12 @@ void Client::report_tls_info() {
 #ifndef NGHTTP2_OPENSSL_IS_BORINGSSL
     print_server_tmp_key(ssl);
 #endif // !defined(NGHTTP2_OPENSSL_IS_BORINGSSL)
+
+    print_server_cert(ssl);
+    print_negotiated_group(ssl);
+
+    std::cout << "Resumption: " << (SSL_session_reused(ssl) ? "yes"sv : "no"sv)
+              << std::endl;
   }
 }
 
@@ -927,7 +1084,7 @@ void Client::report_app_info() {
   }
 }
 
-void Client::terminate_session() {
+int Client::terminate_session() {
 #ifdef ENABLE_HTTP3
   if (config.is_quic()) {
     quic.close_requested = true;
@@ -935,15 +1092,20 @@ void Client::terminate_session() {
 #endif // defined(ENABLE_HTTP3)
   if (session) {
     session->terminate();
+  } else {
+    return -1;
   }
+
   // http1 session needs writecb to tear down session.
   signal_write();
+
+  return 0;
 }
 
 void Client::on_request(int64_t stream_id) { streams[stream_id] = Stream(); }
 
-void Client::on_header(int64_t stream_id, const uint8_t *name, size_t namelen,
-                       const uint8_t *value, size_t valuelen) {
+void Client::on_header(int64_t stream_id, std::span<const uint8_t> name,
+                       std::span<const uint8_t> value) {
   auto itr = streams.find(stream_id);
   if (itr == std::ranges::end(streams)) {
     return;
@@ -958,11 +1120,11 @@ void Client::on_header(int64_t stream_id, const uint8_t *name, size_t namelen,
     return;
   }
 
-  if (stream.status_success == -1 && namelen == 7 &&
-      ":status"sv == as_string_view(name, namelen)) {
+  if (stream.status_success == -1 && name.size() == 7 &&
+      ":status"sv == as_string_view(name)) {
     int status = 0;
-    for (auto c : std::span{value, valuelen}) {
-      if (util::is_digit(as_signed(c))) {
+    for (auto c : value) {
+      if (util::is_digit(static_cast<char>(c))) {
         status *= 10;
         status += c - '0';
         if (status > 999) {
@@ -1256,10 +1418,10 @@ int Client::connection_made() {
   return 0;
 }
 
-int Client::on_read(const uint8_t *data, size_t len) {
-  auto rv = session->on_read(data, len);
+int Client::on_read(std::span<const uint8_t> data) {
+  auto rv = session->on_read(data);
   if (worker->current_phase == Phase::MAIN_DURATION) {
-    worker->stats.bytes_total += len;
+    worker->stats.bytes_total += data.size();
   }
   if (rv != 0) {
     return -1;
@@ -1280,11 +1442,12 @@ int Client::on_write() {
 }
 
 int Client::read_clear() {
-  uint8_t buf[8_k];
+  std::array<uint8_t, 8_k> rawbuf;
+  auto buf = std::span<uint8_t>{rawbuf};
 
   for (;;) {
     ssize_t nread;
-    while ((nread = read(fd, buf, sizeof(buf))) == -1 && errno == EINTR)
+    while ((nread = read(fd, buf.data(), buf.size())) == -1 && errno == EINTR)
       ;
     if (nread == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -1297,7 +1460,7 @@ int Client::read_clear() {
       return -1;
     }
 
-    if (on_read(buf, as_unsigned(nread)) != 0) {
+    if (on_read(buf.first(as_unsigned(nread))) != 0) {
       return -1;
     }
   }
@@ -1306,21 +1469,23 @@ int Client::read_clear() {
 }
 
 int Client::write_clear() {
-  std::array<struct iovec, 2> iov;
+  std::array<struct iovec, 2> iovbuf;
 
   for (;;) {
     if (on_write() != 0) {
       return -1;
     }
 
-    auto iovcnt = wb.riovec(iov.data(), iov.size());
+    auto iov = wb.riovec(iovbuf);
 
-    if (iovcnt == 0) {
+    if (iov.empty()) {
       break;
     }
 
     ssize_t nwrite;
-    while ((nwrite = writev(fd, iov.data(), iovcnt)) == -1 && errno == EINTR)
+    while ((nwrite = writev(fd, iov.data(), static_cast<int>(iov.size()))) ==
+             -1 &&
+           errno == EINTR)
       ;
 
     if (nwrite == -1) {
@@ -1397,12 +1562,14 @@ int Client::tls_handshake() {
 }
 
 int Client::read_tls() {
-  uint8_t buf[8_k];
+  std::array<uint8_t, 8_k> rawbuf;
 
   ERR_clear_error();
 
+  auto buf = std::span<uint8_t>{rawbuf};
+
   for (;;) {
-    auto rv = SSL_read(ssl, buf, sizeof(buf));
+    auto rv = SSL_read(ssl, buf.data(), static_cast<int>(buf.size()));
 
     if (rv <= 0) {
       auto err = SSL_get_error(ssl, rv);
@@ -1417,7 +1584,7 @@ int Client::read_tls() {
       }
     }
 
-    if (on_read(buf, static_cast<size_t>(rv)) != 0) {
+    if (on_read(buf.first(static_cast<size_t>(rv))) != 0) {
       return -1;
     }
   }
@@ -1426,20 +1593,18 @@ int Client::read_tls() {
 int Client::write_tls() {
   ERR_clear_error();
 
-  struct iovec iov;
-
   for (;;) {
     if (on_write() != 0) {
       return -1;
     }
 
-    auto iovcnt = wb.riovec(&iov, 1);
+    auto data = wb.peek();
 
-    if (iovcnt == 0) {
+    if (data.empty()) {
       break;
     }
 
-    auto rv = SSL_write(ssl, iov.iov_base, static_cast<int>(iov.iov_len));
+    auto rv = SSL_write(ssl, data.data(), static_cast<int>(data.size()));
 
     if (rv <= 0) {
       auto err = SSL_get_error(ssl, rv);
@@ -1579,6 +1744,8 @@ void Client::signal_write() { ev_io_start(worker->loop, &wev); }
 
 void Client::try_new_connection() { new_connection_requested = true; }
 
+uint32_t Client::get_id() const { return id; }
+
 namespace {
 unsigned int get_ev_loop_flags() {
   if (ev_supported_backends() & ~ev_recommended_backends() & EVBACKEND_KQUEUE) {
@@ -1628,6 +1795,7 @@ Worker::Worker(uint32_t id, SSL_CTX *ssl_ctx, size_t req_todo, size_t nclients,
 
   sampling_init(request_times_smp, max_samples);
   sampling_init(client_smp, max_samples);
+  sampling_init(gro_smp, max_samples);
 
   ev_timer_init(&duration_watcher, duration_timeout_cb, config->duration, 0.);
   duration_watcher.data = this;
@@ -1643,6 +1811,10 @@ Worker::Worker(uint32_t id, SSL_CTX *ssl_ctx, size_t req_todo, size_t nclients,
 }
 
 Worker::~Worker() {
+  if (tls_session) {
+    SSL_SESSION_free(tls_session);
+  }
+
   ev_timer_stop(loop, &timeout_watcher);
   ev_timer_stop(loop, &duration_watcher);
   ev_timer_stop(loop, &warmup_watcher);
@@ -1650,23 +1822,32 @@ Worker::~Worker() {
 }
 
 void Worker::stop_all_clients() {
-  for (auto client : clients) {
+  for (auto [_, client] : clients) {
     if (client) {
-      client->terminate_session();
+      if (client->terminate_session() != 0) {
+        client->fail();
+        free_client(client);
+        delete client;
+      }
     }
   }
 }
 
 void Worker::free_client(Client *deleted_client) {
-  for (auto &client : clients) {
-    if (client == deleted_client) {
-      client->req_todo = client->req_done;
-      stats.req_todo += client->req_todo;
-      auto index = as_unsigned(&client - &clients[0]);
-      clients[index] = nullptr;
-      return;
-    }
+  auto it = clients.find(deleted_client->get_id());
+  if (it == std::ranges::end(clients)) {
+    return;
   }
+
+  auto &client = (*it).second;
+  if (!client) {
+    return;
+  }
+
+  client->req_todo = client->req_done;
+  stats.req_todo += client->req_todo;
+
+  client = nullptr;
 }
 
 void Worker::run() {
@@ -1722,6 +1903,10 @@ void Worker::sample_client_stat(ClientStat *cstat) {
   sample(client_smp, stats.client_stats, cstat);
 }
 
+void Worker::sample_gro_stat(const GROStat &gro_stat) {
+  sample(gro_smp, stats.gro_stats, &gro_stat);
+}
+
 void Worker::report_progress() {
   if (id != 0 || config->is_rate_mode() || stats.req_done % progress_interval ||
       config->is_timing_based_mode()) {
@@ -1741,16 +1926,80 @@ void Worker::report_rate_progress() {
             << "% of clients started" << std::endl;
 }
 
+void Worker::write_tls_session(const std::string &path) {
+  if (!tls_session) {
+    return;
+  }
+
+#ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
+  auto datalen = wolfSSL_i2d_SSL_SESSION(tls_session, nullptr);
+  if (datalen <= 0) {
+    std::cerr << "Could not write TLS session to " << path << std::endl;
+    return;
+  }
+
+  auto data =
+    std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(datalen));
+  auto p = data.get();
+
+  datalen = wolfSSL_i2d_SSL_SESSION(tls_session, &p);
+
+  assert(datalen > 0);
+
+  auto f = wolfSSL_BIO_new_file(path.c_str(), "w");
+  if (!f) {
+    std::cerr << "Could not write TLS session to " << path << std::endl;
+    return;
+  }
+
+  if (!wolfSSL_PEM_write_bio(f, "WOLFSSL SESSION PARAMETERS", "", data.get(),
+                             datalen)) {
+    std::cerr << "Could not write TLS session to " << path << std::endl;
+  }
+
+  wolfSSL_BIO_free(f);
+#else  // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
+  auto f = BIO_new_file(path.c_str(), "w");
+  if (!f) {
+    std::cerr << "Could not write TLS session to " << path << std::endl;
+    return;
+  }
+
+  if (!PEM_write_bio_SSL_SESSION(f, tls_session)) {
+    std::cerr << "Could not write TLS session to " << path << std::endl;
+  }
+
+  BIO_free(f);
+#endif // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
+}
+
+namespace {
+int new_session_cb(SSL *ssl, SSL_SESSION *session) {
+  auto worker = static_cast<Worker *>(SSL_get_ex_data(ssl, 1));
+
+  if (!worker || worker->id != 0 || worker->tls_session_store_done) {
+    return 0;
+  }
+
+  worker->tls_session = session;
+  worker->tls_session_store_done = true;
+
+  return 1;
+}
+} // namespace
+
 namespace {
 // Returns percentage of number of samples within mean +/- sd.
-double within_sd(const std::vector<double> &samples, double mean, double sd) {
+template <typename T>
+double within_sd(const std::vector<T> &samples, double mean, double sd) {
   if (samples.size() == 0) {
     return 0.0;
   }
   auto lower = mean - sd;
   auto upper = mean + sd;
   auto m = std::ranges::count_if(
-    samples, [&lower, &upper](double t) { return lower <= t && t <= upper; });
+    samples, [&lower, &upper](double t) { return lower <= t && t <= upper; },
+    [](auto t) { return static_cast<double>(t); });
   return (static_cast<double>(m) / static_cast<double>(samples.size())) * 100;
 }
 } // namespace
@@ -1760,33 +2009,47 @@ namespace {
 // percentage of number of samples within mean +/- sd are computed.
 // If |sampling| is true, this computes sample variance.  Otherwise,
 // population variance.
-SDStat compute_time_stat(const std::vector<double> &samples,
-                         bool sampling = false) {
+template <typename T>
+SDStat<T> compute_time_stat(std::vector<T> samples, bool sampling = false) {
   if (samples.empty()) {
-    return {0.0, 0.0, 0.0, 0.0, 0.0};
+    return {};
   }
   // standard deviation calculated using Rapid calculation method:
   // https://en.wikipedia.org/wiki/Standard_deviation#Rapid_calculation_methods
   double a = 0, q = 0;
   size_t n = 0;
-  double sum = 0;
-  auto res = SDStat{std::numeric_limits<double>::max(),
-                    std::numeric_limits<double>::min()};
+  T sum = 0;
+  auto res =
+    SDStat<T>{std::numeric_limits<T>::max(), std::numeric_limits<T>::min()};
   for (const auto &t : samples) {
     ++n;
     res.min = std::min(res.min, t);
     res.max = std::max(res.max, t);
     sum += t;
 
-    auto na = a + (t - a) / static_cast<double>(n);
-    q += (t - a) * (t - na);
+    auto d = static_cast<double>(t);
+    auto na = a + (d - a) / static_cast<double>(n);
+    q += (d - a) * (d - na);
     a = na;
   }
 
   assert(n > 0);
-  res.mean = sum / static_cast<double>(n);
+  res.mean = a;
   res.sd = sqrt(q / static_cast<double>(sampling && n > 1 ? n - 1 : n));
   res.within_sd = within_sd(samples, res.mean, res.sd);
+
+  if (samples.size() & 1) {
+    res.median = samples[samples.size() / 2];
+  } else {
+    auto half = samples.size() / 2;
+    res.median = (samples[half - 1] + samples[half]) / 2;
+  }
+
+  res.p95 =
+    samples[static_cast<size_t>(static_cast<double>(samples.size()) * 0.95)];
+  res.p99 =
+    samples[static_cast<size_t>(static_cast<double>(samples.size()) * 0.99)];
+  res.samples = std::move(samples);
 
   return res;
 }
@@ -1797,23 +2060,44 @@ SDStats
 process_time_stats(const std::vector<std::unique_ptr<Worker>> &workers) {
   auto request_times_sampling = false;
   auto client_times_sampling = false;
+  auto gro_pkts_sampling = false;
   size_t nrequest_times = 0;
   size_t nclient_times = 0;
+  size_t ngro_pkts = 0;
   for (const auto &w : workers) {
     nrequest_times += w->stats.req_stats.size();
     request_times_sampling = w->request_times_smp.n > w->stats.req_stats.size();
 
     nclient_times += w->stats.client_stats.size();
     client_times_sampling = w->client_smp.n > w->stats.client_stats.size();
+
+    ngro_pkts += w->stats.gro_stats.size();
+    gro_pkts_sampling = w->gro_smp.n > w->stats.gro_stats.size();
   }
 
   std::vector<double> request_times;
   request_times.reserve(nrequest_times);
 
-  std::vector<double> connect_times, ttfb_times, rps_values;
+  std::vector<double> connect_times, ttfb_times, rps_values, min_rtt_times,
+    smoothed_rtt_times;
   connect_times.reserve(nclient_times);
   ttfb_times.reserve(nclient_times);
   rps_values.reserve(nclient_times);
+
+  std::vector<uint64_t> pkt_sent_values, pkt_recv_values, pkt_lost_values;
+
+  if (config.is_quic()) {
+    min_rtt_times.reserve(nclient_times);
+    smoothed_rtt_times.reserve(nclient_times);
+    pkt_sent_values.reserve(nclient_times);
+    pkt_recv_values.reserve(nclient_times);
+    pkt_lost_values.reserve(nclient_times);
+  }
+
+  std::vector<uint64_t> gro_pkts;
+  if (config.is_quic()) {
+    gro_pkts.reserve(ngro_pkts);
+  }
 
   for (const auto &w : workers) {
     for (const auto &req_stat : w->stats.req_stats) {
@@ -1839,6 +2123,16 @@ process_time_stats(const std::vector<std::unique_ptr<Worker>> &workers) {
         }
       }
 
+      if (config.is_quic()) {
+        min_rtt_times.push_back(
+          std::chrono::duration<double>(cstat.min_rtt).count());
+        smoothed_rtt_times.push_back(
+          std::chrono::duration<double>(cstat.smoothed_rtt).count());
+        pkt_sent_values.push_back(cstat.pkt_sent);
+        pkt_recv_values.push_back(cstat.pkt_recv);
+        pkt_lost_values.push_back(cstat.pkt_lost);
+      }
+
       // We will get connect event before FFTB.
       if (!recorded(cstat.connect_start_time) ||
           !recorded(cstat.connect_time)) {
@@ -1859,12 +2153,46 @@ process_time_stats(const std::vector<std::unique_ptr<Worker>> &workers) {
           cstat.ttfb - cstat.connect_start_time)
           .count());
     }
+
+    if (config.is_quic()) {
+      for (const auto &gstat : stat.gro_stats) {
+        gro_pkts.push_back(gstat.num_pkts);
+      }
+    }
   }
 
-  return {compute_time_stat(request_times, request_times_sampling),
-          compute_time_stat(connect_times, client_times_sampling),
-          compute_time_stat(ttfb_times, client_times_sampling),
-          compute_time_stat(rps_values, client_times_sampling)};
+  std::ranges::sort(request_times);
+  std::ranges::sort(connect_times);
+  std::ranges::sort(ttfb_times);
+  std::ranges::sort(rps_values);
+  if (config.is_quic()) {
+    std::ranges::sort(min_rtt_times);
+    std::ranges::sort(smoothed_rtt_times);
+    std::ranges::sort(pkt_sent_values);
+    std::ranges::sort(pkt_recv_values);
+    std::ranges::sort(pkt_lost_values);
+    std::ranges::sort(gro_pkts);
+  }
+
+  return {
+    .request =
+      compute_time_stat(std::move(request_times), request_times_sampling),
+    .connect =
+      compute_time_stat(std::move(connect_times), client_times_sampling),
+    .ttfb = compute_time_stat(std::move(ttfb_times), client_times_sampling),
+    .rps = compute_time_stat(std::move(rps_values), client_times_sampling),
+    .min_rtt =
+      compute_time_stat(std::move(min_rtt_times), client_times_sampling),
+    .smoothed_rtt =
+      compute_time_stat(std::move(smoothed_rtt_times), client_times_sampling),
+    .pkt_sent =
+      compute_time_stat(std::move(pkt_sent_values), client_times_sampling),
+    .pkt_recv =
+      compute_time_stat(std::move(pkt_recv_values), client_times_sampling),
+    .pkt_lost =
+      compute_time_stat(std::move(pkt_lost_values), client_times_sampling),
+    .gro_pkts = compute_time_stat(std::move(gro_pkts), gro_pkts_sampling),
+  };
 }
 } // namespace
 
@@ -1929,12 +2257,10 @@ std::string get_reqline(const char *uri, const urlparse_url &u) {
 }
 } // namespace
 
-namespace {
 constexpr auto UNIX_PATH_PREFIX = "unix:"sv;
-} // namespace
 
 namespace {
-bool parse_base_uri(const std::string_view &base_uri) {
+bool parse_base_uri(std::string_view base_uri) {
   urlparse_url u;
   if (urlparse_parse_url(base_uri.data(), base_uri.size(), 0, &u) != 0 ||
       !util::has_uri_field(u, URLPARSE_SCHEMA) ||
@@ -2126,6 +2452,289 @@ std::string make_http_authority(const Config &config) {
 } // namespace
 
 namespace {
+// plot_histogram plots histogram.  It assumes that data is sorted in
+// ascending order.
+template <typename F, typename T>
+requires std::invocable<F, double>
+void plot_histogram(std::ostream &o, const std::vector<T> &data, F formatter) {
+  if (data.empty()) {
+    return;
+  }
+
+  constexpr size_t nbkts = 10;
+  constexpr size_t max_bar = 40;
+
+  auto min = static_cast<double>(data[0]);
+  auto max = static_cast<double>(data.back());
+
+  if (min == max) {
+    return;
+  }
+
+  auto range = max - min;
+  auto width = range / nbkts;
+
+  std::vector<size_t> counts(nbkts, 0);
+
+  for (auto v : data) {
+    auto idx = static_cast<size_t>((static_cast<double>(v) - min) / width);
+    if (idx >= nbkts) {
+      idx = counts.size() - 1;
+    }
+
+    ++counts[idx];
+  }
+
+  auto max_count = *std::ranges::max_element(counts);
+
+  size_t cum_counts = 0;
+
+  auto flags = o.flags();
+  auto prec = o.precision();
+  auto guard = defer([&o, flags, prec]() {
+    o.flags(flags);
+    o.precision(prec);
+  });
+
+  for (size_t i = 0; i < counts.size(); ++i) {
+    auto lower = min + static_cast<double>(i) * width;
+    auto upper = min + static_cast<double>(i + 1) * width;
+
+    o << std::setw(10) << formatter(lower) << "-" << std::setw(10)
+      << formatter(upper) << " [";
+
+    cum_counts += counts[i];
+
+    size_t len;
+
+    if (counts[i]) {
+      len = std::max(static_cast<size_t>(1), counts[i] * max_bar / max_count);
+    } else {
+      len = 0;
+    }
+
+    size_t j;
+    for (j = 0; j < len; ++j) {
+      o << '/';
+    }
+
+    for (; j < max_bar; ++j) {
+      o << ' ';
+    }
+
+    o << "](" << std::fixed << std::setprecision(2) << std::setw(6)
+      << static_cast<double>(counts[i]) * 100. /
+           static_cast<double>(data.size())
+      << "/" << std::setw(6)
+      << static_cast<double>(cum_counts) * 100. /
+           static_cast<double>(data.size())
+      << "%)\n";
+  }
+}
+} // namespace
+
+namespace {
+template <typename F, typename T>
+void output_sd_stat(std::ostream &o, std::string_view title,
+                    const SDStat<T> &st, F formatter) {
+  o << std::left << std::setw(12) << title << ": " << std::right;
+  o << std::setw(10) << formatter(st.min) << "  ";
+  o << std::setw(10) << formatter(st.max) << "  ";
+  o << std::setw(10) << formatter(st.median) << " ";
+  o << std::setw(10) << formatter(st.p95) << " ";
+  o << std::setw(10) << formatter(st.p99) << " ";
+  o << std::setw(10) << formatter(st.mean) << "  ";
+  o << std::setw(10) << formatter(st.sd);
+  o << std::setw(9) << util::dtos(st.within_sd) << "%\n";
+
+  if (config.histogram) {
+    plot_histogram(o, st.samples, formatter);
+  }
+}
+} // namespace
+
+namespace {
+template <typename T>
+void output_sd_stat_duration(std::ostream &o, std::string_view title,
+                             const SDStat<T> &st) {
+  output_sd_stat(o, title, st, [](auto v) { return util::format_duration(v); });
+}
+} // namespace
+
+namespace {
+template <typename T>
+void output_sd_stat(std::ostream &o, std::string_view title,
+                    const SDStat<T> &st) {
+  output_sd_stat(o, title, st, std::identity{});
+}
+} // namespace
+
+namespace {
+std::optional<SSL_SESSION *> read_tls_session(const std::string &path) {
+#ifdef NGHTTP2_OPENSSL_IS_WOLFSSL
+  auto f = wolfSSL_BIO_new_file(path.c_str(), "r");
+  if (!f) {
+    std::cerr << "Could not read TLS session file from " << path << std::endl;
+    return {};
+  }
+
+  auto f_del = defer([f] { wolfSSL_BIO_free(f); });
+
+  char *name, *header;
+  uint8_t *data;
+  long datalen;
+
+  if (!wolfSSL_PEM_read_bio(f, &name, &header, &data, &datalen)) {
+    std::cerr << "Could not read TLS session file from " << path << std::endl;
+    return {};
+  }
+
+  auto data_del = defer([name, header, data] {
+    wolfSSL_OPENSSL_free(name);
+    wolfSSL_OPENSSL_free(header);
+    wolfSSL_OPENSSL_free(data);
+  });
+
+  if ("WOLFSSL SESSION PARAMETERS"sv != name) {
+    std::cerr << "Could not read TLS session file from " << path << std::endl;
+    return {};
+  }
+
+  const uint8_t *pdata = data;
+
+  auto session = wolfSSL_d2i_SSL_SESSION(nullptr, &pdata, datalen);
+  if (!session) {
+    std::cerr << "Could not read TLS session file from " << path << std::endl;
+    return {};
+  }
+
+  return session;
+#else  // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
+  auto f = BIO_new_file(path.c_str(), "r");
+  if (!f) {
+    std::cerr << "Could not read TLS session file from " << path << std::endl;
+    return {};
+  }
+
+  auto session = PEM_read_bio_SSL_SESSION(f, nullptr, 0, nullptr);
+  BIO_free(f);
+
+  if (!session) {
+    std::cerr << "Could not read TLS session file from " << path << std::endl;
+    return {};
+  }
+
+  return session;
+#endif // !defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
+}
+} // namespace
+
+namespace {
+template <typename T>
+void write_sd_stat_result(std::ostream &o, std::string_view title,
+                          const SDStat<T> &st) {
+  o << R"(")" << title << R"(":{)"
+    << R"("min":)" << st.min << ","
+    << R"("max":)" << st.max << ","
+    << R"("median":)" << st.median << ","
+    << R"("p95":)" << st.p95 << ","
+    << R"("p99":)" << st.p99 << ","
+    << R"("mean":)" << st.mean << ","
+    << R"("sd":)" << st.sd << ","
+    << R"("within_sd":)" << st.within_sd << ","
+    << R"("samples":[)";
+
+  if (!st.samples.empty()) {
+    o << st.samples[0];
+
+    for (size_t i = 1; i < st.samples.size(); ++i) {
+      o << ',' << st.samples[i];
+    }
+  }
+
+  o << "]}";
+}
+} // namespace
+
+namespace {
+void write_result(const std::string &path,
+                  std::chrono::duration<double> duration, double rps,
+                  int64_t bps, const Stats &stats, const SDStats &ts) {
+  std::ofstream o{path};
+
+  if (!o) {
+    std::cerr << "Could not write the result to file " << path << std::endl;
+    return;
+  }
+
+  auto prec = o.precision();
+  auto guard = defer([&o, prec]() { o.precision(prec); });
+
+  o << std::setprecision(9) << R"({"version":"v1","metadata":{)"
+    << R"("generator":"h2load )" << NGHTTP2_VERSION << R"(")"
+    << "},"
+    << R"("measurements":{)"
+    << R"("duration":)" << duration.count() << ","
+    << R"("request_per_second":)" << rps << ","
+    << R"("bytes_per_second":)" << bps << ","
+    << R"("requests":{)"
+    << R"("total":)" << stats.req_todo << ","
+    << R"("started":)" << stats.req_started << ","
+    << R"("done":)" << stats.req_done << ","
+    << R"("succeeded":)" << stats.req_status_success << ","
+    << R"("failed":)" << stats.req_failed << ","
+    << R"("errored":)" << stats.req_error << ","
+    << R"("timeout":)" << stats.req_timedout << "},"
+    << R"("status_codes":{)"
+    << R"("2xx":)" << stats.status[2] << ","
+    << R"("3xx":)" << stats.status[3] << ","
+    << R"("4xx":)" << stats.status[4] << ","
+    << R"("5xx":)" << stats.status[5] << "},"
+    << R"("traffic":{)"
+    << R"("total":)" << stats.bytes_total << ","
+    << R"("headers":)" << stats.bytes_head << ","
+    << R"("headers_decompressed":)" << stats.bytes_head_decomp << ","
+    << R"("data":)" << stats.bytes_body << "},";
+
+#ifdef ENABLE_HTTP3
+  if (config.is_quic()) {
+    o << R"("udp_datagram":{)"
+      << R"("sent":)" << stats.udp_dgram_sent << ","
+      << R"("recv":)" << stats.udp_dgram_recv << "},";
+  }
+#endif // ENABLE_HTTP3
+
+  o << R"("performance":{)";
+  write_sd_stat_result(o, "request", ts.request);
+  o << ",";
+  write_sd_stat_result(o, "connect", ts.connect);
+  o << ",";
+  write_sd_stat_result(o, "ttfb", ts.ttfb);
+  o << ",";
+  write_sd_stat_result(o, "request_per_second", ts.rps);
+
+#ifdef ENABLE_HTTP3
+  if (config.is_quic()) {
+    o << ",";
+    write_sd_stat_result(o, "min_rtt", ts.min_rtt);
+    o << ",";
+    write_sd_stat_result(o, "smoothed_rtt", ts.smoothed_rtt);
+    o << ",";
+    write_sd_stat_result(o, "packets_sent", ts.pkt_sent);
+    o << ",";
+    write_sd_stat_result(o, "packets_recv", ts.pkt_recv);
+    o << ",";
+    write_sd_stat_result(o, "packets_lost", ts.pkt_lost);
+    o << ",";
+    write_sd_stat_result(o, "gro_packets", ts.gro_pkts);
+  }
+#endif // ENABLE_HTTP3
+
+  o << "}}}";
+}
+} // namespace
+
+namespace {
 void print_version(std::ostream &out) {
   out << "h2load nghttp2/" NGHTTP2_VERSION << std::endl;
 }
@@ -2139,9 +2748,7 @@ benchmarking tool for HTTP/2 server)"
 }
 } // namespace
 
-namespace {
 constexpr auto DEFAULT_ALPN_LIST = "h2,http/1.1"sv;
-} // namespace
 
 namespace {
 void print_help(std::ostream &out) {
@@ -2311,6 +2918,8 @@ Options:
   --h1        Short        hand        for        --alpn-list=http/1.1
               --no-tls-proto=http/1.1,    which   effectively    force
               http/1.1 for both http and https URI.
+  --h3        Short hand for  --alpn-list=h3, which effectively forces
+              HTTP/3.
   --header-table-size=<SIZE>
               Specify decoder header table size.
               Default: )"
@@ -2353,6 +2962,18 @@ Options:
   --sni=<DNSNAME>
               Send  <DNSNAME> in  TLS  SNI, overriding  the host  name
               specified in URI.
+  --histogram
+              Plot histogram for performance statistics.
+  --tls-session-file=<PATH>
+              Read  TLS session  from <PATH>,  and set  it to  all TLS
+              connections to  perform the  session resumption.   It is
+              also used  to store  the new TLS  session.  At  most one
+              session is written to the given file.
+  --output-file=<PATH>
+              Write the measurement results  to <PATH> in JSON format.
+              This  basically includes  all  numbers  reported to  the
+              normal   output.     In   addition,    for   performance
+              measurements, all raw samples are included.
   -v, --verbose
               Output debug information.
   --version   Display version information and exit.
@@ -2417,6 +3038,10 @@ int main(int argc, char **argv) {
       {"ktls", no_argument, &flag, 18},
       {"alpn-list", required_argument, &flag, 19},
       {"sni", required_argument, &flag, 20},
+      {"histogram", no_argument, &flag, 21},
+      {"tls-session-file", required_argument, &flag, 22},
+      {"output-file", required_argument, &flag, 23},
+      {"h3", no_argument, &flag, 24},
       {nullptr, 0, nullptr, 0}};
     int option_index = 0;
     auto c = getopt_long(argc, argv,
@@ -2769,6 +3394,22 @@ int main(int argc, char **argv) {
         // --sni
         config.sni = optarg;
         break;
+      case 21:
+        // --histogram
+        config.histogram = true;
+        break;
+      case 22:
+        // --tls-session-file
+        config.tls_session_file = optarg;
+        break;
+      case 23:
+        // --output-file
+        config.output_file = optarg;
+        break;
+      case 24:
+        // --h3
+        config.alpn_list = util::parse_config_str_list("h3"sv);
+        break;
       }
       break;
     default:
@@ -2800,6 +3441,13 @@ int main(int argc, char **argv) {
 
   if (config.is_quic() && !window_bits_set_manually) {
     config.window_bits = 24;
+  }
+
+  if (!config.tls_session_file.empty()) {
+    auto session = read_tls_session(config.tls_session_file);
+    if (session) {
+      config.tls_session = *session;
+    }
   }
 
   std::vector<std::string> reqlines;
@@ -3075,6 +3723,12 @@ int main(int argc, char **argv) {
     exit(EXIT_FAILURE);
   }
 
+  if (!config.tls_session_file.empty()) {
+    SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_CLIENT |
+                                              SSL_SESS_CACHE_NO_INTERNAL);
+    SSL_CTX_sess_set_new_cb(ssl_ctx, new_session_cb);
+  }
+
 #if defined(NGHTTP2_OPENSSL_IS_BORINGSSL) && defined(HAVE_LIBBROTLI)
   if (!SSL_CTX_add_cert_compression_alg(
         ssl_ctx, nghttp2::tls::CERTIFICATE_COMPRESSION_ALGO_BROTLI,
@@ -3241,7 +3895,7 @@ int main(int argc, char **argv) {
                                     nclients, rate, max_samples_per_thread));
     auto &worker = workers.back();
     futures.push_back(
-      std::async(std::launch::async, [&worker, &mu, &cv, &ready]() {
+      std::async(std::launch::async, [&worker, &mu, &cv, &ready] {
         {
           std::unique_lock<std::mutex> ulk(mu);
           cv.wait(ulk, [&ready] { return ready; });
@@ -3283,6 +3937,8 @@ int main(int argc, char **argv) {
   auto end = std::chrono::steady_clock::now();
   auto duration =
     std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+
+  workers[0]->write_tls_session(config.tls_session_file);
 
   Stats stats(0, 0);
   for (const auto &w : workers) {
@@ -3369,30 +4025,27 @@ traffic: )" << util::utos_funit(as_unsigned(stats.bytes_total))
               << stats.udp_dgram_recv << " received" << std::endl;
   }
 #endif // defined(ENABLE_HTTP3)
-  std::cout
-    << R"(                     min         max         mean         sd        +/- sd
-time for request: )"
-    << std::setw(10) << util::format_duration(ts.request.min) << "  "
-    << std::setw(10) << util::format_duration(ts.request.max) << "  "
-    << std::setw(10) << util::format_duration(ts.request.mean) << "  "
-    << std::setw(10) << util::format_duration(ts.request.sd) << std::setw(9)
-    << util::dtos(ts.request.within_sd) << "%"
-    << "\ntime for connect: " << std::setw(10)
-    << util::format_duration(ts.connect.min) << "  " << std::setw(10)
-    << util::format_duration(ts.connect.max) << "  " << std::setw(10)
-    << util::format_duration(ts.connect.mean) << "  " << std::setw(10)
-    << util::format_duration(ts.connect.sd) << std::setw(9)
-    << util::dtos(ts.connect.within_sd) << "%"
-    << "\ntime to 1st byte: " << std::setw(10)
-    << util::format_duration(ts.ttfb.min) << "  " << std::setw(10)
-    << util::format_duration(ts.ttfb.max) << "  " << std::setw(10)
-    << util::format_duration(ts.ttfb.mean) << "  " << std::setw(10)
-    << util::format_duration(ts.ttfb.sd) << std::setw(9)
-    << util::dtos(ts.ttfb.within_sd) << "%"
-    << "\nreq/s           : " << std::setw(10) << ts.rps.min << "  "
-    << std::setw(10) << ts.rps.max << "  " << std::setw(10) << ts.rps.mean
-    << "  " << std::setw(10) << ts.rps.sd << std::setw(9)
-    << util::dtos(ts.rps.within_sd) << "%" << std::endl;
+  std::cout << "                 min         max         median     p95    "
+               "    p99        mean         sd        +/- sd\n";
+
+  output_sd_stat_duration(std::cout, "request"sv, ts.request);
+  output_sd_stat_duration(std::cout, "connect"sv, ts.connect);
+  output_sd_stat_duration(std::cout, "TTFB"sv, ts.ttfb);
+  output_sd_stat(std::cout, "req/s"sv, ts.rps);
+#ifdef ENABLE_HTTP3
+  if (config.is_quic()) {
+    output_sd_stat_duration(std::cout, "min RTT"sv, ts.min_rtt);
+    output_sd_stat_duration(std::cout, "smoothed RTT"sv, ts.smoothed_rtt);
+    output_sd_stat(std::cout, "packets sent"sv, ts.pkt_sent);
+    output_sd_stat(std::cout, "packets recv"sv, ts.pkt_recv);
+    output_sd_stat(std::cout, "packets lost"sv, ts.pkt_lost);
+    output_sd_stat(std::cout, "GRO packets"sv, ts.gro_pkts);
+  }
+#endif // ENABLE_HTTP3
+
+  if (!config.output_file.empty()) {
+    write_result(config.output_file, duration, rps, bps, stats, ts);
+  }
 
   SSL_CTX_free(ssl_ctx);
 

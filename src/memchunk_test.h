@@ -40,11 +40,14 @@ extern const MunitSuite memchunk_suite;
 munit_void_test_decl(test_pool_recycle)
 munit_void_test_decl(test_memchunks_append)
 munit_void_test_decl(test_memchunks_drain)
+munit_void_test_decl(test_memchunks_remove)
 munit_void_test_decl(test_memchunks_riovec)
+munit_void_test_decl(test_memchunks_peek)
 munit_void_test_decl(test_memchunks_recycle)
 munit_void_test_decl(test_memchunks_reset)
 munit_void_test_decl(test_memchunks_reserve)
 munit_void_test_decl(test_memchunkbuffer_drain_reset)
+munit_void_test_decl(test_memchunkbuffer_peek)
 
 } // namespace nghttp2
 

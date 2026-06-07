@@ -89,7 +89,6 @@ inline constexpr size_t SHRPX_QUIC_DECRYPTED_DCIDLEN =
 inline constexpr size_t SHRPX_QUIC_SCIDLEN =
   SHRPX_QUIC_CID_WORKER_ID_OFFSET + SHRPX_QUIC_DECRYPTED_DCIDLEN;
 inline constexpr size_t SHRPX_QUIC_CID_ENCRYPTION_KEYLEN = 16;
-inline constexpr size_t SHRPX_QUIC_CONN_CLOSE_PKTLEN = 256;
 inline constexpr size_t SHRPX_QUIC_STATELESS_RESET_BURST = 100;
 inline constexpr size_t SHRPX_QUIC_SECRET_RESERVEDLEN = 4;
 inline constexpr size_t SHRPX_QUIC_SECRETLEN = 32;
@@ -97,26 +96,15 @@ inline constexpr size_t SHRPX_QUIC_SALTLEN = 32;
 inline constexpr uint8_t SHRPX_QUIC_DCID_KM_ID_MASK = 0xe0;
 
 struct WorkerID {
-  union {
-    struct {
-      uint32_t server;
-      uint16_t worker_process;
-      uint16_t thread;
-    };
-    uint64_t worker;
-  };
+  uint32_t server;
+  uint16_t worker_process;
+  uint16_t thread;
+
+  auto operator<=>(const WorkerID &) const = default;
 };
 
 static_assert(sizeof(WorkerID) == SHRPX_QUIC_WORKER_IDLEN,
               "WorkerID length assertion failure");
-
-inline bool operator==(const WorkerID &lhd, const WorkerID &rhd) {
-  return lhd.worker == rhd.worker;
-}
-
-inline bool operator!=(const WorkerID &lhd, const WorkerID &rhd) {
-  return lhd.worker != rhd.worker;
-}
 
 struct ConnectionID {
   WorkerID worker;
@@ -136,10 +124,11 @@ int generate_quic_retry_connection_id(ngtcp2_cid &cid, uint32_t server_id,
 int generate_quic_connection_id(ngtcp2_cid &cid, const WorkerID &wid,
                                 uint8_t km_id, EVP_CIPHER_CTX *ctx);
 
-int encrypt_quic_connection_id(uint8_t *dest, const uint8_t *src,
+int encrypt_quic_connection_id(std::span<uint8_t> dest,
+                               std::span<const uint8_t> src,
                                EVP_CIPHER_CTX *ctx);
 
-int decrypt_quic_connection_id(ConnectionID &dest, const uint8_t *src,
+int decrypt_quic_connection_id(ConnectionID &dest, std::span<const uint8_t> src,
                                EVP_CIPHER_CTX *ctx);
 
 int generate_quic_hashed_connection_id(ngtcp2_cid &dest,
@@ -147,9 +136,9 @@ int generate_quic_hashed_connection_id(ngtcp2_cid &dest,
                                        const Address &local_addr,
                                        const ngtcp2_cid &cid);
 
-int generate_quic_stateless_reset_token(uint8_t *token, const ngtcp2_cid &cid,
-                                        const uint8_t *secret,
-                                        size_t secretlen);
+int generate_quic_stateless_reset_token(
+  std::span<uint8_t, NGTCP2_STATELESS_RESET_TOKENLEN> token,
+  const ngtcp2_cid &cid, std::span<const uint8_t> secret);
 
 std::optional<std::span<const uint8_t>>
 generate_retry_token(std::span<uint8_t> token, uint32_t version,

@@ -54,14 +54,12 @@ const auto configrevision_endpoint = APIEndpoint{
 };
 } // namespace
 
-namespace {
 // The method string.  This must be same order of APIMethod.
 constexpr std::string_view API_METHOD_STRING[] = {
   "GET"sv,
   "POST"sv,
   "PUT"sv,
 };
-} // namespace
 
 APIDownstreamConnection::APIDownstreamConnection(Worker *worker)
   : worker_(worker), api_(nullptr), fd_(-1), shutdown_read_(false) {}
@@ -73,8 +71,8 @@ APIDownstreamConnection::~APIDownstreamConnection() {
 }
 
 int APIDownstreamConnection::attach_downstream(Downstream *downstream) {
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Attaching to DOWNSTREAM:" << downstream;
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Attaching to DOWNSTREAM:" << downstream;
   }
 
   downstream_ = downstream;
@@ -83,15 +81,15 @@ int APIDownstreamConnection::attach_downstream(Downstream *downstream) {
 }
 
 void APIDownstreamConnection::detach_downstream(Downstream *downstream) {
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Detaching from DOWNSTREAM:" << downstream;
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Detaching from DOWNSTREAM:" << downstream;
   }
   downstream_ = nullptr;
 }
 
 int APIDownstreamConnection::send_reply(unsigned int http_status,
                                         APIStatusCode api_status,
-                                        const std::string_view &data) {
+                                        std::string_view data) {
   shutdown_read_ = true;
 
   auto upstream = downstream_->get_upstream();
@@ -150,7 +148,7 @@ int APIDownstreamConnection::send_reply(unsigned int http_status,
     break;
   }
 
-  if (upstream->send_reply(downstream_, buf.data(), buf.size()) != 0) {
+  if (upstream->send_reply(downstream_, buf) != 0) {
     return -1;
   }
 
@@ -158,7 +156,7 @@ int APIDownstreamConnection::send_reply(unsigned int http_status,
 }
 
 namespace {
-const APIEndpoint *lookup_api(const std::string_view &path) {
+const APIEndpoint *lookup_api(std::string_view path) {
   switch (path.size()) {
   case 26:
     switch (path[25]) {
@@ -292,8 +290,8 @@ int APIDownstreamConnection::error_method_not_allowed() {
   return send_reply(405, APIStatusCode::FAILURE);
 }
 
-int APIDownstreamConnection::push_upload_data_chunk(const uint8_t *data,
-                                                    size_t datalen) {
+int APIDownstreamConnection::push_upload_data_chunk(
+  std::span<const uint8_t> data) {
   if (shutdown_read_ || !api_->require_body) {
     return 0;
   }
@@ -308,14 +306,20 @@ int APIDownstreamConnection::push_upload_data_chunk(const uint8_t *data,
   }
 
   ssize_t nwrite;
-  while ((nwrite = write(fd_, data, datalen)) == -1 && errno == EINTR)
-    ;
-  if (nwrite == -1) {
-    auto error = errno;
-    LOG(ERROR) << "Could not write API request body: errno=" << error;
-    send_reply(500, APIStatusCode::FAILURE);
 
-    return 0;
+  for (; !data.empty();) {
+    while ((nwrite = write(fd_, data.data(), data.size())) == -1 &&
+           errno == EINTR)
+      ;
+    if (nwrite == -1) {
+      auto error = errno;
+      Log{ERROR} << "Could not write API request body: errno=" << error;
+      send_reply(500, APIStatusCode::FAILURE);
+
+      return 0;
+    }
+
+    data = data.subspan(as_unsigned(nwrite));
   }
 
   // We don't have to call Upstream::resume_read() here, because
@@ -349,7 +353,9 @@ int APIDownstreamConnection::handle_backendconfig() {
     return 0;
   }
 
-  auto unmapper = defer(munmap, rp, req.recv_body_length);
+  auto unmapper = defer([rp, size = req.recv_body_length] {
+    munmap(rp, static_cast<size_t>(size));
+  });
 
   Config new_config{};
   new_config.conn.downstream = std::make_shared<DownstreamConfig>();

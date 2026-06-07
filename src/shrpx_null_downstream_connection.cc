@@ -36,8 +36,8 @@ NullDownstreamConnection::NullDownstreamConnection(
 NullDownstreamConnection::~NullDownstreamConnection() {}
 
 int NullDownstreamConnection::attach_downstream(Downstream *downstream) {
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Attaching to DOWNSTREAM:" << downstream;
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Attaching to DOWNSTREAM:" << downstream;
   }
 
   downstream_ = downstream;
@@ -46,16 +46,16 @@ int NullDownstreamConnection::attach_downstream(Downstream *downstream) {
 }
 
 void NullDownstreamConnection::detach_downstream(Downstream *downstream) {
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Detaching from DOWNSTREAM:" << downstream;
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Detaching from DOWNSTREAM:" << downstream;
   }
   downstream_ = nullptr;
 }
 
 int NullDownstreamConnection::push_request_headers() { return 0; }
 
-int NullDownstreamConnection::push_upload_data_chunk(const uint8_t *data,
-                                                     size_t datalen) {
+int NullDownstreamConnection::push_upload_data_chunk(
+  std::span<const uint8_t> data) {
   return 0;
 }
 

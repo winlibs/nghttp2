@@ -133,7 +133,7 @@ using DownstreamKey = std::tuple<
 namespace {
 DownstreamKey
 create_downstream_key(const std::shared_ptr<SharedDownstreamAddr> &shared_addr,
-                      const std::string_view &mruby_file) {
+                      std::string_view mruby_file) {
   DownstreamKey dkey;
 
   auto &addrs = std::get<0>(dkey);
@@ -367,7 +367,7 @@ void Worker::replace_downstream_config(
 
       for (auto &addr : shared_addr->addrs) {
         addr.connect_blocker = std::make_unique<ConnectBlocker>(
-          randgen_, loop_, nullptr, [shared_addr_ptr, &addr]() {
+          randgen_, loop_, nullptr, [shared_addr_ptr, &addr] {
             if (!addr.queued) {
               if (!addr.wg) {
                 return;
@@ -446,8 +446,8 @@ void Worker::replace_downstream_config(
     } else {
       auto &g = *(std::ranges::begin(downstream_addr_groups_) +
                   as_signed((*it).second));
-      if (LOG_ENABLED(INFO)) {
-        LOG(INFO) << dst->pattern << " shares the same backend group with "
+      if (log_enabled(INFO)) {
+        Log{INFO} << dst->pattern << " shares the same backend group with "
                   << g->pattern;
       }
       dst->shared_addr = g->shared_addr;
@@ -520,19 +520,18 @@ void Worker::process_events() {
 
   switch (wev.type) {
   case WorkerEventType::REOPEN_LOG:
-    WLOG(NOTICE, this) << "Reopening log files: worker process (thread " << this
-                       << ")";
+    Log{NOTICE, this} << "Reopening log files: worker process (thread " << this
+                      << ")";
 
     reopen_log_files(config->logging);
 
     break;
   case WorkerEventType::GRACEFUL_SHUTDOWN:
-    WLOG(NOTICE, this) << "Graceful shutdown commencing";
+    Log{NOTICE, this} << "Graceful shutdown commencing";
 
     graceful_shutdown_ = true;
 
-    accept_pending_connection();
-    delete_listener();
+    drain_and_delete_listener();
 
     if (worker_stat_.num_connections == 0 &&
         worker_stat_.num_close_waits == 0) {
@@ -543,7 +542,7 @@ void Worker::process_events() {
 
     break;
   case WorkerEventType::REPLACE_DOWNSTREAM:
-    WLOG(NOTICE, this) << "Replace downstream";
+    Log{NOTICE, this} << "Replace downstream";
 
     replace_downstream_config(wev.downstreamconf);
 
@@ -555,13 +554,13 @@ void Worker::process_events() {
     if (wev.quic_pkt->upstream_addr_index == static_cast<size_t>(-1)) {
       faddr = find_quic_upstream_addr(wev.quic_pkt->local_addr);
       if (faddr == nullptr) {
-        LOG(ERROR) << "No suitable upstream address found";
+        Log{ERROR} << "No suitable upstream address found";
 
         break;
       }
     } else if (quic_upstream_addrs_.size() <=
                wev.quic_pkt->upstream_addr_index) {
-      LOG(ERROR) << "upstream_addr_index is too large";
+      Log{ERROR} << "upstream_addr_index is too large";
 
       break;
     } else {
@@ -576,15 +575,15 @@ void Worker::process_events() {
   }
 #endif // defined(ENABLE_HTTP3)
   default:
-    if (LOG_ENABLED(INFO)) {
-      WLOG(INFO, this) << "unknown event type " << static_cast<int>(wev.type);
+    if (log_enabled(INFO)) {
+      Log{INFO, this} << "unknown event type " << static_cast<int>(wev.type);
     }
   }
 }
 
 void Worker::enable_listener() {
-  if (LOG_ENABLED(INFO)) {
-    WLOG(INFO, this) << "Enable listeners";
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Enable listeners";
   }
 
   for (auto &a : listeners_) {
@@ -593,8 +592,8 @@ void Worker::enable_listener() {
 }
 
 void Worker::disable_listener() {
-  if (LOG_ENABLED(INFO)) {
-    WLOG(INFO, this) << "Disable listeners";
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Disable listeners";
   }
 
   for (auto &a : listeners_) {
@@ -727,12 +726,13 @@ int Worker::setup_server_socket() {
   return 0;
 }
 
-void Worker::delete_listener() { listeners_.clear(); }
-
-void Worker::accept_pending_connection() {
+void Worker::drain_and_delete_listener() {
   for (auto &l : listeners_) {
-    l->accept_connection();
+    l->drain_connection();
+    l.reset(nullptr);
   }
+
+  listeners_.clear();
 }
 
 int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
@@ -765,13 +765,13 @@ int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
   }
 #endif // defined(AI_ADDRCONFIG)
   if (rv != 0) {
-    LOG(FATAL) << "Unable to get IPv" << (faddr.family == AF_INET ? "4" : "6")
+    Log{FATAL} << "Unable to get IPv" << (faddr.family == AF_INET ? "4" : "6")
                << " address for " << faddr.host << ", port " << faddr.port
                << ": " << gai_strerror(rv);
     return -1;
   }
 
-  auto res_d = defer(freeaddrinfo, res);
+  auto res_d = defer([res] { freeaddrinfo(res); });
 
   std::array<char, NI_MAXHOST> host;
 
@@ -780,7 +780,7 @@ int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
                      nullptr, 0, NI_NUMERICHOST);
 
     if (rv != 0) {
-      LOG(WARN) << "getnameinfo() failed: " << gai_strerror(rv);
+      Log{WARN} << "getnameinfo() failed: " << gai_strerror(rv);
       continue;
     }
 
@@ -789,7 +789,7 @@ int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
                 rp->ai_protocol);
     if (fd == -1) {
       auto error = errno;
-      LOG(WARN) << "socket() syscall failed: "
+      Log{WARN} << "socket() syscall failed: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       continue;
     }
@@ -797,18 +797,18 @@ int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
     fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
     if (fd == -1) {
       auto error = errno;
-      LOG(WARN) << "socket() syscall failed: "
+      Log{WARN} << "socket() syscall failed: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       continue;
     }
     util::make_socket_nonblocking(fd);
     util::make_socket_closeonexec(fd);
 #endif // !defined(SOCK_NONBLOCK)
-    int val = 1;
+    const int val = 1;
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val,
                    static_cast<socklen_t>(sizeof(val))) == -1) {
       auto error = errno;
-      LOG(WARN) << "Failed to set SO_REUSEADDR option to listener socket: "
+      Log{WARN} << "Failed to set SO_REUSEADDR option to listener socket: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       close(fd);
       continue;
@@ -817,7 +817,7 @@ int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &val,
                    static_cast<socklen_t>(sizeof(val))) == -1) {
       auto error = errno;
-      LOG(WARN) << "Failed to set SO_REUSEPORT option to listener socket: "
+      Log{WARN} << "Failed to set SO_REUSEPORT option to listener socket: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       close(fd);
       continue;
@@ -828,7 +828,7 @@ int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
       if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &val,
                      static_cast<socklen_t>(sizeof(val))) == -1) {
         auto error = errno;
-        LOG(WARN) << "Failed to set IPV6_V6ONLY option to listener socket: "
+        Log{WARN} << "Failed to set IPV6_V6ONLY option to listener socket: "
                   << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         continue;
@@ -837,11 +837,10 @@ int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
 #endif // defined(IPV6_V6ONLY)
 
 #ifdef TCP_DEFER_ACCEPT
-    val = 3;
     if (setsockopt(fd, IPPROTO_TCP, TCP_DEFER_ACCEPT, &val,
                    static_cast<socklen_t>(sizeof(val))) == -1) {
       auto error = errno;
-      LOG(WARN) << "Failed to set TCP_DEFER_ACCEPT option to listener socket: "
+      Log{WARN} << "Failed to set TCP_DEFER_ACCEPT option to listener socket: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
     }
 #endif // defined(TCP_DEFER_ACCEPT)
@@ -851,25 +850,25 @@ int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
     // ports will fail with permission denied error.
     if (bind(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
       auto error = errno;
-      LOG(WARN) << "bind() syscall failed: "
+      Log{WARN} << "bind() syscall failed: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       close(fd);
       continue;
     }
 
     if (listenerconf.fastopen > 0) {
-      val = listenerconf.fastopen;
+      const int val = listenerconf.fastopen;
       if (setsockopt(fd, IPPROTO_TCP, TCP_FASTOPEN, &val,
                      static_cast<socklen_t>(sizeof(val))) == -1) {
         auto error = errno;
-        LOG(WARN) << "Failed to set TCP_FASTOPEN option to listener socket: "
+        Log{WARN} << "Failed to set TCP_FASTOPEN option to listener socket: "
                   << xsi_strerror(error, errbuf.data(), errbuf.size());
       }
     }
 
     if (listen(fd, listenerconf.backlog) == -1) {
       auto error = errno;
-      LOG(WARN) << "listen() syscall failed: "
+      Log{WARN} << "listen() syscall failed: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       close(fd);
       continue;
@@ -879,7 +878,7 @@ int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
   }
 
   if (!rp) {
-    LOG(FATAL) << "Listening " << (faddr.family == AF_INET ? "IPv4" : "IPv6")
+    Log{FATAL} << "Listening " << (faddr.family == AF_INET ? "IPv4" : "IPv6")
                << " socket failed";
 
     return -1;
@@ -889,7 +888,7 @@ int Worker::create_tcp_server_socket(UpstreamAddr &faddr) {
   faddr.hostport = util::make_http_hostport(
     mod_config()->balloc, std::string_view{host.data()}, faddr.port);
 
-  LOG(NOTICE) << "Listening on " << faddr.hostport
+  Log{NOTICE} << "Listening on " << faddr.hostport
               << (faddr.tls ? ", tls" : "");
 
   return 0;
@@ -954,7 +953,7 @@ int Worker::setup_quic_server_socket() {
       const auto &a = quic_upstream_addrs_[i];
 
       if (addr.hostport == a.hostport) {
-        LOG(FATAL)
+        Log{FATAL}
           << "QUIC frontend endpoint must be unique: a duplicate found for "
           << addr.hostport;
 
@@ -1109,13 +1108,13 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
   }
 #  endif // defined(AI_ADDRCONFIG)
   if (rv != 0) {
-    LOG(FATAL) << "Unable to get IPv" << (faddr.family == AF_INET ? "4" : "6")
+    Log{FATAL} << "Unable to get IPv" << (faddr.family == AF_INET ? "4" : "6")
                << " address for " << faddr.host << ", port " << faddr.port
                << ": " << gai_strerror(rv);
     return -1;
   }
 
-  auto res_d = defer(freeaddrinfo, res);
+  auto res_d = defer([res] { freeaddrinfo(res); });
 
   std::array<char, NI_MAXHOST> host;
 
@@ -1123,7 +1122,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
     rv = getnameinfo(rp->ai_addr, rp->ai_addrlen, host.data(), host.size(),
                      nullptr, 0, NI_NUMERICHOST);
     if (rv != 0) {
-      LOG(WARN) << "getnameinfo() failed: " << gai_strerror(rv);
+      Log{WARN} << "getnameinfo() failed: " << gai_strerror(rv);
       continue;
     }
 
@@ -1132,7 +1131,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
                 rp->ai_protocol);
     if (fd == -1) {
       auto error = errno;
-      LOG(WARN) << "socket() syscall failed: "
+      Log{WARN} << "socket() syscall failed: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       continue;
     }
@@ -1140,7 +1139,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
     fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
     if (fd == -1) {
       auto error = errno;
-      LOG(WARN) << "socket() syscall failed: "
+      Log{WARN} << "socket() syscall failed: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       continue;
     }
@@ -1152,7 +1151,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val,
                    static_cast<socklen_t>(sizeof(val))) == -1) {
       auto error = errno;
-      LOG(WARN) << "Failed to set SO_REUSEADDR option to listener socket: "
+      Log{WARN} << "Failed to set SO_REUSEADDR option to listener socket: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       close(fd);
       continue;
@@ -1161,7 +1160,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &val,
                    static_cast<socklen_t>(sizeof(val))) == -1) {
       auto error = errno;
-      LOG(WARN) << "Failed to set SO_REUSEPORT option to listener socket: "
+      Log{WARN} << "Failed to set SO_REUSEPORT option to listener socket: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       close(fd);
       continue;
@@ -1172,7 +1171,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &val,
                      static_cast<socklen_t>(sizeof(val))) == -1) {
         auto error = errno;
-        LOG(WARN) << "Failed to set IPV6_V6ONLY option to listener socket: "
+        Log{WARN} << "Failed to set IPV6_V6ONLY option to listener socket: "
                   << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         continue;
@@ -1182,7 +1181,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &val,
                      static_cast<socklen_t>(sizeof(val))) == -1) {
         auto error = errno;
-        LOG(WARN)
+        Log{WARN}
           << "Failed to set IPV6_RECVPKTINFO option to listener socket: "
           << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
@@ -1192,7 +1191,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &val,
                      static_cast<socklen_t>(sizeof(val))) == -1) {
         auto error = errno;
-        LOG(WARN) << "Failed to set IPV6_RECVTCLASS option to listener socket: "
+        Log{WARN} << "Failed to set IPV6_RECVTCLASS option to listener socket: "
                   << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         continue;
@@ -1203,7 +1202,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       if (setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &mtu_disc,
                      static_cast<socklen_t>(sizeof(mtu_disc))) == -1) {
         auto error = errno;
-        LOG(WARN)
+        Log{WARN}
           << "Failed to set IPV6_MTU_DISCOVER option to listener socket: "
           << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
@@ -1214,7 +1213,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       if (setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &val,
                      static_cast<socklen_t>(sizeof(val))) == -1) {
         auto error = errno;
-        LOG(WARN) << "Failed to set IP_PKTINFO option to listener socket: "
+        Log{WARN} << "Failed to set IP_PKTINFO option to listener socket: "
                   << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         continue;
@@ -1223,7 +1222,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       if (setsockopt(fd, IPPROTO_IP, IP_RECVTOS, &val,
                      static_cast<socklen_t>(sizeof(val))) == -1) {
         auto error = errno;
-        LOG(WARN) << "Failed to set IP_RECVTOS option to listener socket: "
+        Log{WARN} << "Failed to set IP_RECVTOS option to listener socket: "
                   << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         continue;
@@ -1234,7 +1233,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       if (setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &mtu_disc,
                      static_cast<socklen_t>(sizeof(mtu_disc))) == -1) {
         auto error = errno;
-        LOG(WARN) << "Failed to set IP_MTU_DISCOVER option to listener socket: "
+        Log{WARN} << "Failed to set IP_MTU_DISCOVER option to listener socket: "
                   << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         continue;
@@ -1245,7 +1244,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
 #  ifdef UDP_GRO
     if (setsockopt(fd, IPPROTO_UDP, UDP_GRO, &val, sizeof(val)) == -1) {
       auto error = errno;
-      LOG(WARN) << "Failed to set UDP_GRO option to listener socket: "
+      Log{WARN} << "Failed to set UDP_GRO option to listener socket: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       close(fd);
       continue;
@@ -1254,7 +1253,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
 
     if (bind(fd, rp->ai_addr, rp->ai_addrlen) == -1) {
       auto error = errno;
-      LOG(WARN) << "bind() syscall failed: "
+      Log{WARN} << "bind() syscall failed: "
                 << xsi_strerror(error, errbuf.data(), errbuf.size());
       close(fd);
       continue;
@@ -1271,7 +1270,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       auto obj = bpf_object__open_file(bpfconf.prog_file.data(), nullptr);
       if (!obj) {
         auto error = errno;
-        LOG(FATAL) << "Failed to open bpf object file: "
+        Log{FATAL} << "Failed to open bpf object file: "
                    << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1280,7 +1279,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       rv = bpf_object__load(obj);
       if (rv != 0) {
         auto error = errno;
-        LOG(FATAL) << "Failed to load bpf object file: "
+        Log{FATAL} << "Failed to load bpf object file: "
                    << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1289,7 +1288,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       auto prog = bpf_object__find_program_by_name(obj, "select_reuseport");
       if (!prog) {
         auto error = errno;
-        LOG(FATAL) << "Failed to find sk_reuseport program: "
+        Log{FATAL} << "Failed to find sk_reuseport program: "
                    << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1303,7 +1302,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
         bpf_object__find_map_by_name(obj, "reuseport_array");
       if (!ref.reuseport_array) {
         auto error = errno;
-        LOG(FATAL) << "Failed to get reuseport_array: "
+        Log{FATAL} << "Failed to get reuseport_array: "
                    << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1312,7 +1311,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       ref.worker_id_map = bpf_object__find_map_by_name(obj, "worker_id_map");
       if (!ref.worker_id_map) {
         auto error = errno;
-        LOG(FATAL) << "Failed to get worker_id_map: "
+        Log{FATAL} << "Failed to get worker_id_map: "
                    << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1321,7 +1320,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       auto sk_info = bpf_object__find_map_by_name(obj, "sk_info");
       if (!sk_info) {
         auto error = errno;
-        LOG(FATAL) << "Failed to get sk_info: "
+        Log{FATAL} << "Failed to get sk_info: "
                    << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1334,7 +1333,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
                                 sizeof(num_socks), BPF_ANY);
       if (rv != 0) {
         auto error = errno;
-        LOG(FATAL) << "Failed to update sk_info: "
+        Log{FATAL} << "Failed to update sk_info: "
                    << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1346,7 +1345,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
       auto aes_key = bpf_object__find_map_by_name(obj, "aes_key");
       if (!aes_key) {
         auto error = errno;
-        LOG(FATAL) << "Failed to get aes_key: "
+        Log{FATAL} << "Failed to get aes_key: "
                    << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1362,7 +1361,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
                              aes_exp_key.size(), BPF_ANY);
       if (rv != 0) {
         auto error = errno;
-        LOG(FATAL) << "Failed to update aes_key: "
+        Log{FATAL} << "Failed to update aes_key: "
                    << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1372,7 +1371,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
 
       if (setsockopt(fd, SOL_SOCKET, SO_ATTACH_REUSEPORT_EBPF, &prog_fd,
                      static_cast<socklen_t>(sizeof(prog_fd))) == -1) {
-        LOG(FATAL) << "Failed to attach bpf program: "
+        Log{FATAL} << "Failed to attach bpf program: "
                    << xsi_strerror(errno, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1387,7 +1386,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
                                 sizeof(sk_index), &fd, sizeof(fd), BPF_NOEXIST);
       if (rv != 0) {
         auto error = errno;
-        LOG(FATAL) << "Failed to update reuseport_array: "
+        Log{FATAL} << "Failed to update reuseport_array: "
                    << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1398,7 +1397,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
                              &sk_index, sizeof(sk_index), BPF_NOEXIST);
       if (rv != 0) {
         auto error = errno;
-        LOG(FATAL) << "Failed to update worker_id_map: "
+        Log{FATAL} << "Failed to update worker_id_map: "
                    << xsi_strerror(error, errbuf.data(), errbuf.size());
         close(fd);
         return -1;
@@ -1410,7 +1409,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
   }
 
   if (!rp) {
-    LOG(FATAL) << "Listening " << (faddr.family == AF_INET ? "IPv4" : "IPv6")
+    Log{FATAL} << "Listening " << (faddr.family == AF_INET ? "IPv4" : "IPv6")
                << " socket failed";
 
     return -1;
@@ -1419,22 +1418,26 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
   faddr.fd = fd;
   faddr.hostport = util::make_http_hostport(
     mod_config()->balloc, std::string_view{host.data()}, faddr.port);
-  memcpy(&faddr.sockaddr, rp->ai_addr, rp->ai_addrlen);
+  faddr.sockaddr.set(rp->ai_addr);
 
   switch (faddr.family) {
   case AF_INET: {
     static constexpr auto inaddr_any = INADDR_ANY;
 
+    const auto &inaddr = std::get<sockaddr_in>(faddr.sockaddr.skaddr);
+
     faddr.sockaddr_any =
-      memcmp(&inaddr_any, &faddr.sockaddr.in.sin_addr, sizeof(inaddr_any)) == 0;
+      memcmp(&inaddr_any, &inaddr.sin_addr, sizeof(inaddr_any)) == 0;
 
     break;
   }
   case AF_INET6: {
     static constexpr in6_addr in6addr_any = IN6ADDR_ANY_INIT;
 
-    faddr.sockaddr_any = memcmp(&in6addr_any, &faddr.sockaddr.in6.sin6_addr,
-                                sizeof(in6addr_any)) == 0;
+    const auto &in6addr = std::get<sockaddr_in6>(faddr.sockaddr.skaddr);
+
+    faddr.sockaddr_any =
+      memcmp(&in6addr_any, &in6addr.sin6_addr, sizeof(in6addr_any)) == 0;
 
     break;
   }
@@ -1442,7 +1445,7 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
     assert(0);
   }
 
-  LOG(NOTICE) << "Listening on " << faddr.hostport << ", quic";
+  Log{NOTICE} << "Listening on " << faddr.hostport << ", quic";
 
   return 0;
 }
@@ -1450,70 +1453,74 @@ int Worker::create_quic_server_socket(UpstreamAddr &faddr) {
 const WorkerID &Worker::get_worker_id() const { return worker_id_; }
 
 const UpstreamAddr *Worker::find_quic_upstream_addr(const Address &local_addr) {
-  const UpstreamAddr *fallback_faddr = nullptr;
+  return std::visit(
+    [&faddrs = quic_upstream_addrs_](auto &&arg) {
+      const UpstreamAddr *fallback_faddr = nullptr;
 
-  for (auto &faddr : quic_upstream_addrs_) {
-    if (local_addr.su.sa.sa_family != faddr.family) {
-      continue;
-    }
+      using T = std::decay_t<decltype(arg)>;
 
-    switch (faddr.family) {
-    case AF_INET: {
-      const auto &addr = faddr.sockaddr.in;
-      if (local_addr.su.in.sin_port != addr.sin_port) {
-        continue;
+      for (const auto &faddr : faddrs) {
+        if constexpr (std::is_same_v<T, sockaddr_in>) {
+          if (faddr.family != AF_INET) {
+            continue;
+          }
+
+          const auto &addr = std::get<sockaddr_in>(faddr.sockaddr.skaddr);
+          if (arg.sin_port != addr.sin_port) {
+            continue;
+          }
+
+          if (memcmp(&arg.sin_addr, &addr.sin_addr, sizeof(addr.sin_addr)) ==
+              0) {
+            return &faddr;
+          }
+        }
+
+        if constexpr (std::is_same_v<T, sockaddr_in6>) {
+          if (faddr.family != AF_INET6) {
+            continue;
+          }
+
+          const auto &addr = std::get<sockaddr_in6>(faddr.sockaddr.skaddr);
+          if (arg.sin6_port != addr.sin6_port) {
+            continue;
+          }
+
+          if (memcmp(&arg.sin6_addr, &addr.sin6_addr, sizeof(addr.sin6_addr)) ==
+              0) {
+            return &faddr;
+          }
+        }
+
+        if (faddr.sockaddr_any) {
+          fallback_faddr = &faddr;
+        }
       }
 
-      if (memcmp(&local_addr.su.in.sin_addr, &addr.sin_addr,
-                 sizeof(addr.sin_addr)) == 0) {
-        return &faddr;
-      }
-
-      break;
-    }
-    case AF_INET6: {
-      const auto &addr = faddr.sockaddr.in6;
-      if (local_addr.su.in6.sin6_port != addr.sin6_port) {
-        continue;
-      }
-
-      if (memcmp(&local_addr.su.in6.sin6_addr, &addr.sin6_addr,
-                 sizeof(addr.sin6_addr)) == 0) {
-        return &faddr;
-      }
-
-      break;
-    }
-    }
-
-    if (faddr.sockaddr_any) {
-      fallback_faddr = &faddr;
-    }
-  }
-
-  return fallback_faddr;
+      return fallback_faddr;
+    },
+    local_addr.skaddr);
 }
 #endif // defined(ENABLE_HTTP3)
 
 namespace {
 size_t match_downstream_addr_group_host(
-  const RouterConfig &routerconf, const std::string_view &host,
-  const std::string_view &path,
+  const RouterConfig &routerconf, std::string_view host, std::string_view path,
   const std::vector<std::shared_ptr<DownstreamAddrGroup>> &groups,
   size_t catch_all, BlockAllocator &balloc) {
   const auto &router = routerconf.router;
   const auto &rev_wildcard_router = routerconf.rev_wildcard_router;
   const auto &wildcard_patterns = routerconf.wildcard_patterns;
 
-  if (LOG_ENABLED(INFO)) {
-    LOG(INFO) << "Perform mapping selection, using host=" << host
+  if (log_enabled(INFO)) {
+    Log{INFO} << "Perform mapping selection, using host=" << host
               << ", path=" << path;
   }
 
   auto group = router.match(host, path);
   if (group != -1) {
-    if (LOG_ENABLED(INFO)) {
-      LOG(INFO) << "Found pattern with query " << host << path
+    if (log_enabled(INFO)) {
+      Log{INFO} << "Found pattern with query " << host << path
                 << ", matched pattern=" << groups[as_unsigned(group)]->pattern;
     }
     return as_unsigned(group);
@@ -1546,8 +1553,8 @@ size_t match_downstream_addr_group_host(
       if (group != -1) {
         // We sorted wildcard_patterns in a way that first match is the
         // longest host pattern.
-        if (LOG_ENABLED(INFO)) {
-          LOG(INFO) << "Found wildcard pattern with query " << host << path
+        if (log_enabled(INFO)) {
+          Log{INFO} << "Found wildcard pattern with query " << host << path
                     << ", matched pattern="
                     << groups[as_unsigned(group)]->pattern;
         }
@@ -1563,23 +1570,23 @@ size_t match_downstream_addr_group_host(
 
   group = router.match(""sv, path);
   if (group != -1) {
-    if (LOG_ENABLED(INFO)) {
-      LOG(INFO) << "Found pattern with query " << path
+    if (log_enabled(INFO)) {
+      Log{INFO} << "Found pattern with query " << path
                 << ", matched pattern=" << groups[as_unsigned(group)]->pattern;
     }
     return as_unsigned(group);
   }
 
-  if (LOG_ENABLED(INFO)) {
-    LOG(INFO) << "None match.  Use catch-all pattern";
+  if (log_enabled(INFO)) {
+    Log{INFO} << "None match.  Use catch-all pattern";
   }
   return catch_all;
 }
 } // namespace
 
 size_t match_downstream_addr_group(
-  const RouterConfig &routerconf, const std::string_view &hostport,
-  const std::string_view &raw_path,
+  const RouterConfig &routerconf, std::string_view hostport,
+  std::string_view raw_path,
   const std::vector<std::shared_ptr<DownstreamAddrGroup>> &groups,
   size_t catch_all, BlockAllocator &balloc) {
   if (util::contains(hostport, '/')) {
@@ -1648,11 +1655,11 @@ void downstream_failure(DownstreamAddr *addr, const Address *raddr) {
 
   if (fail_count >= addr->fall) {
     if (raddr) {
-      LOG(WARN) << "Could not connect to " << util::to_numeric_addr(raddr)
+      Log{WARN} << "Could not connect to " << util::to_numeric_addr(raddr)
                 << " " << fail_count
                 << " times in a row; considered as offline";
     } else {
-      LOG(WARN) << "Could not connect to " << addr->host << ":" << addr->port
+      Log{WARN} << "Could not connect to " << addr->host << ":" << addr->port
                 << " " << fail_count
                 << " times in a row; considered as offline";
     }
@@ -1665,11 +1672,11 @@ void downstream_failure(DownstreamAddr *addr, const Address *raddr) {
   }
 }
 
-int Worker::handle_connection(int fd, sockaddr *addr, socklen_t addrlen,
+int Worker::handle_connection(int fd, const sockaddr *addr, socklen_t addrlen,
                               const UpstreamAddr *faddr) {
-  if (LOG_ENABLED(INFO)) {
-    LLOG(INFO, this) << "Accepted connection from "
-                     << util::numeric_name(addr, addrlen) << ", fd=" << fd;
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Accepted connection from "
+                    << util::numeric_name(addr, addrlen) << ", fd=" << fd;
   }
 
   auto config = get_config();
@@ -1677,8 +1684,8 @@ int Worker::handle_connection(int fd, sockaddr *addr, socklen_t addrlen,
   auto max_conns = config->conn.upstream.worker_connections;
 
   if (worker_stat_.num_connections >= max_conns) {
-    if (LOG_ENABLED(INFO)) {
-      WLOG(INFO, this) << "Too many connections >= " << max_conns;
+    if (log_enabled(INFO)) {
+      Log{INFO, this} << "Too many connections >= " << max_conns;
     }
 
     close(fd);
@@ -1688,8 +1695,8 @@ int Worker::handle_connection(int fd, sockaddr *addr, socklen_t addrlen,
 
   auto client_handler = tls::accept_connection(this, fd, addr, addrlen, faddr);
   if (!client_handler) {
-    if (LOG_ENABLED(INFO)) {
-      WLOG(ERROR, this) << "ClientHandler creation failed";
+    if (log_enabled(INFO)) {
+      Log{ERROR, this} << "ClientHandler creation failed";
     }
 
     close(fd);
@@ -1697,8 +1704,8 @@ int Worker::handle_connection(int fd, sockaddr *addr, socklen_t addrlen,
     return -1;
   }
 
-  if (LOG_ENABLED(INFO)) {
-    WLOG(INFO, this) << "CLIENT_HANDLER:" << client_handler << " created";
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "CLIENT_HANDLER:" << client_handler << " created";
   }
 
   return 0;

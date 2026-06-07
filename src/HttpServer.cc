@@ -83,11 +83,8 @@ using namespace std::string_literals;
 
 namespace nghttp2 {
 
-namespace {
-// TODO could be constexpr
 constexpr auto DEFAULT_HTML = "index.html"sv;
 constexpr auto NGHTTPD_SERVER = "nghttpd nghttp2/" NGHTTP2_VERSION ""sv;
-} // namespace
 
 namespace {
 void delete_handler(Http2Handler *handler) {
@@ -193,21 +190,15 @@ namespace {
 void fill_callback(nghttp2_session_callbacks *callbacks, const Config *config);
 } // namespace
 
-namespace {
 constexpr ev_tstamp RELEASE_FD_TIMEOUT = 2.;
-} // namespace
 
 namespace {
 void release_fd_cb(struct ev_loop *loop, ev_timer *w, int revents);
 } // namespace
 
-namespace {
 constexpr auto FILE_ENTRY_MAX_AGE = 10s;
-} // namespace
 
-namespace {
 constexpr size_t FILE_ENTRY_EVICT_THRES = 2048;
-} // namespace
 
 namespace {
 bool need_validation_file_entry(
@@ -545,8 +536,6 @@ Http2Handler::Http2Handler(Sessions *sessions, int fd, SSL *ssl,
     session_(nullptr),
     sessions_(sessions),
     ssl_(ssl),
-    data_pending_(nullptr),
-    data_pendinglen_(0),
     fd_(fd) {
   ev_timer_init(&settings_timerev_, settings_timeout_cb, 10., 0.);
   ev_io_init(&wev_, writecb, fd, EV_WRITE);
@@ -599,17 +588,14 @@ void Http2Handler::start_settings_timer() {
 }
 
 int Http2Handler::fill_wb() {
-  if (data_pending_) {
-    auto n = std::min(wb_.wleft(), data_pendinglen_);
-    wb_.write(data_pending_, n);
-    if (n < data_pendinglen_) {
-      data_pending_ += n;
-      data_pendinglen_ -= n;
+  if (!data_pending_.empty()) {
+    auto n = wb_.write(data_pending_);
+    if (n < data_pending_.size()) {
+      data_pending_ = data_pending_.subspan(n);
       return 0;
     }
 
-    data_pending_ = nullptr;
-    data_pendinglen_ = 0;
+    data_pending_ = {};
   }
 
   for (;;) {
@@ -624,10 +610,10 @@ int Http2Handler::fill_wb() {
     if (datalen == 0) {
       break;
     }
-    auto n = wb_.write(data, as_unsigned(datalen));
-    if (n < static_cast<decltype(n)>(datalen)) {
-      data_pending_ = data + n;
-      data_pendinglen_ = as_unsigned(datalen) - n;
+    auto chunk = std::span{data, as_unsigned(datalen)};
+    auto n = wb_.write(chunk);
+    if (n < chunk.size()) {
+      data_pending_ = chunk.subspan(n);
       break;
     }
   }
@@ -924,9 +910,8 @@ int Http2Handler::verify_alpn_result() {
   return -1;
 }
 
-int Http2Handler::submit_file_response(const std::string_view &status,
-                                       Stream *stream, time_t last_modified,
-                                       off_t file_length,
+int Http2Handler::submit_file_response(std::string_view status, Stream *stream,
+                                       time_t last_modified, off_t file_length,
                                        const std::string *content_type,
                                        nghttp2_data_provider2 *data_prd) {
   std::string last_modified_str;
@@ -962,8 +947,8 @@ int Http2Handler::submit_file_response(const std::string_view &status,
                                   nvlen, data_prd);
 }
 
-int Http2Handler::submit_response(const std::string_view &status,
-                                  int32_t stream_id, const HeaderRefs &headers,
+int Http2Handler::submit_response(std::string_view status, int32_t stream_id,
+                                  const HeaderRefs &headers,
                                   nghttp2_data_provider2 *data_prd) {
   auto nva = std::vector<nghttp2_nv>();
   nva.reserve(4 + headers.size());
@@ -987,8 +972,7 @@ int Http2Handler::submit_response(const std::string_view &status,
   return r;
 }
 
-int Http2Handler::submit_response(const std::string_view &status,
-                                  int32_t stream_id,
+int Http2Handler::submit_response(std::string_view status, int32_t stream_id,
                                   nghttp2_data_provider2 *data_prd) {
   auto nva = std::to_array({
     http2::make_field(":status"sv, status),
@@ -1017,7 +1001,7 @@ int Http2Handler::submit_non_final_response(const std::string &status,
 }
 
 int Http2Handler::submit_push_promise(Stream *stream,
-                                      const std::string_view &push_path) {
+                                      std::string_view push_path) {
   auto authority = stream->header.authority;
 
   if (authority.empty()) {
@@ -1213,7 +1197,7 @@ bool prepare_upload_temp_store(Stream *stream, Http2Handler *hd) {
 
 namespace {
 void prepare_redirect_response(Stream *stream, Http2Handler *hd,
-                               const std::string_view &path, int status) {
+                               std::string_view path, int status) {
   auto scheme = stream->header.scheme;
 
   auto authority = stream->header.authority;
@@ -1906,7 +1890,9 @@ public:
     ev_io_start(sessions_->get_loop(), &w_);
   }
   void accept_connection() {
-    for (;;) {
+    constexpr size_t max_num_accept = 10;
+
+    for (size_t i = 0; i < max_num_accept; ++i) {
 #ifdef HAVE_ACCEPT4
       auto fd = accept4(fd_, nullptr, nullptr, SOCK_NONBLOCK);
 #else  // !defined(HAVE_ACCEPT4)

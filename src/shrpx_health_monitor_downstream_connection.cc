@@ -37,8 +37,8 @@ HealthMonitorDownstreamConnection::~HealthMonitorDownstreamConnection() {}
 
 int HealthMonitorDownstreamConnection::attach_downstream(
   Downstream *downstream) {
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Attaching to DOWNSTREAM:" << downstream;
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Attaching to DOWNSTREAM:" << downstream;
   }
 
   downstream_ = downstream;
@@ -48,8 +48,8 @@ int HealthMonitorDownstreamConnection::attach_downstream(
 
 void HealthMonitorDownstreamConnection::detach_downstream(
   Downstream *downstream) {
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Detaching from DOWNSTREAM:" << downstream;
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Detaching from DOWNSTREAM:" << downstream;
   }
   downstream_ = nullptr;
 }
@@ -64,7 +64,7 @@ int HealthMonitorDownstreamConnection::push_request_headers() {
 }
 
 int HealthMonitorDownstreamConnection::push_upload_data_chunk(
-  const uint8_t *data, size_t datalen) {
+  std::span<const uint8_t> data) {
   return 0;
 }
 
@@ -77,7 +77,7 @@ int HealthMonitorDownstreamConnection::end_upload_data() {
   resp.fs.add_header_token("content-length"sv, "0"sv, false,
                            http2::HD_CONTENT_LENGTH);
 
-  if (upstream->send_reply(downstream_, nullptr, 0) != 0) {
+  if (upstream->send_reply(downstream_, {}) != 0) {
     return -1;
   }
 

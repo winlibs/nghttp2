@@ -60,7 +60,6 @@ int htp_bodycb(llhttp_t *htp, const char *data, size_t len);
 int htp_msg_completecb(llhttp_t *htp);
 } // namespace
 
-namespace {
 constexpr llhttp_settings_t htp_hooks = {
   .on_message_begin = htp_msg_begin,
   .on_url = htp_uricb,
@@ -70,7 +69,6 @@ constexpr llhttp_settings_t htp_hooks = {
   .on_body = htp_bodycb,
   .on_message_complete = htp_msg_completecb,
 };
-} // namespace
 
 HttpsUpstream::HttpsUpstream(ClientHandler *handler)
   : handler_(handler),
@@ -88,8 +86,8 @@ void HttpsUpstream::reset_current_header_length() {
 }
 
 void HttpsUpstream::on_start_request() {
-  if (LOG_ENABLED(INFO)) {
-    ULOG(INFO, this) << "HTTP request started";
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "HTTP request started";
   }
   reset_current_header_length();
 
@@ -126,9 +124,9 @@ int htp_uricb(llhttp_t *htp, const char *data, size_t len) {
 
   if (req.fs.buffer_size() + len >
       get_config()->http.request_header_field_buffer) {
-    if (LOG_ENABLED(INFO)) {
-      ULOG(INFO, upstream) << "Too large URI size="
-                           << req.fs.buffer_size() + len;
+    if (log_enabled(INFO)) {
+      Log{INFO, upstream} << "Too large URI size="
+                          << req.fs.buffer_size() + len;
     }
     assert(downstream->get_request_state() == DownstreamState::INITIAL);
     downstream->set_request_state(
@@ -158,9 +156,9 @@ int htp_hdr_keycb(llhttp_t *htp, const char *data, size_t len) {
   auto &httpconf = get_config()->http;
 
   if (req.fs.buffer_size() + len > httpconf.request_header_field_buffer) {
-    if (LOG_ENABLED(INFO)) {
-      ULOG(INFO, upstream) << "Too large header block size="
-                           << req.fs.buffer_size() + len;
+    if (log_enabled(INFO)) {
+      Log{INFO, upstream} << "Too large header block size="
+                          << req.fs.buffer_size() + len;
     }
     if (downstream->get_request_state() == DownstreamState::INITIAL) {
       downstream->set_request_state(
@@ -177,9 +175,9 @@ int htp_hdr_keycb(llhttp_t *htp, const char *data, size_t len) {
       req.fs.append_last_header_key(name);
     } else {
       if (req.fs.num_fields() >= httpconf.max_request_header_fields) {
-        if (LOG_ENABLED(INFO)) {
-          ULOG(INFO, upstream)
-            << "Too many header field num=" << req.fs.num_fields() + 1;
+        if (log_enabled(INFO)) {
+          Log{INFO, upstream} << "Too many header field num="
+                              << req.fs.num_fields() + 1;
         }
         downstream->set_request_state(
           DownstreamState::HTTP1_REQUEST_HEADER_TOO_LARGE);
@@ -194,9 +192,9 @@ int htp_hdr_keycb(llhttp_t *htp, const char *data, size_t len) {
       req.fs.append_last_trailer_key(name);
     } else {
       if (req.fs.num_fields() >= httpconf.max_request_header_fields) {
-        if (LOG_ENABLED(INFO)) {
-          ULOG(INFO, upstream)
-            << "Too many header field num=" << req.fs.num_fields() + 1;
+        if (log_enabled(INFO)) {
+          Log{INFO, upstream} << "Too many header field num="
+                              << req.fs.num_fields() + 1;
         }
         llhttp_set_error_reason(htp, "too many headers");
         return HPE_USER;
@@ -216,9 +214,9 @@ int htp_hdr_valcb(llhttp_t *htp, const char *data, size_t len) {
 
   if (req.fs.buffer_size() + len >
       get_config()->http.request_header_field_buffer) {
-    if (LOG_ENABLED(INFO)) {
-      ULOG(INFO, upstream) << "Too large header block size="
-                           << req.fs.buffer_size() + len;
+    if (log_enabled(INFO)) {
+      Log{INFO, upstream} << "Too large header block size="
+                          << req.fs.buffer_size() + len;
     }
     if (downstream->get_request_state() == DownstreamState::INITIAL) {
       downstream->set_request_state(
@@ -241,8 +239,7 @@ int htp_hdr_valcb(llhttp_t *htp, const char *data, size_t len) {
 
 namespace {
 void rewrite_request_host_path_from_uri(BlockAllocator &balloc, Request &req,
-                                        const std::string_view &uri,
-                                        urlparse_url &u) {
+                                        std::string_view uri, urlparse_url &u) {
   assert(u.field_set & (1 << URLPARSE_HOST));
 
   // As per https://tools.ietf.org/html/rfc7230#section-5.4, we
@@ -318,8 +315,8 @@ namespace {
 int htp_hdrs_completecb(llhttp_t *htp) {
   int rv;
   auto upstream = static_cast<HttpsUpstream *>(htp->data);
-  if (LOG_ENABLED(INFO)) {
-    ULOG(INFO, upstream) << "HTTP request headers completed";
+  if (log_enabled(INFO)) {
+    Log{INFO, upstream} << "HTTP request headers completed";
   }
 
   auto handler = upstream->get_client_handler();
@@ -350,7 +347,7 @@ int htp_hdrs_completecb(llhttp_t *htp) {
 
   auto method = req.method;
 
-  if (LOG_ENABLED(INFO)) {
+  if (log_enabled(INFO)) {
     std::stringstream ss;
     ss << http2::to_method_string(method) << " "
        << (method == HTTP_CONNECT ? req.authority : req.path) << " "
@@ -364,7 +361,7 @@ int htp_hdrs_completecb(llhttp_t *htp) {
       ss << TTY_HTTP_HD << kv.name << TTY_RST << ": " << kv.value << "\n";
     }
 
-    ULOG(INFO, upstream) << "HTTP request headers\n" << ss.str();
+    Log{INFO, upstream} << "HTTP request headers\n" << ss.str();
   }
 
   // set content-length if method is not CONNECT, and no
@@ -396,12 +393,9 @@ int htp_hdrs_completecb(llhttp_t *htp) {
 
   if (host) {
     const auto &value = host->value;
-    // Not allow at least '"' or '\' in host.  They are illegal in
-    // authority component, also they cause headaches when we put them
-    // in quoted-string.
-    if (std::ranges::find_if(value, [](char c) {
-          return c == '"' || c == '\\';
-        }) != std::ranges::end(value)) {
+
+    if (!nghttp2_check_authority(
+          reinterpret_cast<const uint8_t *>(value.data()), value.size())) {
       return -1;
     }
   }
@@ -459,6 +453,14 @@ int htp_hdrs_completecb(llhttp_t *htp) {
 
   if (config->http.require_http_scheme &&
       !http::check_http_scheme(req.scheme, handler->get_ssl() != nullptr)) {
+    resp.http_status = 400;
+    return -1;
+  }
+
+  if ((req.scheme == "http" || req.scheme == "https") &&
+      (req.path.empty() || req.path[0] != '/') &&
+      // req.path gets empty string in case of "OPTIONS *".
+      (req.method != HTTP_OPTIONS || !req.path.empty())) {
     resp.http_status = 400;
     return -1;
   }
@@ -552,8 +554,7 @@ int htp_bodycb(llhttp_t *htp, const char *data, size_t len) {
   int rv;
   auto upstream = static_cast<HttpsUpstream *>(htp->data);
   auto downstream = upstream->get_downstream();
-  rv = downstream->push_upload_data_chunk(
-    reinterpret_cast<const uint8_t *>(data), len);
+  rv = downstream->push_upload_data_chunk(as_uint8_span(std::span{data, len}));
   if (rv != 0) {
     // Ignore error if response has been completed.  We will end up in
     // htp_msg_completecb, and request will end gracefully.
@@ -572,8 +573,8 @@ namespace {
 int htp_msg_completecb(llhttp_t *htp) {
   int rv;
   auto upstream = static_cast<HttpsUpstream *>(htp->data);
-  if (LOG_ENABLED(INFO)) {
-    ULOG(INFO, upstream) << "HTTP request completed";
+  if (log_enabled(INFO)) {
+    Log{INFO, upstream} << "HTTP request completed";
   }
   auto handler = upstream->get_client_handler();
   auto downstream = upstream->get_downstream();
@@ -602,8 +603,8 @@ int htp_msg_completecb(llhttp_t *htp) {
   if (handler->get_http2_upgrade_allowed() &&
       downstream->get_http2_upgrade_request() &&
       handler->perform_http2_upgrade(upstream) != 0) {
-    if (LOG_ENABLED(INFO)) {
-      ULOG(INFO, upstream) << "HTTP Upgrade to HTTP/2 failed";
+    if (log_enabled(INFO)) {
+      Log{INFO, upstream} << "HTTP Upgrade to HTTP/2 failed";
     }
   }
 
@@ -626,7 +627,7 @@ int HttpsUpstream::on_read() {
   // downstream can be nullptr here, because it is initialized in the
   // callback chain called by llhttp_execute()
   if (downstream && downstream->get_upgraded()) {
-    auto rv = downstream->push_upload_data_chunk(rb->pos(), rb->rleft());
+    auto rv = downstream->push_upload_data_chunk(rb->peek());
 
     if (rv != 0) {
       return -1;
@@ -636,8 +637,8 @@ int HttpsUpstream::on_read() {
     rlimit->startw();
 
     if (downstream->request_buf_full()) {
-      if (LOG_ENABLED(INFO)) {
-        ULOG(INFO, this) << "Downstream request buf is full";
+      if (log_enabled(INFO)) {
+        Log{INFO, this} << "Downstream request buf is full";
       }
       pause_read(SHRPX_NO_BUFFER);
 
@@ -697,10 +698,10 @@ int HttpsUpstream::on_read() {
   }
 
   if (htperr != HPE_OK) {
-    if (LOG_ENABLED(INFO)) {
-      ULOG(INFO, this) << "HTTP parse failure: "
-                       << "(" << llhttp_errno_name(htperr) << ") "
-                       << llhttp_get_error_reason(&htp_);
+    if (log_enabled(INFO)) {
+      Log{INFO, this} << "HTTP parse failure: "
+                      << "(" << llhttp_errno_name(htperr) << ") "
+                      << llhttp_get_error_reason(&htp_);
     }
 
     if (downstream &&
@@ -739,8 +740,8 @@ int HttpsUpstream::on_read() {
 
   // downstream can be NULL here.
   if (downstream && downstream->request_buf_full()) {
-    if (LOG_ENABLED(INFO)) {
-      ULOG(INFO, this) << "Downstream request buffer is full";
+    if (log_enabled(INFO)) {
+      Log{INFO, this} << "Downstream request buffer is full";
     }
 
     pause_read(SHRPX_NO_BUFFER);
@@ -800,8 +801,6 @@ int HttpsUpstream::on_write() {
 
   return downstream->resume_read(SHRPX_NO_BUFFER, resp.unconsumed_body_length);
 }
-
-int HttpsUpstream::on_event() { return 0; }
 
 ClientHandler *HttpsUpstream::get_client_handler() const { return handler_; }
 
@@ -888,8 +887,8 @@ int HttpsUpstream::downstream_write(DownstreamConnection *dconn) {
 int HttpsUpstream::downstream_eof(DownstreamConnection *dconn) {
   auto downstream = dconn->get_downstream();
 
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, dconn) << "EOF";
+  if (log_enabled(INFO)) {
+    Log{INFO, dconn} << "EOF";
   }
 
   if (downstream->get_response_state() == DownstreamState::MSG_COMPLETE) {
@@ -898,9 +897,9 @@ int HttpsUpstream::downstream_eof(DownstreamConnection *dconn) {
 
   if (downstream->get_response_state() == DownstreamState::HEADER_COMPLETE) {
     // Server may indicate the end of the request by EOF
-    if (LOG_ENABLED(INFO)) {
-      DCLOG(INFO, dconn) << "The end of the response body was indicated by "
-                         << "EOF";
+    if (log_enabled(INFO)) {
+      Log{INFO, dconn} << "The end of the response body was indicated by "
+                       << "EOF";
     }
     on_downstream_body_complete(downstream);
     downstream->set_response_state(DownstreamState::MSG_COMPLETE);
@@ -911,8 +910,8 @@ int HttpsUpstream::downstream_eof(DownstreamConnection *dconn) {
   if (downstream->get_response_state() == DownstreamState::INITIAL) {
     // we did not send any response headers, so we can reply error
     // message.
-    if (LOG_ENABLED(INFO)) {
-      DCLOG(INFO, dconn) << "Return error reply";
+    if (log_enabled(INFO)) {
+      Log{INFO, dconn} << "Return error reply";
     }
     error_reply(502);
     downstream->pop_downstream_connection();
@@ -930,11 +929,11 @@ end:
 
 int HttpsUpstream::downstream_error(DownstreamConnection *dconn, int events) {
   auto downstream = dconn->get_downstream();
-  if (LOG_ENABLED(INFO)) {
+  if (log_enabled(INFO)) {
     if (events & Downstream::EVENT_ERROR) {
-      DCLOG(INFO, dconn) << "Network error/general error";
+      Log{INFO, dconn} << "Network error/general error";
     } else {
-      DCLOG(INFO, dconn) << "Timeout";
+      Log{INFO, dconn} << "Timeout";
     }
   }
   if (downstream->get_response_state() != DownstreamState::INITIAL) {
@@ -959,8 +958,8 @@ int HttpsUpstream::downstream_error(DownstreamConnection *dconn, int events) {
   return 0;
 }
 
-int HttpsUpstream::send_reply(Downstream *downstream, const uint8_t *body,
-                              size_t bodylen) {
+int HttpsUpstream::send_reply(Downstream *downstream,
+                              std::span<const uint8_t> body) {
   const auto &req = downstream->request();
   auto &resp = downstream->response();
   auto &balloc = downstream->get_block_allocator();
@@ -1025,9 +1024,9 @@ int HttpsUpstream::send_reply(Downstream *downstream, const uint8_t *body,
   output->append("\r\n"sv);
 
   if (req.method != HTTP_HEAD) {
-    output->append(body, bodylen);
+    output->append(body);
 
-    downstream->response_sent_body_length += bodylen;
+    downstream->response_sent_body_length += body.size();
   }
 
   downstream->set_response_state(DownstreamState::MSG_COMPLETE);
@@ -1104,11 +1103,11 @@ std::unique_ptr<Downstream> HttpsUpstream::pop_downstream() {
 }
 
 int HttpsUpstream::on_downstream_header_complete(Downstream *downstream) {
-  if (LOG_ENABLED(INFO)) {
+  if (log_enabled(INFO)) {
     if (downstream->get_non_final_response()) {
-      DLOG(INFO, downstream) << "HTTP non-final response header";
+      Log{INFO, downstream} << "HTTP non-final response header";
     } else {
-      DLOG(INFO, downstream) << "HTTP response header completed";
+      Log{INFO, downstream} << "HTTP response header completed";
     }
   }
 
@@ -1186,7 +1185,7 @@ int HttpsUpstream::on_downstream_header_complete(Downstream *downstream) {
 
     buf->append("\r\n"sv);
 
-    if (LOG_ENABLED(INFO)) {
+    if (log_enabled(INFO)) {
       log_response_headers(buf);
     }
 
@@ -1323,7 +1322,7 @@ int HttpsUpstream::on_downstream_header_complete(Downstream *downstream) {
 
   buf->append("\r\n"sv);
 
-  if (LOG_ENABLED(INFO)) {
+  if (log_enabled(INFO)) {
     log_response_headers(buf);
   }
 
@@ -1331,20 +1330,20 @@ int HttpsUpstream::on_downstream_header_complete(Downstream *downstream) {
 }
 
 int HttpsUpstream::on_downstream_body(Downstream *downstream,
-                                      const uint8_t *data, size_t len,
+                                      std::span<const uint8_t> data,
                                       bool flush) {
-  if (len == 0) {
+  if (data.empty()) {
     return 0;
   }
   auto output = downstream->get_response_buf();
   if (downstream->get_chunked_response()) {
-    output->append(sizeof(len) * 2,
-                   std::bind_front(util::CompactHexFormatter{}, len));
+    output->append(sizeof(data.size()) * 2,
+                   std::bind_front(util::CompactHexFormatter{}, data.size()));
     output->append("\r\n"sv);
   }
-  output->append(data, len);
+  output->append(data);
 
-  downstream->response_sent_body_length += len;
+  downstream->response_sent_body_length += data.size();
 
   if (downstream->get_chunked_response()) {
     output->append("\r\n"sv);
@@ -1368,8 +1367,8 @@ int HttpsUpstream::on_downstream_body_complete(Downstream *downstream) {
       output->append("\r\n"sv);
     }
   }
-  if (LOG_ENABLED(INFO)) {
-    DLOG(INFO, downstream) << "HTTP response completed";
+  if (log_enabled(INFO)) {
+    Log{INFO, downstream} << "HTTP response completed";
   }
 
   if (!downstream->validate_response_recv_body_length()) {
@@ -1431,7 +1430,7 @@ int HttpsUpstream::redirect_to_https(Downstream *downstream) {
   resp.fs.add_header_token("connection"sv, "close"sv, false,
                            http2::HD_CONNECTION);
 
-  return send_reply(downstream, nullptr, 0);
+  return send_reply(downstream, {});
 }
 
 void HttpsUpstream::log_response_headers(DefaultMemchunks *buf) const {
@@ -1442,7 +1441,7 @@ void HttpsUpstream::log_response_headers(DefaultMemchunks *buf) const {
   if (log_config()->errorlog_tty) {
     nhdrs = http::colorize_headers(nhdrs);
   }
-  ULOG(INFO, this) << "HTTP response headers\n" << nhdrs;
+  Log{INFO, this} << "HTTP response headers\n" << nhdrs;
 }
 
 void HttpsUpstream::on_handler_delete() {
@@ -1517,19 +1516,29 @@ fail:
   return 0;
 }
 
-int HttpsUpstream::initiate_push(Downstream *downstream,
-                                 const std::string_view &uri) {
+int HttpsUpstream::initiate_push(Downstream *downstream, std::string_view uri) {
   return 0;
 }
 
-int HttpsUpstream::response_riovec(struct iovec *iov, int iovcnt) const {
+std::span<struct iovec>
+HttpsUpstream::response_riovec(std::span<struct iovec> iov) const {
   if (!downstream_) {
-    return 0;
+    return {};
   }
 
   auto buf = downstream_->get_response_buf();
 
-  return buf->riovec(iov, iovcnt);
+  return buf->riovec(iov);
+}
+
+std::span<const uint8_t> HttpsUpstream::response_peek() const {
+  if (!downstream_) {
+    return {};
+  }
+
+  auto buf = downstream_->get_response_buf();
+
+  return buf->peek();
 }
 
 void HttpsUpstream::response_drain(size_t n) {

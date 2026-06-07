@@ -174,16 +174,16 @@ int quic_send_packet(const UpstreamAddr *faddr, const sockaddr *remote_sa,
   } while (nwrite == -1 && errno == EINTR);
 
   if (nwrite == -1) {
-    if (LOG_ENABLED(INFO)) {
+    if (log_enabled(INFO)) {
       auto error = errno;
-      LOG(INFO) << "sendmsg failed: errno=" << error;
+      Log{INFO} << "sendmsg failed: errno=" << error;
     }
 
     return -errno;
   }
 
-  if (LOG_ENABLED(INFO)) {
-    LOG(INFO) << "QUIC sent packet: local="
+  if (log_enabled(INFO)) {
+    Log{INFO} << "QUIC sent packet: local="
               << util::to_numeric_addr(local_sa, local_salen)
               << " remote=" << util::to_numeric_addr(remote_sa, remote_salen)
               << " ecn=" << log::hex << pi.ecn << log::dec << " " << nwrite
@@ -204,12 +204,13 @@ int generate_quic_retry_connection_id(ngtcp2_cid &cid, uint32_t server_id,
   cid.datalen = SHRPX_QUIC_SCIDLEN;
   cid.data[0] = (cid.data[0] & (~SHRPX_QUIC_DCID_KM_ID_MASK)) | km_id;
 
-  auto p = cid.data + SHRPX_QUIC_CID_WORKER_ID_OFFSET;
+  auto b =
+    std::span{cid.data, cid.datalen}.subspan(SHRPX_QUIC_CID_WORKER_ID_OFFSET);
 
   std::ranges::copy_n(reinterpret_cast<uint8_t *>(&server_id),
-                      sizeof(server_id), p);
+                      sizeof(server_id), std::ranges::begin(b));
 
-  return encrypt_quic_connection_id(p, p, ctx);
+  return encrypt_quic_connection_id(b, b, ctx);
 }
 
 int generate_quic_connection_id(ngtcp2_cid &cid, const WorkerID &wid,
@@ -221,31 +222,40 @@ int generate_quic_connection_id(ngtcp2_cid &cid, const WorkerID &wid,
   cid.datalen = SHRPX_QUIC_SCIDLEN;
   cid.data[0] = (cid.data[0] & (~SHRPX_QUIC_DCID_KM_ID_MASK)) | km_id;
 
-  auto p = cid.data + SHRPX_QUIC_CID_WORKER_ID_OFFSET;
+  auto b =
+    std::span{cid.data, cid.datalen}.subspan(SHRPX_QUIC_CID_WORKER_ID_OFFSET);
 
-  std::ranges::copy_n(reinterpret_cast<const uint8_t *>(&wid), sizeof(wid), p);
+  std::ranges::copy_n(reinterpret_cast<const uint8_t *>(&wid), sizeof(wid),
+                      std::ranges::begin(b));
 
-  return encrypt_quic_connection_id(p, p, ctx);
+  return encrypt_quic_connection_id(b, b, ctx);
 }
 
-int encrypt_quic_connection_id(uint8_t *dest, const uint8_t *src,
+int encrypt_quic_connection_id(std::span<uint8_t> dest,
+                               std::span<const uint8_t> src,
                                EVP_CIPHER_CTX *ctx) {
+  assert(src.size() == SHRPX_QUIC_DECRYPTED_DCIDLEN);
+
   int len;
 
-  if (!EVP_EncryptUpdate(ctx, dest, &len, src, SHRPX_QUIC_DECRYPTED_DCIDLEN) ||
-      !EVP_EncryptFinal_ex(ctx, dest + len, &len)) {
+  if (!EVP_EncryptUpdate(ctx, dest.data(), &len, src.data(),
+                         static_cast<int>(src.size())) ||
+      !EVP_EncryptFinal_ex(ctx, dest.data() + len, &len)) {
     return -1;
   }
 
   return 0;
 }
 
-int decrypt_quic_connection_id(ConnectionID &dest, const uint8_t *src,
+int decrypt_quic_connection_id(ConnectionID &dest, std::span<const uint8_t> src,
                                EVP_CIPHER_CTX *ctx) {
+  assert(src.size() == SHRPX_QUIC_DECRYPTED_DCIDLEN);
+
   int len;
   auto p = reinterpret_cast<uint8_t *>(&dest);
 
-  if (!EVP_DecryptUpdate(ctx, p, &len, src, SHRPX_QUIC_DECRYPTED_DCIDLEN) ||
+  if (!EVP_DecryptUpdate(ctx, p, &len, src.data(),
+                         static_cast<int>(src.size())) ||
       !EVP_DecryptFinal_ex(ctx, p + len, &len)) {
     return -1;
   }
@@ -258,14 +268,14 @@ int generate_quic_hashed_connection_id(ngtcp2_cid &dest,
                                        const Address &local_addr,
                                        const ngtcp2_cid &cid) {
   auto ctx = EVP_MD_CTX_new();
-  auto d = defer(EVP_MD_CTX_free, ctx);
+  auto d = defer([ctx] { EVP_MD_CTX_free(ctx); });
 
   std::array<uint8_t, 32> h;
-  auto hlen = static_cast<unsigned int>(EVP_MD_size(EVP_sha256()));
+  auto hlen = static_cast<unsigned int>(EVP_MD_size(nghttp2::tls::sha256()));
 
-  if (!EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) ||
-      !EVP_DigestUpdate(ctx, &remote_addr.su.sa, remote_addr.len) ||
-      !EVP_DigestUpdate(ctx, &local_addr.su.sa, local_addr.len) ||
+  if (!EVP_DigestInit_ex(ctx, nghttp2::tls::sha256(), nullptr) ||
+      !EVP_DigestUpdate(ctx, remote_addr.as_sockaddr(), remote_addr.size()) ||
+      !EVP_DigestUpdate(ctx, local_addr.as_sockaddr(), local_addr.size()) ||
       !EVP_DigestUpdate(ctx, cid.data, cid.datalen) ||
       !EVP_DigestFinal_ex(ctx, h.data(), &hlen)) {
     return -1;
@@ -280,11 +290,11 @@ int generate_quic_hashed_connection_id(ngtcp2_cid &dest,
   return 0;
 }
 
-int generate_quic_stateless_reset_token(uint8_t *token, const ngtcp2_cid &cid,
-                                        const uint8_t *secret,
-                                        size_t secretlen) {
-  if (ngtcp2_crypto_generate_stateless_reset_token(token, secret, secretlen,
-                                                   &cid) != 0) {
+int generate_quic_stateless_reset_token(
+  std::span<uint8_t, NGTCP2_STATELESS_RESET_TOKENLEN> token,
+  const ngtcp2_cid &cid, std::span<const uint8_t> secret) {
+  if (ngtcp2_crypto_generate_stateless_reset_token(token.data(), secret.data(),
+                                                   secret.size(), &cid) != 0) {
     return -1;
   }
 
@@ -374,8 +384,8 @@ int generate_quic_connection_id_encryption_key(std::span<uint8_t> key,
                                                std::span<const uint8_t> salt) {
   static constexpr auto info = "connection id encryption key"sv;
   ngtcp2_crypto_md sha256;
-  ngtcp2_crypto_md_init(
-    &sha256, reinterpret_cast<void *>(const_cast<EVP_MD *>(EVP_sha256())));
+  ngtcp2_crypto_md_init(&sha256, reinterpret_cast<void *>(const_cast<EVP_MD *>(
+                                   nghttp2::tls::sha256())));
 
   if (ngtcp2_crypto_hkdf(key.data(), key.size(), &sha256, secret.data(),
                          secret.size(), salt.data(), salt.size(),
@@ -400,7 +410,7 @@ select_quic_keying_material(const QUICKeyingMaterials &qkms, uint8_t km_id) {
 
 std::span<uint64_t, 2> generate_siphash_key() {
   // Use the same technique rust does.
-  thread_local static auto key = []() {
+  thread_local static auto key = [] {
     std::array<uint64_t, 2> key;
 
     auto s = as_writable_uint8_span(std::span{key});

@@ -98,7 +98,7 @@ inline constexpr uint8_t MEMCACHED_RES_MAGIC = 0x81;
 class MemcachedConnection {
 public:
   MemcachedConnection(const Address *addr, struct ev_loop *loop,
-                      SSL_CTX *ssl_ctx, const std::string_view &sni_name,
+                      SSL_CTX *ssl_ctx, std::string_view sni_name,
                       MemchunkPool *mcpool, std::mt19937 &gen);
   ~MemcachedConnection();
 
@@ -118,7 +118,7 @@ public:
   int write_tls();
   int read_tls();
 
-  size_t fill_request_buffer(struct iovec *iov, size_t iovlen);
+  std::span<struct iovec> fill_request_buffer(std::span<struct iovec> iov);
   void drain_send_queue(size_t nwrite);
 
   void make_request(MemcachedSendbuf *sendbuf, MemcachedRequest *req);

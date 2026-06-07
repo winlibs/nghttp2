@@ -1,7 +1,7 @@
 /*
  * nghttp2 - HTTP/2 C Library
  *
- * Copyright (c) 2014 Tatsuhiro Tsujikawa
+ * Copyright (c) 2025 nghttp2 contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -22,34 +22,23 @@
  * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
-#ifndef SHRPX_ACCEPT_HANDLER_H
-#define SHRPX_ACCEPT_HANDLER_H
+#ifndef NETWORK_TEST_H
+#define NETWORK_TEST_H
 
-#include "shrpx.h"
+#ifdef HAVE_CONFIG_H
+#  include <config.h>
+#endif // defined(HAVE_CONFIG_H)
 
-#include <ev.h>
+#define MUNIT_ENABLE_ASSERT_ALIASES
 
-namespace shrpx {
+#include "munit.h"
 
-class Worker;
-struct UpstreamAddr;
+namespace nghttp2 {
 
-class AcceptHandler {
-public:
-  AcceptHandler(Worker *worker, const UpstreamAddr *faddr);
-  ~AcceptHandler();
-  int accept_connection();
-  void drain_connection();
-  void enable();
-  void disable();
-  int get_fd() const;
+extern const MunitSuite network_suite;
 
-private:
-  ev_io wev_;
-  Worker *worker_;
-  const UpstreamAddr *faddr_;
-};
+munit_void_test_decl(test_network_address)
 
-} // namespace shrpx
+} // namespace nghttp2
 
-#endif // !defined(SHRPX_ACCEPT_HANDLER_H)
+#endif // !defined(NETWORK_TEST_H)

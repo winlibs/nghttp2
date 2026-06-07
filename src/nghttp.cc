@@ -210,12 +210,11 @@ void Request::init_html_parser() {
   html_parser = std::make_unique<HtmlParser>(base_uri);
 }
 
-int Request::update_html_parser(const uint8_t *data, size_t len, int fin) {
+int Request::update_html_parser(std::span<const uint8_t> data, int fin) {
   if (!html_parser) {
     return 0;
   }
-  return html_parser->parse_chunk(reinterpret_cast<const char *>(data), len,
-                                  fin);
+  return html_parser->parse_chunk(data, fin);
 }
 
 std::string Request::make_reqpath() const {
@@ -234,7 +233,7 @@ std::string Request::make_reqpath() const {
 namespace {
 // Perform special handling |host| if it is IPv6 literal and includes
 // zone ID per RFC 6874.
-std::string decode_host(const std::string_view &host) {
+std::string decode_host(std::string_view host) {
   auto zone_start = std::ranges::find(host, '%');
   if (zone_start == std::ranges::end(host) ||
       !util::ipv6_numeric_addr(
@@ -383,12 +382,10 @@ int htp_msg_completecb(llhttp_t *htp) {
 }
 } // namespace
 
-namespace {
 constexpr llhttp_settings_t htp_hooks = {
   .on_message_begin = htp_msg_begincb,
   .on_message_complete = htp_msg_completecb,
 };
-} // namespace
 
 namespace {
 int submit_request(HttpClient *client, const Headers &headers, Request *req) {
@@ -727,7 +724,8 @@ void HttpClient::disconnect() {
 int HttpClient::read_clear() {
   ev_timer_again(loop, &rt);
 
-  std::array<uint8_t, 8_k> buf;
+  std::array<uint8_t, 8_k> rawbuf;
+  auto buf = std::span<uint8_t>{rawbuf};
 
   for (;;) {
     ssize_t nread;
@@ -744,7 +742,7 @@ int HttpClient::read_clear() {
       return -1;
     }
 
-    if (on_readfn(*this, buf.data(), as_unsigned(nread)) != 0) {
+    if (on_readfn(*this, buf.first(as_unsigned(nread))) != 0) {
       return -1;
     }
   }
@@ -755,21 +753,23 @@ int HttpClient::read_clear() {
 int HttpClient::write_clear() {
   ev_timer_again(loop, &rt);
 
-  std::array<struct iovec, 2> iov;
+  std::array<struct iovec, 2> iovbuf;
 
   for (;;) {
     if (on_writefn(*this) != 0) {
       return -1;
     }
 
-    auto iovcnt = wb.riovec(iov.data(), iov.size());
+    auto iov = wb.riovec(iovbuf);
 
-    if (iovcnt == 0) {
+    if (iov.empty()) {
       break;
     }
 
     ssize_t nwrite;
-    while ((nwrite = writev(fd, iov.data(), iovcnt)) == -1 && errno == EINTR)
+    while ((nwrite = writev(fd, iov.data(), static_cast<int>(iov.size()))) ==
+             -1 &&
+           errno == EINTR)
       ;
     if (nwrite == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -988,19 +988,19 @@ int HttpClient::on_upgrade_connect() {
   return 0;
 }
 
-int HttpClient::on_upgrade_read(const uint8_t *data, size_t len) {
+int HttpClient::on_upgrade_read(std::span<const uint8_t> data) {
   int rv;
 
-  auto htperr =
-    llhttp_execute(htp.get(), reinterpret_cast<const char *>(data), len);
+  auto htperr = llhttp_execute(
+    htp.get(), reinterpret_cast<const char *>(data.data()), data.size());
   auto nread = htperr == HPE_OK
-                 ? len
+                 ? data.size()
                  : static_cast<size_t>(reinterpret_cast<const uint8_t *>(
                                          llhttp_get_error_pos(htp.get())) -
-                                       data);
+                                       data.data());
 
   if (config.verbose) {
-    std::cout.write(reinterpret_cast<const char *>(data),
+    std::cout.write(reinterpret_cast<const char *>(data.data()),
                     static_cast<std::streamsize>(nread));
   }
 
@@ -1040,7 +1040,7 @@ int HttpClient::on_upgrade_read(const uint8_t *data, size_t len) {
 
   // Read remaining data in the buffer because it is not notified
   // callback anymore.
-  rv = on_readfn(*this, data + nread, len - nread);
+  rv = on_readfn(*this, data.subspan(nread));
   if (rv != 0) {
     return rv;
   }
@@ -1145,19 +1145,19 @@ int HttpClient::connection_made() {
   return 0;
 }
 
-int HttpClient::on_read(const uint8_t *data, size_t len) {
+int HttpClient::on_read(std::span<const uint8_t> data) {
   if (config.hexdump) {
-    util::hexdump(stdout, data, len);
+    util::hexdump(stdout, data.data(), data.size());
   }
 
-  auto rv = nghttp2_session_mem_recv2(session, data, len);
+  auto rv = nghttp2_session_mem_recv2(session, data.data(), data.size());
   if (rv < 0) {
     std::cerr << "[ERROR] nghttp2_session_mem_recv2() returned error: "
               << nghttp2_strerror(static_cast<int>(rv)) << std::endl;
     return -1;
   }
 
-  assert(static_cast<size_t>(rv) == len);
+  assert(static_cast<size_t>(rv) == data.size());
 
   if (nghttp2_session_want_read(session) == 0 &&
       nghttp2_session_want_write(session) == 0 && wb.rleft() == 0) {
@@ -1247,9 +1247,11 @@ int HttpClient::read_tls() {
 
   ERR_clear_error();
 
-  std::array<uint8_t, 8_k> buf;
+  std::array<uint8_t, 8_k> rawbuf;
+  auto buf = std::span<uint8_t>{rawbuf};
+
   for (;;) {
-    auto rv = SSL_read(ssl, buf.data(), buf.size());
+    auto rv = SSL_read(ssl, buf.data(), static_cast<int>(buf.size()));
 
     if (rv <= 0) {
       auto err = SSL_get_error(ssl, rv);
@@ -1264,7 +1266,7 @@ int HttpClient::read_tls() {
       }
     }
 
-    if (on_readfn(*this, buf.data(), static_cast<size_t>(rv)) != 0) {
+    if (on_readfn(*this, buf.first(static_cast<size_t>(rv))) != 0) {
       return -1;
     }
   }
@@ -1275,20 +1277,18 @@ int HttpClient::write_tls() {
 
   ERR_clear_error();
 
-  struct iovec iov;
-
   for (;;) {
     if (on_writefn(*this) != 0) {
       return -1;
     }
 
-    auto iovcnt = wb.riovec(&iov, 1);
+    auto data = wb.peek();
 
-    if (iovcnt == 0) {
+    if (data.empty()) {
       break;
     }
 
-    auto rv = SSL_write(ssl, iov.iov_base, static_cast<int>(iov.iov_len));
+    auto rv = SSL_write(ssl, data.data(), static_cast<int>(data.size()));
 
     if (rv <= 0) {
       auto err = SSL_get_error(ssl, rv);
@@ -1569,12 +1569,12 @@ void HttpClient::output_har(FILE *outfile) {
 #endif // defined(HAVE_JANSSON)
 
 namespace {
-void update_html_parser(HttpClient *client, Request *req, const uint8_t *data,
-                        size_t len, int fin) {
+void update_html_parser(HttpClient *client, Request *req,
+                        std::span<const uint8_t> data, int fin) {
   if (!req->html_parser) {
     return;
   }
-  req->update_html_parser(data, len, fin);
+  req->update_html_parser(data, fin);
 
   auto scheme = req->get_real_scheme();
   auto host = req->get_real_host();
@@ -1638,39 +1638,44 @@ int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags,
 
   req->response_len += len;
 
+  auto chunk = std::span{data, len};
+
   if (req->inflater) {
-    while (len > 0) {
-      const size_t MAX_OUTLEN = 4_k;
-      std::array<uint8_t, MAX_OUTLEN> out;
-      size_t outlen = MAX_OUTLEN;
-      size_t tlen = len;
-      int rv =
-        nghttp2_gzip_inflate(req->inflater, out.data(), &outlen, data, &tlen);
+    constexpr size_t MAX_OUTLEN = 4_k;
+    std::array<uint8_t, MAX_OUTLEN> rawout;
+
+    while (!chunk.empty()) {
+      auto out = std::span<uint8_t>{rawout};
+      size_t outlen = out.size();
+      auto tlen = chunk.size();
+      int rv = nghttp2_gzip_inflate(req->inflater, out.data(), &outlen,
+                                    chunk.data(), &tlen);
       if (rv != 0) {
         nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, stream_id,
                                   NGHTTP2_INTERNAL_ERROR);
         break;
       }
 
+      out = out.first(outlen);
+
       if (!config.null_out) {
         std::cout.write(reinterpret_cast<const char *>(out.data()),
-                        static_cast<std::streamsize>(outlen));
+                        static_cast<std::streamsize>(out.size()));
       }
 
-      update_html_parser(client, req, out.data(), outlen, 0);
-      data += tlen;
-      len -= tlen;
+      update_html_parser(client, req, out, 0);
+      chunk = chunk.subspan(tlen);
     }
 
     return 0;
   }
 
   if (!config.null_out) {
-    std::cout.write(reinterpret_cast<const char *>(data),
-                    static_cast<std::streamsize>(len));
+    std::cout.write(reinterpret_cast<const char *>(chunk.data()),
+                    static_cast<std::streamsize>(chunk.size()));
   }
 
-  update_html_parser(client, req, data, len, 0);
+  update_html_parser(client, req, chunk, 0);
 
   return 0;
 }
@@ -2071,7 +2076,7 @@ int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
     req->continue_timer->stop();
   }
 
-  update_html_parser(client, req, nullptr, 0, 1);
+  update_html_parser(client, req, {}, 1);
   ++client->complete;
 
   if (client->all_requests_processed()) {
@@ -2381,7 +2386,8 @@ int run(char **uris, int n) {
   nghttp2_session_callbacks *callbacks;
 
   nghttp2_session_callbacks_new(&callbacks);
-  auto cbsdel = defer(nghttp2_session_callbacks_del, callbacks);
+  auto cbsdel =
+    defer([callbacks] { nghttp2_session_callbacks_del(callbacks); });
 
   nghttp2_session_callbacks_set_on_stream_close_callback(
     callbacks, on_stream_close_callback);

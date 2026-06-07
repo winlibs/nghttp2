@@ -178,13 +178,14 @@ libnghttpx_a_AR = $(AR) $(ARFLAGS)
 libnghttpx_a_LIBADD =
 am__libnghttpx_a_SOURCES_DIST = util.cc util.h http2.cc http2.h \
 	timegm.c timegm.h base64.h app_helper.cc app_helper.h tls.cc \
-	tls.h ssl_compat.h shrpx_config.cc shrpx_config.h \
-	shrpx_error.h shrpx_accept_handler.cc shrpx_accept_handler.h \
-	shrpx_connection_handler.cc shrpx_connection_handler.h \
-	shrpx_client_handler.cc shrpx_client_handler.h \
-	shrpx_upstream.h shrpx_http2_upstream.cc \
-	shrpx_http2_upstream.h shrpx_https_upstream.cc \
-	shrpx_https_upstream.h shrpx_downstream.cc shrpx_downstream.h \
+	tls.h ssl_compat.h network.cc network.h shrpx_config.cc \
+	shrpx_config.h shrpx_error.h shrpx_accept_handler.cc \
+	shrpx_accept_handler.h shrpx_connection_handler.cc \
+	shrpx_connection_handler.h shrpx_client_handler.cc \
+	shrpx_client_handler.h shrpx_upstream.h \
+	shrpx_http2_upstream.cc shrpx_http2_upstream.h \
+	shrpx_https_upstream.cc shrpx_https_upstream.h \
+	shrpx_downstream.cc shrpx_downstream.h \
 	shrpx_downstream_connection.cc shrpx_downstream_connection.h \
 	shrpx_http_downstream_connection.cc \
 	shrpx_http_downstream_connection.h \
@@ -239,6 +240,7 @@ am__libnghttpx_a_SOURCES_DIST = util.cc util.h http2.cc http2.h \
 @ENABLE_APP_TRUE@	libnghttpx_a-timegm.$(OBJEXT) \
 @ENABLE_APP_TRUE@	libnghttpx_a-app_helper.$(OBJEXT) \
 @ENABLE_APP_TRUE@	libnghttpx_a-tls.$(OBJEXT) \
+@ENABLE_APP_TRUE@	libnghttpx_a-network.$(OBJEXT) \
 @ENABLE_APP_TRUE@	libnghttpx_a-shrpx_config.$(OBJEXT) \
 @ENABLE_APP_TRUE@	libnghttpx_a-shrpx_accept_handler.$(OBJEXT) \
 @ENABLE_APP_TRUE@	libnghttpx_a-shrpx_connection_handler.$(OBJEXT) \
@@ -278,9 +280,11 @@ am__libnghttpx_a_SOURCES_DIST = util.cc util.h http2.cc http2.h \
 @ENABLE_APP_TRUE@am_libnghttpx_a_OBJECTS = $(am__objects_3)
 libnghttpx_a_OBJECTS = $(am_libnghttpx_a_OBJECTS)
 am__deflatehd_SOURCES_DIST = deflatehd.cc comp_helper.c comp_helper.h \
-	util.cc util.h timegm.c timegm.h
+	util.cc util.h timegm.c timegm.h tls.cc tls.h network.cc \
+	network.h
 @ENABLE_HPACK_TOOLS_TRUE@am__objects_4 = comp_helper.$(OBJEXT) \
-@ENABLE_HPACK_TOOLS_TRUE@	util.$(OBJEXT) timegm.$(OBJEXT)
+@ENABLE_HPACK_TOOLS_TRUE@	util.$(OBJEXT) timegm.$(OBJEXT) \
+@ENABLE_HPACK_TOOLS_TRUE@	tls.$(OBJEXT) network.$(OBJEXT)
 @ENABLE_HPACK_TOOLS_TRUE@am_deflatehd_OBJECTS = deflatehd.$(OBJEXT) \
 @ENABLE_HPACK_TOOLS_TRUE@	$(am__objects_4)
 deflatehd_OBJECTS = $(am_deflatehd_OBJECTS)
@@ -296,22 +300,24 @@ am__h2load_SOURCES_DIST = util.cc util.h http2.cc http2.h h2load.cc \
 	h2load.h timegm.c timegm.h tls.cc tls.h ssl_compat.h \
 	h2load_session.h h2load_http2_session.cc \
 	h2load_http2_session.h h2load_http1_session.cc \
-	h2load_http1_session.h h2load_http3_session.cc \
-	h2load_http3_session.h h2load_quic.cc h2load_quic.h
+	h2load_http1_session.h network.cc network.h \
+	h2load_http3_session.cc h2load_http3_session.h h2load_quic.cc \
+	h2load_quic.h
 @ENABLE_APP_TRUE@@ENABLE_HTTP3_TRUE@am__objects_5 = h2load_http3_session.$(OBJEXT) \
 @ENABLE_APP_TRUE@@ENABLE_HTTP3_TRUE@	h2load_quic.$(OBJEXT)
 @ENABLE_APP_TRUE@am_h2load_OBJECTS = util.$(OBJEXT) http2.$(OBJEXT) \
 @ENABLE_APP_TRUE@	h2load.$(OBJEXT) timegm.$(OBJEXT) \
 @ENABLE_APP_TRUE@	tls.$(OBJEXT) h2load_http2_session.$(OBJEXT) \
 @ENABLE_APP_TRUE@	h2load_http1_session.$(OBJEXT) \
-@ENABLE_APP_TRUE@	$(am__objects_5)
+@ENABLE_APP_TRUE@	network.$(OBJEXT) $(am__objects_5)
 h2load_OBJECTS = $(am_h2load_OBJECTS)
 h2load_LDADD = $(LDADD)
 h2load_DEPENDENCIES = $(top_builddir)/lib/libnghttp2.la \
 	$(top_builddir)/third-party/liburlparse.la \
 	$(top_builddir)/third-party/libllhttp.la
 am__inflatehd_SOURCES_DIST = inflatehd.cc comp_helper.c comp_helper.h \
-	util.cc util.h timegm.c timegm.h
+	util.cc util.h timegm.c timegm.h tls.cc tls.h network.cc \
+	network.h
 @ENABLE_HPACK_TOOLS_TRUE@am_inflatehd_OBJECTS = inflatehd.$(OBJEXT) \
 @ENABLE_HPACK_TOOLS_TRUE@	$(am__objects_4)
 inflatehd_OBJECTS = $(am_inflatehd_OBJECTS)
@@ -320,12 +326,12 @@ inflatehd_DEPENDENCIES = $(top_builddir)/lib/libnghttp2.la \
 	$(top_builddir)/third-party/liburlparse.la \
 	$(top_builddir)/third-party/libllhttp.la
 am__nghttp_SOURCES_DIST = util.cc http2.cc timegm.c app_helper.cc \
-	nghttp2_gzip.c util.h http2.h timegm.h app_helper.h \
+	nghttp2_gzip.c network.cc util.h http2.h timegm.h app_helper.h \
 	nghttp2_config.h nghttp2_gzip.h network.h nghttp.cc nghttp.h \
 	HtmlParser.cc HtmlParser.h tls.cc tls.h ssl_compat.h
 @ENABLE_APP_TRUE@am__objects_6 = util.$(OBJEXT) http2.$(OBJEXT) \
 @ENABLE_APP_TRUE@	timegm.$(OBJEXT) app_helper.$(OBJEXT) \
-@ENABLE_APP_TRUE@	nghttp2_gzip.$(OBJEXT)
+@ENABLE_APP_TRUE@	nghttp2_gzip.$(OBJEXT) network.$(OBJEXT)
 am__objects_7 =
 @ENABLE_APP_TRUE@@HAVE_LIBXML2_TRUE@am__objects_8 =  \
 @ENABLE_APP_TRUE@@HAVE_LIBXML2_TRUE@	HtmlParser.$(OBJEXT)
@@ -339,7 +345,7 @@ nghttp_DEPENDENCIES = $(top_builddir)/lib/libnghttp2.la \
 	$(top_builddir)/third-party/liburlparse.la \
 	$(top_builddir)/third-party/libllhttp.la
 am__nghttpd_SOURCES_DIST = util.cc http2.cc timegm.c app_helper.cc \
-	nghttp2_gzip.c util.h http2.h timegm.h app_helper.h \
+	nghttp2_gzip.c network.cc util.h http2.h timegm.h app_helper.h \
 	nghttp2_config.h nghttp2_gzip.h network.h nghttpd.cc tls.cc \
 	tls.h ssl_compat.h HttpServer.cc HttpServer.h
 @ENABLE_APP_TRUE@am_nghttpd_OBJECTS = $(am__objects_6) \
@@ -369,7 +375,8 @@ am__nghttpx_unittest_SOURCES_DIST = shrpx-unittest.cc \
 	util_test.h nghttp2_gzip_test.c nghttp2_gzip_test.h \
 	nghttp2_gzip.c nghttp2_gzip.h buffer_test.cc buffer_test.h \
 	memchunk_test.cc memchunk_test.h template_test.cc \
-	template_test.h base64_test.cc base64_test.h \
+	template_test.h base64_test.cc base64_test.h network_test.cc \
+	network_test.h allocator_test.cc allocator_test.h \
 	$(top_srcdir)/tests/munit/munit.c \
 	$(top_srcdir)/tests/munit/munit.h \
 	$(top_srcdir)/tests/munit/munitxx.h siphash_test.cc \
@@ -392,6 +399,8 @@ am__dirstamp = $(am__leading_dot)dirstamp
 @ENABLE_APP_TRUE@	nghttpx_unittest-memchunk_test.$(OBJEXT) \
 @ENABLE_APP_TRUE@	nghttpx_unittest-template_test.$(OBJEXT) \
 @ENABLE_APP_TRUE@	nghttpx_unittest-base64_test.$(OBJEXT) \
+@ENABLE_APP_TRUE@	nghttpx_unittest-network_test.$(OBJEXT) \
+@ENABLE_APP_TRUE@	nghttpx_unittest-allocator_test.$(OBJEXT) \
 @ENABLE_APP_TRUE@	$(top_builddir)/tests/munit/nghttpx_unittest-munit.$(OBJEXT) \
 @ENABLE_APP_TRUE@	$(am__objects_10)
 nghttpx_unittest_OBJECTS = $(am_nghttpx_unittest_OBJECTS)
@@ -424,6 +433,7 @@ am__depfiles_remade = $(top_builddir)/tests/munit/$(DEPDIR)/nghttpx_unittest-mun
 	./$(DEPDIR)/libnghttpx_a-app_helper.Po \
 	./$(DEPDIR)/libnghttpx_a-http2.Po \
 	./$(DEPDIR)/libnghttpx_a-http3.Po \
+	./$(DEPDIR)/libnghttpx_a-network.Po \
 	./$(DEPDIR)/libnghttpx_a-shrpx_accept_handler.Po \
 	./$(DEPDIR)/libnghttpx_a-shrpx_api_downstream_connection.Po \
 	./$(DEPDIR)/libnghttpx_a-shrpx_client_handler.Po \
@@ -471,13 +481,16 @@ am__depfiles_remade = $(top_builddir)/tests/munit/$(DEPDIR)/nghttpx_unittest-mun
 	./$(DEPDIR)/libnghttpx_a-timegm.Po \
 	./$(DEPDIR)/libnghttpx_a-tls.Po \
 	./$(DEPDIR)/libnghttpx_a-util.Po \
-	./$(DEPDIR)/libnghttpx_a-xsi_strerror.Po ./$(DEPDIR)/nghttp.Po \
+	./$(DEPDIR)/libnghttpx_a-xsi_strerror.Po \
+	./$(DEPDIR)/network.Po ./$(DEPDIR)/nghttp.Po \
 	./$(DEPDIR)/nghttp2_gzip.Po ./$(DEPDIR)/nghttpd.Po \
 	./$(DEPDIR)/nghttpx-shrpx.Po \
+	./$(DEPDIR)/nghttpx_unittest-allocator_test.Po \
 	./$(DEPDIR)/nghttpx_unittest-base64_test.Po \
 	./$(DEPDIR)/nghttpx_unittest-buffer_test.Po \
 	./$(DEPDIR)/nghttpx_unittest-http2_test.Po \
 	./$(DEPDIR)/nghttpx_unittest-memchunk_test.Po \
+	./$(DEPDIR)/nghttpx_unittest-network_test.Po \
 	./$(DEPDIR)/nghttpx_unittest-nghttp2_gzip.Po \
 	./$(DEPDIR)/nghttpx_unittest-nghttp2_gzip_test.Po \
 	./$(DEPDIR)/nghttpx_unittest-shrpx-unittest.Po \
@@ -1077,7 +1090,7 @@ LDADD = $(top_builddir)/lib/libnghttp2.la \
 	@APPLDFLAGS@
 
 @ENABLE_APP_TRUE@HELPER_OBJECTS = util.cc \
-@ENABLE_APP_TRUE@	http2.cc timegm.c app_helper.cc nghttp2_gzip.c
+@ENABLE_APP_TRUE@	http2.cc timegm.c app_helper.cc nghttp2_gzip.c network.cc
 
 @ENABLE_APP_TRUE@HELPER_HFILES = util.h \
 @ENABLE_APP_TRUE@	http2.h timegm.h app_helper.h nghttp2_config.h \
@@ -1099,11 +1112,13 @@ LDADD = $(top_builddir)/lib/libnghttp2.la \
 @ENABLE_APP_TRUE@	h2load_http2_session.cc \
 @ENABLE_APP_TRUE@	h2load_http2_session.h \
 @ENABLE_APP_TRUE@	h2load_http1_session.cc \
-@ENABLE_APP_TRUE@	h2load_http1_session.h $(am__append_3)
+@ENABLE_APP_TRUE@	h2load_http1_session.h network.cc network.h \
+@ENABLE_APP_TRUE@	$(am__append_3)
 @ENABLE_APP_TRUE@NGHTTPX_SRCS = util.cc util.h http2.cc http2.h \
 @ENABLE_APP_TRUE@	timegm.c timegm.h base64.h app_helper.cc \
 @ENABLE_APP_TRUE@	app_helper.h tls.cc tls.h ssl_compat.h \
-@ENABLE_APP_TRUE@	shrpx_config.cc shrpx_config.h shrpx_error.h \
+@ENABLE_APP_TRUE@	network.cc network.h shrpx_config.cc \
+@ENABLE_APP_TRUE@	shrpx_config.h shrpx_error.h \
 @ENABLE_APP_TRUE@	shrpx_accept_handler.cc \
 @ENABLE_APP_TRUE@	shrpx_accept_handler.h \
 @ENABLE_APP_TRUE@	shrpx_connection_handler.cc \
@@ -1180,6 +1195,8 @@ LDADD = $(top_builddir)/lib/libnghttp2.la \
 @ENABLE_APP_TRUE@	buffer_test.h memchunk_test.cc \
 @ENABLE_APP_TRUE@	memchunk_test.h template_test.cc \
 @ENABLE_APP_TRUE@	template_test.h base64_test.cc base64_test.h \
+@ENABLE_APP_TRUE@	network_test.cc network_test.h \
+@ENABLE_APP_TRUE@	allocator_test.cc allocator_test.h \
 @ENABLE_APP_TRUE@	$(top_srcdir)/tests/munit/munit.c \
 @ENABLE_APP_TRUE@	$(top_srcdir)/tests/munit/munit.h \
 @ENABLE_APP_TRUE@	$(top_srcdir)/tests/munit/munitxx.h \
@@ -1193,7 +1210,9 @@ LDADD = $(top_builddir)/lib/libnghttp2.la \
 @ENABLE_HPACK_TOOLS_TRUE@HPACK_TOOLS_COMMON_SRCS = \
 @ENABLE_HPACK_TOOLS_TRUE@	comp_helper.c comp_helper.h \
 @ENABLE_HPACK_TOOLS_TRUE@	util.cc util.h \
-@ENABLE_HPACK_TOOLS_TRUE@	timegm.c timegm.h
+@ENABLE_HPACK_TOOLS_TRUE@	timegm.c timegm.h \
+@ENABLE_HPACK_TOOLS_TRUE@	tls.cc tls.h \
+@ENABLE_HPACK_TOOLS_TRUE@	network.cc network.h
 
 @ENABLE_HPACK_TOOLS_TRUE@inflatehd_SOURCES = inflatehd.cc $(HPACK_TOOLS_COMMON_SRCS)
 @ENABLE_HPACK_TOOLS_TRUE@deflatehd_SOURCES = deflatehd.cc $(HPACK_TOOLS_COMMON_SRCS)
@@ -1357,6 +1376,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libnghttpx_a-app_helper.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libnghttpx_a-http2.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libnghttpx_a-http3.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libnghttpx_a-network.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libnghttpx_a-shrpx_accept_handler.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libnghttpx_a-shrpx_api_downstream_connection.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libnghttpx_a-shrpx_client_handler.Po@am__quote@ # am--include-marker
@@ -1405,14 +1425,17 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libnghttpx_a-tls.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libnghttpx_a-util.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libnghttpx_a-xsi_strerror.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/network.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttp2_gzip.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttpd.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttpx-shrpx.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttpx_unittest-allocator_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttpx_unittest-base64_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttpx_unittest-buffer_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttpx_unittest-http2_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttpx_unittest-memchunk_test.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttpx_unittest-network_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttpx_unittest-nghttp2_gzip.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttpx_unittest-nghttp2_gzip_test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nghttpx_unittest-shrpx-unittest.Po@am__quote@ # am--include-marker
@@ -1608,6 +1631,20 @@ libnghttpx_a-tls.obj: tls.cc
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='tls.cc' object='libnghttpx_a-tls.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libnghttpx_a_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o libnghttpx_a-tls.obj `if test -f 'tls.cc'; then $(CYGPATH_W) 'tls.cc'; else $(CYGPATH_W) '$(srcdir)/tls.cc'; fi`
+
+libnghttpx_a-network.o: network.cc
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libnghttpx_a_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT libnghttpx_a-network.o -MD -MP -MF $(DEPDIR)/libnghttpx_a-network.Tpo -c -o libnghttpx_a-network.o `test -f 'network.cc' || echo '$(srcdir)/'`network.cc
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libnghttpx_a-network.Tpo $(DEPDIR)/libnghttpx_a-network.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='network.cc' object='libnghttpx_a-network.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libnghttpx_a_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o libnghttpx_a-network.o `test -f 'network.cc' || echo '$(srcdir)/'`network.cc
+
+libnghttpx_a-network.obj: network.cc
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libnghttpx_a_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT libnghttpx_a-network.obj -MD -MP -MF $(DEPDIR)/libnghttpx_a-network.Tpo -c -o libnghttpx_a-network.obj `if test -f 'network.cc'; then $(CYGPATH_W) 'network.cc'; else $(CYGPATH_W) '$(srcdir)/network.cc'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libnghttpx_a-network.Tpo $(DEPDIR)/libnghttpx_a-network.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='network.cc' object='libnghttpx_a-network.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libnghttpx_a_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o libnghttpx_a-network.obj `if test -f 'network.cc'; then $(CYGPATH_W) 'network.cc'; else $(CYGPATH_W) '$(srcdir)/network.cc'; fi`
 
 libnghttpx_a-shrpx_config.o: shrpx_config.cc
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libnghttpx_a_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT libnghttpx_a-shrpx_config.o -MD -MP -MF $(DEPDIR)/libnghttpx_a-shrpx_config.Tpo -c -o libnghttpx_a-shrpx_config.o `test -f 'shrpx_config.cc' || echo '$(srcdir)/'`shrpx_config.cc
@@ -2435,6 +2472,34 @@ nghttpx_unittest-base64_test.obj: base64_test.cc
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(nghttpx_unittest_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o nghttpx_unittest-base64_test.obj `if test -f 'base64_test.cc'; then $(CYGPATH_W) 'base64_test.cc'; else $(CYGPATH_W) '$(srcdir)/base64_test.cc'; fi`
 
+nghttpx_unittest-network_test.o: network_test.cc
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(nghttpx_unittest_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT nghttpx_unittest-network_test.o -MD -MP -MF $(DEPDIR)/nghttpx_unittest-network_test.Tpo -c -o nghttpx_unittest-network_test.o `test -f 'network_test.cc' || echo '$(srcdir)/'`network_test.cc
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/nghttpx_unittest-network_test.Tpo $(DEPDIR)/nghttpx_unittest-network_test.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='network_test.cc' object='nghttpx_unittest-network_test.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(nghttpx_unittest_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o nghttpx_unittest-network_test.o `test -f 'network_test.cc' || echo '$(srcdir)/'`network_test.cc
+
+nghttpx_unittest-network_test.obj: network_test.cc
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(nghttpx_unittest_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT nghttpx_unittest-network_test.obj -MD -MP -MF $(DEPDIR)/nghttpx_unittest-network_test.Tpo -c -o nghttpx_unittest-network_test.obj `if test -f 'network_test.cc'; then $(CYGPATH_W) 'network_test.cc'; else $(CYGPATH_W) '$(srcdir)/network_test.cc'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/nghttpx_unittest-network_test.Tpo $(DEPDIR)/nghttpx_unittest-network_test.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='network_test.cc' object='nghttpx_unittest-network_test.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(nghttpx_unittest_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o nghttpx_unittest-network_test.obj `if test -f 'network_test.cc'; then $(CYGPATH_W) 'network_test.cc'; else $(CYGPATH_W) '$(srcdir)/network_test.cc'; fi`
+
+nghttpx_unittest-allocator_test.o: allocator_test.cc
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(nghttpx_unittest_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT nghttpx_unittest-allocator_test.o -MD -MP -MF $(DEPDIR)/nghttpx_unittest-allocator_test.Tpo -c -o nghttpx_unittest-allocator_test.o `test -f 'allocator_test.cc' || echo '$(srcdir)/'`allocator_test.cc
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/nghttpx_unittest-allocator_test.Tpo $(DEPDIR)/nghttpx_unittest-allocator_test.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='allocator_test.cc' object='nghttpx_unittest-allocator_test.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(nghttpx_unittest_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o nghttpx_unittest-allocator_test.o `test -f 'allocator_test.cc' || echo '$(srcdir)/'`allocator_test.cc
+
+nghttpx_unittest-allocator_test.obj: allocator_test.cc
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(nghttpx_unittest_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT nghttpx_unittest-allocator_test.obj -MD -MP -MF $(DEPDIR)/nghttpx_unittest-allocator_test.Tpo -c -o nghttpx_unittest-allocator_test.obj `if test -f 'allocator_test.cc'; then $(CYGPATH_W) 'allocator_test.cc'; else $(CYGPATH_W) '$(srcdir)/allocator_test.cc'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/nghttpx_unittest-allocator_test.Tpo $(DEPDIR)/nghttpx_unittest-allocator_test.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='allocator_test.cc' object='nghttpx_unittest-allocator_test.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(nghttpx_unittest_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o nghttpx_unittest-allocator_test.obj `if test -f 'allocator_test.cc'; then $(CYGPATH_W) 'allocator_test.cc'; else $(CYGPATH_W) '$(srcdir)/allocator_test.cc'; fi`
+
 nghttpx_unittest-siphash_test.o: siphash_test.cc
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(nghttpx_unittest_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT nghttpx_unittest-siphash_test.o -MD -MP -MF $(DEPDIR)/nghttpx_unittest-siphash_test.Tpo -c -o nghttpx_unittest-siphash_test.o `test -f 'siphash_test.cc' || echo '$(srcdir)/'`siphash_test.cc
 @am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/nghttpx_unittest-siphash_test.Tpo $(DEPDIR)/nghttpx_unittest-siphash_test.Po
@@ -2841,6 +2906,7 @@ distclean: distclean-recursive
 	-rm -f ./$(DEPDIR)/libnghttpx_a-app_helper.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-http2.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-http3.Po
+	-rm -f ./$(DEPDIR)/libnghttpx_a-network.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-shrpx_accept_handler.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-shrpx_api_downstream_connection.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-shrpx_client_handler.Po
@@ -2889,14 +2955,17 @@ distclean: distclean-recursive
 	-rm -f ./$(DEPDIR)/libnghttpx_a-tls.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-util.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-xsi_strerror.Po
+	-rm -f ./$(DEPDIR)/network.Po
 	-rm -f ./$(DEPDIR)/nghttp.Po
 	-rm -f ./$(DEPDIR)/nghttp2_gzip.Po
 	-rm -f ./$(DEPDIR)/nghttpd.Po
 	-rm -f ./$(DEPDIR)/nghttpx-shrpx.Po
+	-rm -f ./$(DEPDIR)/nghttpx_unittest-allocator_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-base64_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-buffer_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-http2_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-memchunk_test.Po
+	-rm -f ./$(DEPDIR)/nghttpx_unittest-network_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-nghttp2_gzip.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-nghttp2_gzip_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-shrpx-unittest.Po
@@ -2973,6 +3042,7 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f ./$(DEPDIR)/libnghttpx_a-app_helper.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-http2.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-http3.Po
+	-rm -f ./$(DEPDIR)/libnghttpx_a-network.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-shrpx_accept_handler.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-shrpx_api_downstream_connection.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-shrpx_client_handler.Po
@@ -3021,14 +3091,17 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f ./$(DEPDIR)/libnghttpx_a-tls.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-util.Po
 	-rm -f ./$(DEPDIR)/libnghttpx_a-xsi_strerror.Po
+	-rm -f ./$(DEPDIR)/network.Po
 	-rm -f ./$(DEPDIR)/nghttp.Po
 	-rm -f ./$(DEPDIR)/nghttp2_gzip.Po
 	-rm -f ./$(DEPDIR)/nghttpd.Po
 	-rm -f ./$(DEPDIR)/nghttpx-shrpx.Po
+	-rm -f ./$(DEPDIR)/nghttpx_unittest-allocator_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-base64_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-buffer_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-http2_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-memchunk_test.Po
+	-rm -f ./$(DEPDIR)/nghttpx_unittest-network_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-nghttp2_gzip.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-nghttp2_gzip_test.Po
 	-rm -f ./$(DEPDIR)/nghttpx_unittest-shrpx-unittest.Po

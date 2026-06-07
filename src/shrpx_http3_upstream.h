@@ -48,49 +48,49 @@ struct UpstreamAddr;
 class Http3Upstream : public Upstream {
 public:
   Http3Upstream(ClientHandler *handler);
-  virtual ~Http3Upstream();
+  ~Http3Upstream() override;
 
-  virtual int on_read();
-  virtual int on_write();
-  virtual int on_timeout(Downstream *downstream);
-  virtual int on_downstream_abort_request(Downstream *downstream,
-                                          unsigned int status_code);
-  virtual int
-  on_downstream_abort_request_with_https_redirect(Downstream *downstream);
-  virtual int downstream_read(DownstreamConnection *dconn);
-  virtual int downstream_write(DownstreamConnection *dconn);
-  virtual int downstream_eof(DownstreamConnection *dconn);
-  virtual int downstream_error(DownstreamConnection *dconn, int events);
-  virtual ClientHandler *get_client_handler() const;
+  int on_read() override;
+  int on_write() override;
+  int on_timeout(Downstream *downstream) override;
+  int on_downstream_abort_request(Downstream *downstream,
+                                  unsigned int status_code) override;
+  int on_downstream_abort_request_with_https_redirect(
+    Downstream *downstream) override;
+  int downstream_read(DownstreamConnection *dconn) override;
+  int downstream_write(DownstreamConnection *dconn) override;
+  int downstream_eof(DownstreamConnection *dconn) override;
+  int downstream_error(DownstreamConnection *dconn, int events) override;
+  ClientHandler *get_client_handler() const override;
 
-  virtual int on_downstream_header_complete(Downstream *downstream);
-  virtual int on_downstream_body(Downstream *downstream, const uint8_t *data,
-                                 size_t len, bool flush);
-  virtual int on_downstream_body_complete(Downstream *downstream);
+  int on_downstream_header_complete(Downstream *downstream) override;
+  int on_downstream_body(Downstream *downstream, std::span<const uint8_t> data,
+                         bool flush) override;
+  int on_downstream_body_complete(Downstream *downstream) override;
 
-  virtual void on_handler_delete();
-  virtual int on_downstream_reset(Downstream *downstream, bool no_retry);
+  void on_handler_delete() override;
+  int on_downstream_reset(Downstream *downstream, bool no_retry) override;
 
-  virtual void pause_read(IOCtrlReason reason);
-  virtual int resume_read(IOCtrlReason reason, Downstream *downstream,
-                          size_t consumed);
-  virtual int send_reply(Downstream *downstream, const uint8_t *body,
-                         size_t bodylen);
+  void pause_read(IOCtrlReason reason) override;
+  int resume_read(IOCtrlReason reason, Downstream *downstream,
+                  size_t consumed) override;
+  int send_reply(Downstream *downstream,
+                 std::span<const uint8_t> body) override;
 
-  virtual int initiate_push(Downstream *downstream,
-                            const std::string_view &uri);
+  int initiate_push(Downstream *downstream, std::string_view uri) override;
 
-  virtual int response_riovec(struct iovec *iov, int iovcnt) const;
-  virtual void response_drain(size_t n);
-  virtual bool response_empty() const;
+  std::span<struct iovec>
+  response_riovec(std::span<struct iovec> iov) const override;
+  std::span<const uint8_t> response_peek() const override;
+  void response_drain(size_t n) override;
+  bool response_empty() const override;
 
-  virtual Downstream *on_downstream_push_promise(Downstream *downstream,
-                                                 int32_t promised_stream_id);
-  virtual int
-  on_downstream_push_promise_complete(Downstream *downstream,
-                                      Downstream *promised_downstream);
-  virtual bool push_enabled() const;
-  virtual void cancel_premature_downstream(Downstream *promised_downstream);
+  Downstream *on_downstream_push_promise(Downstream *downstream,
+                                         int32_t promised_stream_id) override;
+  int on_downstream_push_promise_complete(
+    Downstream *downstream, Downstream *promised_downstream) override;
+  bool push_enabled() const override;
+  void cancel_premature_downstream(Downstream *promised_downstream) override;
 
   int init(const UpstreamAddr *faddr, const Address &remote_addr,
            const Address &local_addr, const ngtcp2_pkt_hd &initial_hd,
@@ -106,6 +106,7 @@ public:
                          size_t destlen, ngtcp2_tstamp ts);
 
   int handle_error();
+  int send_connection_close(const ngtcp2_ccerr &ccerr);
 
   int handle_expiry();
   void reset_timer();
@@ -149,10 +150,10 @@ public:
               socklen_t local_salen, const ngtcp2_pkt_info &pi,
               std::span<const uint8_t> data, size_t gso_size);
   void send_packet(const ngtcp2_path &path, const ngtcp2_pkt_info &pi,
-                   const std::span<const uint8_t> data, size_t gso_size);
+                   std::span<const uint8_t> data, size_t gso_size);
 
   void qlog_write(const void *data, size_t datalen, bool fin);
-  int open_qlog_file(const std::string_view &dir, const ngtcp2_cid &scid) const;
+  int open_qlog_file(std::string_view dir, const ngtcp2_cid &scid) const;
 
   void on_send_blocked(const ngtcp2_path &path, const ngtcp2_pkt_info &pi,
                        std::span<const uint8_t> data, size_t gso_size);
@@ -177,7 +178,8 @@ private:
 #endif // OPENSSL_3_5_0_API
   nghttp3_conn *httpconn_;
   DownstreamQueue downstream_queue_;
-  std::vector<uint8_t> conn_close_;
+  std::unique_ptr<uint8_t[]> conn_close_;
+  size_t conn_closelen_{};
 
   struct {
     bool send_blocked;
@@ -190,9 +192,9 @@ private:
       std::span<const uint8_t> data;
       size_t gso_size;
     } blocked;
-    std::unique_ptr<uint8_t[]> data;
     bool no_gso;
   } tx_;
+  std::array<uint8_t, 64_k> txbuf_;
 };
 
 } // namespace shrpx

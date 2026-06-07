@@ -71,7 +71,7 @@ int recv_stream_data(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
                      uint64_t offset, const uint8_t *data, size_t datalen,
                      void *user_data, void *stream_user_data) {
   auto c = static_cast<Client *>(user_data);
-  if (c->quic_recv_stream_data(flags, stream_id, data, datalen) != 0) {
+  if (c->quic_recv_stream_data(flags, stream_id, {data, datalen}) != 0) {
     // TODO Better to do this gracefully rather than
     // NGTCP2_ERR_CALLBACK_FAILURE.  Perhaps, call
     // ngtcp2_conn_write_application_close() ?
@@ -82,13 +82,13 @@ int recv_stream_data(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
 } // namespace
 
 int Client::quic_recv_stream_data(uint32_t flags, int64_t stream_id,
-                                  const uint8_t *data, size_t datalen) {
+                                  std::span<const uint8_t> data) {
   if (worker->current_phase == Phase::MAIN_DURATION) {
-    worker->stats.bytes_total += datalen;
+    worker->stats.bytes_total += data.size();
   }
 
   auto s = static_cast<Http3Session *>(session.get());
-  auto nconsumed = s->read_stream(flags, stream_id, data, datalen);
+  auto nconsumed = s->read_stream(flags, stream_id, data);
   if (nconsumed == -1) {
     return -1;
   }
@@ -344,6 +344,8 @@ int Client::quic_init(const sockaddr *local_addr, socklen_t local_addrlen,
                       const sockaddr *remote_addr, socklen_t remote_addrlen) {
   int rv;
 
+  auto config = worker->config;
+
   if (!ssl) {
     ssl = SSL_new(worker->ssl_ctx);
 
@@ -368,9 +370,17 @@ int Client::quic_init(const sockaddr *local_addr, socklen_t local_addrlen,
 #else  // !OPENSSL_3_5_0_API
     SSL_set_quic_use_legacy_codepoint(ssl, 0);
 #endif // !OPENSSL_3_5_0_API
+
+    if (config->tls_session && !SSL_set_session(ssl, config->tls_session)) {
+      std::cerr << "Could not set TLS session" << std::endl;
+    }
+
+    if (!config->tls_session_file.empty()) {
+      SSL_set_ex_data(ssl, 1, worker);
+    }
   }
 
-  auto callbacks = ngtcp2_callbacks{
+  static constexpr auto callbacks = ngtcp2_callbacks{
     .client_initial = ngtcp2_crypto_client_initial_cb,
     .recv_crypto_data = ngtcp2_crypto_recv_crypto_data_cb,
     .handshake_completed = h2load::handshake_completed,
@@ -401,8 +411,6 @@ int Client::quic_init(const sockaddr *local_addr, socklen_t local_addrlen,
   if (generate_cid(dcid) != 0) {
     return -1;
   }
-
-  auto config = worker->config;
 
   ngtcp2_settings settings;
   ngtcp2_settings_default(&settings);
@@ -479,6 +487,18 @@ int Client::quic_init(const sockaddr *local_addr, socklen_t local_addrlen,
 }
 
 void Client::quic_free() {
+  if (quic.conn) {
+    ngtcp2_conn_info ci;
+
+    ngtcp2_conn_get_conn_info(quic.conn, &ci);
+
+    cstat.min_rtt = std::chrono::nanoseconds(ci.min_rtt);
+    cstat.smoothed_rtt = std::chrono::nanoseconds(ci.smoothed_rtt);
+    cstat.pkt_sent = ci.pkt_sent;
+    cstat.pkt_recv = ci.pkt_recv;
+    cstat.pkt_lost = ci.pkt_lost;
+  }
+
 #if OPENSSL_3_5_0_API
   ngtcp2_crypto_ossl_ctx_del(quic.ossl_ctx);
 #endif // OPENSSL_3_5_0_API
@@ -510,22 +530,6 @@ void Client::quic_close_connection() {
   write_udp(reinterpret_cast<sockaddr *>(ps.path.remote.addr),
             ps.path.remote.addrlen, {buf.data(), static_cast<size_t>(nwrite)},
             as_unsigned(nwrite));
-}
-
-int Client::quic_write_client_handshake(ngtcp2_encryption_level level,
-                                        const uint8_t *data, size_t datalen) {
-  int rv;
-
-  assert(level < 2);
-
-  rv = ngtcp2_conn_submit_crypto_data(quic.conn, level, data, datalen);
-  if (rv != 0) {
-    std::cerr << "ngtcp2_conn_submit_crypto_data: " << ngtcp2_strerror(rv)
-              << std::endl;
-    return -1;
-  }
-
-  return 0;
 }
 
 void quic_pkt_timeout_cb(struct ev_loop *loop, ev_timer *w, int revents) {
@@ -565,7 +569,7 @@ void Client::quic_restart_pkt_timer() {
 
 int Client::read_quic() {
   std::array<uint8_t, 64_k> buf;
-  sockaddr_union su;
+  sockaddr_storage ss;
   int rv;
   size_t pktcnt = 0;
   ngtcp2_pkt_info pi;
@@ -578,7 +582,7 @@ int Client::read_quic() {
   uint8_t msg_ctrl[CMSG_SPACE(sizeof(int))];
 
   msghdr msg{
-    .msg_name = &su,
+    .msg_name = &ss,
     .msg_iov = &msg_iov,
     .msg_iovlen = 1,
     .msg_control = msg_ctrl,
@@ -587,7 +591,7 @@ int Client::read_quic() {
   auto ts = quic_timestamp();
 
   for (;;) {
-    msg.msg_namelen = sizeof(su);
+    msg.msg_namelen = sizeof(ss);
     msg.msg_controllen = sizeof(msg_ctrl);
 
     auto nread = recvmsg(fd, &msg, 0);
@@ -602,21 +606,24 @@ int Client::read_quic() {
 
     assert(quic.conn);
 
+    size_t num_pkts;
+
     if (gso_size) {
-      worker->stats.udp_dgram_recv +=
-        (as_unsigned(nread) + gso_size - 1) / gso_size;
+      num_pkts = (as_unsigned(nread) + gso_size - 1) / gso_size;
     } else {
-      ++worker->stats.udp_dgram_recv;
+      num_pkts = 1;
     }
 
+    worker->stats.udp_dgram_recv += num_pkts;
+    worker->sample_gro_stat(GROStat{
+      .num_pkts = num_pkts,
+    });
+
     auto path = ngtcp2_path{
-      {
-        &local_addr.su.sa,
-        local_addr.len,
-      },
-      {
-        &su.sa,
-        msg.msg_namelen,
+      .local{as_ngtcp2_addr(local_addr)},
+      .remote{
+        .addr = reinterpret_cast<sockaddr *>(&ss),
+        .addrlen = msg.msg_namelen,
       },
     };
 
@@ -664,13 +671,12 @@ ngtcp2_ssize write_pkt(ngtcp2_conn *conn, ngtcp2_path *path,
                        ngtcp2_tstamp ts, void *user_data) {
   auto c = static_cast<Client *>(user_data);
 
-  return c->write_quic_pkt(path, pi, dest, destlen, ts);
+  return c->write_quic_pkt(path, pi, {dest, destlen}, ts);
 }
 } // namespace
 
 ngtcp2_ssize Client::write_quic_pkt(ngtcp2_path *path, ngtcp2_pkt_info *pi,
-                                    uint8_t *dest, size_t destlen,
-                                    ngtcp2_tstamp ts) {
+                                    std::span<uint8_t> dest, ngtcp2_tstamp ts) {
   std::array<nghttp3_vec, 16> vec;
   auto s = static_cast<Http3Session *>(session.get());
 
@@ -697,8 +703,8 @@ ngtcp2_ssize Client::write_quic_pkt(ngtcp2_path *path, ngtcp2_pkt_info *pi,
     }
 
     auto nwrite = ngtcp2_conn_writev_stream(
-      quic.conn, path, nullptr, dest, destlen, &ndatalen, flags, stream_id,
-      reinterpret_cast<const ngtcp2_vec *>(v), vcnt, ts);
+      quic.conn, path, nullptr, dest.data(), dest.size(), &ndatalen, flags,
+      stream_id, reinterpret_cast<const ngtcp2_vec *>(v), vcnt, ts);
     if (nwrite < 0) {
       switch (nwrite) {
       case NGTCP2_ERR_STREAM_DATA_BLOCKED:
@@ -794,9 +800,7 @@ void Client::on_send_blocked(const ngtcp2_addr &remote_addr,
 
   auto &p = quic.tx.blocked;
 
-  memcpy(&p.remote_addr.su, remote_addr.addr, remote_addr.addrlen);
-
-  p.remote_addr.len = remote_addr.addrlen;
+  p.remote_addr.set(remote_addr.addr);
   p.data = data;
   p.gso_size = gso_size;
 
@@ -808,8 +812,8 @@ int Client::send_blocked_packet() {
 
   auto &p = quic.tx.blocked;
 
-  auto rest =
-    write_udp(&p.remote_addr.su.sa, p.remote_addr.len, p.data, p.gso_size);
+  auto rest = write_udp(p.remote_addr.as_sockaddr(), p.remote_addr.size(),
+                        p.data, p.gso_size);
   if (!rest.empty()) {
     p.data = rest;
 

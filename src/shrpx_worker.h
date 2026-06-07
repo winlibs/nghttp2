@@ -368,8 +368,7 @@ public:
   ConnectionHandler *get_connection_handler() const;
 
   int setup_server_socket();
-  void delete_listener();
-  void accept_pending_connection();
+  void drain_and_delete_listener();
   int create_tcp_server_socket(UpstreamAddr &addr);
   void enable_listener();
   void disable_listener();
@@ -398,7 +397,7 @@ public:
 
   DNSTracker *get_dns_tracker();
 
-  int handle_connection(int fd, sockaddr *addr, socklen_t addrlen,
+  int handle_connection(int fd, const sockaddr *addr, socklen_t addrlen,
                         const UpstreamAddr *faddr);
 
 private:
@@ -467,8 +466,8 @@ private:
 // group.  The catch-all group index is given in |catch_all|.  All
 // patterns are given in |groups|.
 size_t match_downstream_addr_group(
-  const RouterConfig &routerconfig, const std::string_view &hostport,
-  const std::string_view &path,
+  const RouterConfig &routerconfig, std::string_view hostport,
+  std::string_view path,
   const std::vector<std::shared_ptr<DownstreamAddrGroup>> &groups,
   size_t catch_all, BlockAllocator &balloc);
 

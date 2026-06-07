@@ -57,12 +57,9 @@ using namespace nghttp2;
 
 namespace shrpx {
 
-namespace {
 constexpr std::string_view SEVERITY_STR[] = {"INFO"sv, "NOTICE"sv, "WARN"sv,
                                              "ERROR"sv, "FATAL"sv};
-} // namespace
 
-namespace {
 constexpr std::string_view SEVERITY_COLOR[] = {
   "\033[1;32m"sv, // INFO
   "\033[1;36m"sv, // NOTICE
@@ -70,7 +67,6 @@ constexpr std::string_view SEVERITY_COLOR[] = {
   "\033[1;31m"sv, // ERROR
   "\033[1;35m"sv, // FATAL
 };
-} // namespace
 
 namespace {
 LogBuffer *get_logbuf() {
@@ -84,7 +80,7 @@ int Log::severity_thres_ = NOTICE;
 
 void Log::set_severity_level(int severity) { severity_thres_ = severity; }
 
-int Log::get_severity_level_by_name(const std::string_view &name) {
+int Log::get_severity_level_by_name(std::string_view name) {
   for (size_t i = 0, max = array_size(SEVERITY_STR); i < max; ++i) {
     if (name == SEVERITY_STR[i]) {
       return static_cast<int>(i);
@@ -110,15 +106,15 @@ int severity_to_syslog_level(int severity) {
   }
 }
 
-Log::Log(int severity, const char *filename, int linenum)
+Log::Log(int severity, const std::source_location loc)
   : buf_(*get_logbuf()),
     begin_(buf_.data()),
     end_(begin_ + buf_.size()),
     last_(begin_),
-    filename_(filename),
+    filename_(loc.file_name()),
     flags_(0),
     severity_(severity),
-    linenum_(linenum),
+    linenum_(loc.line()),
     full_(false) {
   auto config = get_config();
 
@@ -217,7 +213,7 @@ Log &Log::operator<<(const std::string &s) {
   return *this;
 }
 
-Log &Log::operator<<(const std::string_view &s) {
+Log &Log::operator<<(std::string_view s) {
   write_seq(s);
   return *this;
 }
@@ -296,7 +292,7 @@ void dec(Log &log) { log.set_flags(Log::fmt_dec); }
 } // namespace log
 
 namespace {
-template <std::ranges::input_range R>
+template <std::ranges::sized_range R>
 requires(!std::is_array_v<std::remove_cvref_t<R>>)
 std::span<char> copy(R &&src, std::span<char> dest) {
   auto nwrite = std::min(std::ranges::size(src), std::ranges::size(dest));
@@ -349,7 +345,6 @@ std::span<char> copy(T n, std::span<char> dest) {
 }
 } // namespace
 
-namespace {
 // 1 means that character must be escaped as "\xNN", where NN is ascii
 // code of the character in hex notation.
 constexpr uint8_t ESCAPE_TBL[] = {
@@ -406,10 +401,9 @@ constexpr uint8_t ESCAPE_TBL[] = {
   1 /* 0xfa */, 1 /* 0xfb */, 1 /* 0xfc */, 1 /* 0xfd */, 1 /* 0xfe */,
   1 /* 0xff */,
 };
-} // namespace
 
 namespace {
-std::span<char> copy_escape(const std::string_view &src, std::span<char> dest) {
+std::span<char> copy_escape(std::string_view src, std::span<char> dest) {
   auto safe_first = std::ranges::begin(src);
   for (auto p = safe_first; p != std::ranges::end(src) && !dest.empty(); ++p) {
     auto c = as_unsigned(*p);
@@ -670,8 +664,9 @@ void upstream_accesslog(const std::vector<LogFragment> &lfv,
       std::array<uint8_t, 32> buf;
       auto len = tls::get_x509_fingerprint(
         buf.data(), buf.size(), x,
-        lf.type == LogFragmentType::TLS_CLIENT_FINGERPRINT_SHA256 ? EVP_sha256()
-                                                                  : EVP_sha1());
+        lf.type == LogFragmentType::TLS_CLIENT_FINGERPRINT_SHA256
+          ? nghttp2::tls::sha256()
+          : nghttp2::tls::sha1());
 #if !OPENSSL_3_0_0_API
       X509_free(x);
 #endif // !OPENSSL_3_0_0_API
@@ -749,6 +744,13 @@ void upstream_accesslog(const std::vector<LogFragment> &lfv,
       }
       p = copy(downstream_addr->port, p);
       break;
+    case LogFragmentType::TLS_ECH_ACCEPTED:
+      if (!lgsp.ssl) {
+        p = copy('-', p);
+        break;
+      }
+      p = copy(tls::is_ech_accepted(lgsp.ssl) ? 'e' : '.', p);
+      break;
     case LogFragmentType::NONE:
       break;
     default:
@@ -787,7 +789,7 @@ int reopen_log_files(const LoggingConfig &loggingconf) {
     new_accesslog_fd = open_log_file(accessconf.file.data());
 
     if (new_accesslog_fd == -1) {
-      LOG(ERROR) << "Failed to open accesslog file " << accessconf.file;
+      Log{ERROR} << "Failed to open accesslog file " << accessconf.file;
       res = -1;
     }
   }
@@ -797,7 +799,7 @@ int reopen_log_files(const LoggingConfig &loggingconf) {
 
     if (new_errorlog_fd == -1) {
       if (lgconf->errorlog_fd != -1) {
-        LOG(ERROR) << "Failed to open errorlog file " << errorconf.file;
+        Log{ERROR} << "Failed to open errorlog file " << errorconf.file;
       } else {
         std::cerr << "Failed to open errorlog file " << errorconf.file
                   << std::endl;
@@ -834,7 +836,7 @@ void log_chld(pid_t pid, int rstatus, const char *msg) {
     signalstr += ')';
   }
 
-  LOG(NOTICE) << msg << ": [" << pid << "] exited "
+  Log{NOTICE} << msg << ": [" << pid << "] exited "
               << (WIFEXITED(rstatus) ? "normally" : "abnormally")
               << " with status " << log::hex << rstatus << log::dec
               << "; exit status "

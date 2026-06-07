@@ -30,9 +30,7 @@
 
 namespace shrpx {
 
-namespace {
 constexpr size_t MAX_BUFFER_SIZE = 4_k;
-} // namespace
 
 namespace {
 void readcb(struct ev_loop *loop, ev_io *w, int revents) {
@@ -92,8 +90,8 @@ namespace {
 void settings_timeout_cb(struct ev_loop *loop, ev_timer *w, int revents) {
   auto live_check = static_cast<LiveCheck *>(w->data);
 
-  if (LOG_ENABLED(INFO)) {
-    LOG(INFO) << "SETTINGS timeout";
+  if (log_enabled(INFO)) {
+    Log{INFO} << "SETTINGS timeout";
   }
 
   live_check->on_failure();
@@ -166,11 +164,9 @@ void LiveCheck::disconnect() {
 
 // Use the similar backoff algorithm described in
 // https://github.com/grpc/grpc/blob/master/doc/connection-backoff.md
-namespace {
 constexpr size_t MAX_BACKOFF_EXP = 10;
 constexpr auto MULTIPLIER = 1.6;
 constexpr auto JITTER = 0.2;
-} // namespace
 
 void LiveCheck::schedule() {
   auto base_backoff =
@@ -196,8 +192,8 @@ int LiveCheck::initiate_connection() {
 
   auto worker_blocker = worker_->get_connect_blocker();
   if (worker_blocker->blocked()) {
-    if (LOG_ENABLED(INFO)) {
-      LOG(INFO) << "Worker wide backend connection was blocked temporarily";
+    if (log_enabled(INFO)) {
+      Log{INFO} << "Worker wide backend connection was blocked temporarily";
     }
     return -1;
   }
@@ -269,25 +265,25 @@ int LiveCheck::initiate_connection() {
       }
     }
 
-    util::set_port(*resolved_addr_, addr_->port);
+    resolved_addr_->port(addr_->port);
     raddr_ = resolved_addr_.get();
   } else {
     raddr_ = &addr_->addr;
   }
 
-  conn_.fd = util::create_nonblock_socket(raddr_->su.storage.ss_family);
+  conn_.fd = util::create_nonblock_socket(raddr_->family());
 
   if (conn_.fd == -1) {
     auto error = errno;
-    LOG(WARN) << "socket() failed; addr=" << util::to_numeric_addr(raddr_)
+    Log{WARN} << "socket() failed; addr=" << util::to_numeric_addr(raddr_)
               << ", errno=" << error;
     return -1;
   }
 
-  rv = connect(conn_.fd, &raddr_->su.sa, raddr_->len);
+  rv = connect(conn_.fd, raddr_->as_sockaddr(), raddr_->size());
   if (rv != 0 && errno != EINPROGRESS) {
     auto error = errno;
-    LOG(WARN) << "connect() failed; addr=" << util::to_numeric_addr(raddr_)
+    Log{WARN} << "connect() failed; addr=" << util::to_numeric_addr(raddr_)
               << ", errno=" << error;
 
     close(conn_.fd);
@@ -329,16 +325,16 @@ int LiveCheck::initiate_connection() {
 int LiveCheck::connected() {
   auto sock_error = util::get_socket_error(conn_.fd);
   if (sock_error != 0) {
-    if (LOG_ENABLED(INFO)) {
-      LOG(INFO) << "Backend connect failed; addr="
+    if (log_enabled(INFO)) {
+      Log{INFO} << "Backend connect failed; addr="
                 << util::to_numeric_addr(raddr_) << ": errno=" << sock_error;
     }
 
     return -1;
   }
 
-  if (LOG_ENABLED(INFO)) {
-    LOG(INFO) << "Connection established";
+  if (log_enabled(INFO)) {
+    Log{INFO} << "Connection established";
   }
 
   auto &downstreamconf = *get_config()->conn.downstream;
@@ -390,8 +386,8 @@ int LiveCheck::tls_handshake() {
     return rv;
   }
 
-  if (LOG_ENABLED(INFO)) {
-    LOG(INFO) << "SSL/TLS handshake completed";
+  if (log_enabled(INFO)) {
+    Log{INFO} << "SSL/TLS handshake completed";
   }
 
   if (!get_config()->tls.insecure &&
@@ -440,12 +436,13 @@ int LiveCheck::tls_handshake() {
 int LiveCheck::read_tls() {
   conn_.last_read = std::chrono::steady_clock::now();
 
-  std::array<uint8_t, 4_k> buf;
+  std::array<uint8_t, 4_k> rawbuf;
+  auto buf = std::span{rawbuf};
 
   ERR_clear_error();
 
   for (;;) {
-    auto nread = conn_.read_tls(buf.data(), buf.size());
+    auto nread = conn_.read_tls(buf);
 
     if (nread == 0) {
       return 0;
@@ -455,7 +452,7 @@ int LiveCheck::read_tls() {
       return static_cast<int>(nread);
     }
 
-    if (on_read(buf.data(), as_unsigned(nread)) != 0) {
+    if (on_read(buf.first(as_unsigned(nread))) != 0) {
       return -1;
     }
   }
@@ -466,38 +463,31 @@ int LiveCheck::write_tls() {
 
   ERR_clear_error();
 
-  struct iovec iov;
-
   for (;;) {
-    if (wb_.rleft() > 0) {
-      auto iovcnt = wb_.riovec(&iov, 1);
-      if (iovcnt != 1) {
-        assert(0);
+    auto data = wb_.peek();
+    if (data.empty()) {
+      if (on_write() != 0) {
         return -1;
       }
-      auto nwrite = conn_.write_tls(iov.iov_base, iov.iov_len);
 
-      if (nwrite == 0) {
-        return 0;
+      data = wb_.peek();
+      if (data.empty()) {
+        conn_.start_tls_write_idle();
+        break;
       }
-
-      if (nwrite < 0) {
-        return static_cast<int>(nwrite);
-      }
-
-      wb_.drain(as_unsigned(nwrite));
-
-      continue;
     }
 
-    if (on_write() != 0) {
-      return -1;
+    auto nwrite = conn_.write_tls(data);
+
+    if (nwrite == 0) {
+      return 0;
     }
 
-    if (wb_.rleft() == 0) {
-      conn_.start_tls_write_idle();
-      break;
+    if (nwrite < 0) {
+      return static_cast<int>(nwrite);
     }
+
+    wb_.drain(as_unsigned(nwrite));
   }
 
   conn_.wlimit.stopw();
@@ -513,10 +503,11 @@ int LiveCheck::write_tls() {
 int LiveCheck::read_clear() {
   conn_.last_read = std::chrono::steady_clock::now();
 
-  std::array<uint8_t, 4_k> buf;
+  std::array<uint8_t, 4_k> rawbuf;
+  auto buf = std::span{rawbuf};
 
   for (;;) {
-    auto nread = conn_.read_clear(buf.data(), buf.size());
+    auto nread = conn_.read_clear(buf);
 
     if (nread == 0) {
       return 0;
@@ -526,7 +517,7 @@ int LiveCheck::read_clear() {
       return static_cast<int>(nread);
     }
 
-    if (on_read(buf.data(), as_unsigned(nread)) != 0) {
+    if (on_read(buf.first(as_unsigned(nread))) != 0) {
       return -1;
     }
   }
@@ -535,37 +526,30 @@ int LiveCheck::read_clear() {
 int LiveCheck::write_clear() {
   conn_.last_read = std::chrono::steady_clock::now();
 
-  struct iovec iov;
-
   for (;;) {
-    if (wb_.rleft() > 0) {
-      auto iovcnt = wb_.riovec(&iov, 1);
-      if (iovcnt != 1) {
-        assert(0);
+    auto data = wb_.peek();
+    if (data.empty()) {
+      if (on_write() != 0) {
         return -1;
       }
-      auto nwrite = conn_.write_clear(iov.iov_base, iov.iov_len);
 
-      if (nwrite == 0) {
-        return 0;
+      data = wb_.peek();
+      if (data.empty()) {
+        break;
       }
-
-      if (nwrite < 0) {
-        return static_cast<int>(nwrite);
-      }
-
-      wb_.drain(as_unsigned(nwrite));
-
-      continue;
     }
 
-    if (on_write() != 0) {
-      return -1;
+    auto nwrite = conn_.write_clear(data);
+
+    if (nwrite == 0) {
+      return 0;
     }
 
-    if (wb_.rleft() == 0) {
-      break;
+    if (nwrite < 0) {
+      return static_cast<int>(nwrite);
     }
+
+    wb_.drain(as_unsigned(nwrite));
   }
 
   conn_.wlimit.stopw();
@@ -578,10 +562,10 @@ int LiveCheck::write_clear() {
   return 0;
 }
 
-int LiveCheck::on_read(const uint8_t *data, size_t len) {
-  auto rv = nghttp2_session_mem_recv2(session_, data, len);
+int LiveCheck::on_read(std::span<const uint8_t> data) {
+  auto rv = nghttp2_session_mem_recv2(session_, data.data(), data.size());
   if (rv < 0) {
-    LOG(ERROR) << "nghttp2_session_mem_recv2() returned error: "
+    Log{ERROR} << "nghttp2_session_mem_recv2() returned error: "
                << nghttp2_strerror(static_cast<int>(rv));
     return -1;
   }
@@ -596,8 +580,8 @@ int LiveCheck::on_read(const uint8_t *data, size_t len) {
 
   if (nghttp2_session_want_read(session_) == 0 &&
       nghttp2_session_want_write(session_) == 0 && wb_.rleft() == 0) {
-    if (LOG_ENABLED(INFO)) {
-      LOG(INFO) << "No more read/write for this session";
+    if (log_enabled(INFO)) {
+      Log{INFO} << "No more read/write for this session";
     }
 
     // If we have SETTINGS ACK already, we treat this success.
@@ -619,7 +603,7 @@ int LiveCheck::on_write() {
     auto datalen = nghttp2_session_mem_send2(session_, &data);
 
     if (datalen < 0) {
-      LOG(ERROR) << "nghttp2_session_mem_send2() returned error: "
+      Log{ERROR} << "nghttp2_session_mem_send2() returned error: "
                  << nghttp2_strerror(static_cast<int>(datalen));
       return -1;
     }
@@ -635,8 +619,8 @@ int LiveCheck::on_write() {
 
   if (nghttp2_session_want_read(session_) == 0 &&
       nghttp2_session_want_write(session_) == 0 && wb_.rleft() == 0) {
-    if (LOG_ENABLED(INFO)) {
-      LOG(INFO) << "No more read/write for this session";
+    if (log_enabled(INFO)) {
+      Log{INFO} << "No more read/write for this session";
     }
 
     if (settings_ack_received_) {
@@ -652,8 +636,8 @@ int LiveCheck::on_write() {
 void LiveCheck::on_failure() {
   ++fail_count_;
 
-  if (LOG_ENABLED(INFO)) {
-    LOG(INFO) << "Liveness check for " << addr_->host << ":" << addr_->port
+  if (log_enabled(INFO)) {
+    Log{INFO} << "Liveness check for " << addr_->host << ":" << addr_->port
               << " failed " << fail_count_ << " time(s) in a row";
   }
 
@@ -666,8 +650,8 @@ void LiveCheck::on_success() {
   ++success_count_;
   fail_count_ = 0;
 
-  if (LOG_ENABLED(INFO)) {
-    LOG(INFO) << "Liveness check for " << addr_->host << ":" << addr_->port
+  if (log_enabled(INFO)) {
+    Log{INFO} << "Liveness check for " << addr_->host << ":" << addr_->port
               << " succeeded " << success_count_ << " time(s) in a row";
   }
 
@@ -679,7 +663,7 @@ void LiveCheck::on_success() {
     return;
   }
 
-  LOG(NOTICE) << util::to_numeric_addr(&addr_->addr) << " is considered online";
+  Log{NOTICE} << util::to_numeric_addr(&addr_->addr) << " is considered online";
 
   addr_->connect_blocker->online();
 
@@ -769,8 +753,8 @@ int LiveCheck::connection_made() {
     addr_->tls && !nghttp2::tls::check_http2_requirement(conn_.tls.ssl);
 
   if (must_terminate) {
-    if (LOG_ENABLED(INFO)) {
-      LOG(INFO) << "TLSv1.2 was not negotiated. HTTP/2 must not be negotiated.";
+    if (log_enabled(INFO)) {
+      Log{INFO} << "TLSv1.2 was not negotiated. HTTP/2 must not be negotiated.";
     }
 
     rv =

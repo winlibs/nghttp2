@@ -62,8 +62,8 @@ void timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
     return;
   }
 
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, dconn) << "Time out";
+  if (log_enabled(INFO)) {
+    Log{INFO, dconn} << "Time out";
   }
 
   auto downstream = dconn->get_downstream();
@@ -135,8 +135,7 @@ void connect_timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
   auto addr = dconn->get_addr();
   auto raddr = dconn->get_raddr();
 
-  DCLOG(WARN, dconn) << "Connect time out; addr="
-                     << util::to_numeric_addr(raddr);
+  Log{WARN, dconn} << "Connect time out; addr=" << util::to_numeric_addr(raddr);
 
   downstream_failure(addr, raddr);
 
@@ -230,8 +229,8 @@ HttpDownstreamConnection::HttpDownstreamConnection(
     request_header_written_(false) {}
 
 HttpDownstreamConnection::~HttpDownstreamConnection() {
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Deleted";
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Deleted";
   }
 
   if (dns_query_) {
@@ -243,8 +242,8 @@ HttpDownstreamConnection::~HttpDownstreamConnection() {
 int HttpDownstreamConnection::attach_downstream(Downstream *downstream) {
   int rv;
 
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Attaching to DOWNSTREAM:" << downstream;
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Attaching to DOWNSTREAM:" << downstream;
   }
 
   downstream_ = downstream;
@@ -267,7 +266,6 @@ int htp_bodycb(llhttp_t *htp, const char *data, size_t len);
 int htp_msg_completecb(llhttp_t *htp);
 } // namespace
 
-namespace {
 constexpr llhttp_settings_t htp_hooks = {
   .on_message_begin = htp_msg_begincb,
   .on_header_field = htp_hdr_keycb,
@@ -276,15 +274,14 @@ constexpr llhttp_settings_t htp_hooks = {
   .on_body = htp_bodycb,
   .on_message_complete = htp_msg_completecb,
 };
-} // namespace
 
 int HttpDownstreamConnection::initiate_connection() {
   int rv;
 
   auto worker_blocker = worker_->get_connect_blocker();
   if (worker_blocker->blocked()) {
-    if (LOG_ENABLED(INFO)) {
-      DCLOG(INFO, this)
+    if (log_enabled(INFO)) {
+      Log{INFO, this}
         << "Worker wide backend connection was blocked temporarily";
     }
     return SHRPX_ERR_NETWORK;
@@ -302,9 +299,9 @@ int HttpDownstreamConnection::initiate_connection() {
     auto &connect_blocker = addr_->connect_blocker;
 
     if (connect_blocker->blocked()) {
-      if (LOG_ENABLED(INFO)) {
-        DCLOG(INFO, this) << "Backend server " << addr_->host << ":"
-                          << addr_->port << " was not available temporarily";
+      if (log_enabled(INFO)) {
+        Log{INFO, this} << "Backend server " << addr_->host << ":"
+                        << addr_->port << " was not available temporarily";
       }
 
       return SHRPX_ERR_NETWORK;
@@ -361,18 +358,18 @@ int HttpDownstreamConnection::initiate_connection() {
         }
       }
 
+      resolved_addr_->port(addr_->port);
       raddr = resolved_addr_.get();
-      util::set_port(*resolved_addr_, addr_->port);
     } else {
       raddr = &addr_->addr;
     }
 
-    conn_.fd = util::create_nonblock_socket(raddr->su.storage.ss_family);
+    conn_.fd = util::create_nonblock_socket(raddr->family());
 
     if (conn_.fd == -1) {
       auto error = errno;
-      DCLOG(WARN, this) << "socket() failed; addr="
-                        << util::to_numeric_addr(raddr) << ", errno=" << error;
+      Log{WARN, this} << "socket() failed; addr="
+                      << util::to_numeric_addr(raddr) << ", errno=" << error;
 
       worker_blocker->on_failure();
 
@@ -381,19 +378,19 @@ int HttpDownstreamConnection::initiate_connection() {
 
     worker_blocker->on_success();
 
-    rv = connect(conn_.fd, &raddr->su.sa, raddr->len);
+    rv = connect(conn_.fd, raddr->as_sockaddr(), raddr->size());
     if (rv != 0 && errno != EINPROGRESS) {
       auto error = errno;
-      DCLOG(WARN, this) << "connect() failed; addr="
-                        << util::to_numeric_addr(raddr) << ", errno=" << error;
+      Log{WARN, this} << "connect() failed; addr="
+                      << util::to_numeric_addr(raddr) << ", errno=" << error;
 
       downstream_failure(addr_, raddr);
 
       return SHRPX_ERR_NETWORK;
     }
 
-    if (LOG_ENABLED(INFO)) {
-      DCLOG(INFO, this) << "Connecting to downstream server";
+    if (log_enabled(INFO)) {
+      Log{INFO, this} << "Connecting to downstream server";
     }
 
     raddr_ = raddr;
@@ -689,7 +686,7 @@ int HttpDownstreamConnection::push_request_headers() {
 
   buf->append("\r\n"sv);
 
-  if (LOG_ENABLED(INFO)) {
+  if (log_enabled(INFO)) {
     std::string nhdrs;
     for (auto chunk = buf->head; chunk; chunk = chunk->next) {
       nhdrs.append(chunk->pos, chunk->last);
@@ -697,9 +694,9 @@ int HttpDownstreamConnection::push_request_headers() {
     if (log_config()->errorlog_tty) {
       nhdrs = http::colorize_headers(nhdrs);
     }
-    DCLOG(INFO, this) << "HTTP request headers. stream_id="
-                      << downstream_->get_stream_id() << "\n"
-                      << nhdrs;
+    Log{INFO, this} << "HTTP request headers. stream_id="
+                    << downstream_->get_stream_id() << "\n"
+                    << nhdrs;
   }
 
   // Don't call signal_write() if we anticipate request body.  We call
@@ -742,13 +739,13 @@ int HttpDownstreamConnection::process_blocked_request_buf() {
   return 0;
 }
 
-int HttpDownstreamConnection::push_upload_data_chunk(const uint8_t *data,
-                                                     size_t datalen) {
+int HttpDownstreamConnection::push_upload_data_chunk(
+  std::span<const uint8_t> data) {
   if (!downstream_->get_request_header_sent()) {
     auto output = downstream_->get_blocked_request_buf();
     auto &req = downstream_->request();
-    output->append(data, datalen);
-    req.unconsumed_body_length += datalen;
+    output->append(data);
+    req.unconsumed_body_length += data.size();
     if (request_header_written_) {
       signal_write();
     }
@@ -759,12 +756,12 @@ int HttpDownstreamConnection::push_upload_data_chunk(const uint8_t *data,
   auto output = downstream_->get_request_buf();
 
   if (chunked) {
-    output->append(sizeof(datalen) * 2,
-                   std::bind_front(util::CompactHexFormatter{}, datalen));
+    output->append(sizeof(data.size()) * 2,
+                   std::bind_front(util::CompactHexFormatter{}, data.size()));
     output->append("\r\n"sv);
   }
 
-  output->append(data, datalen);
+  output->append(data);
 
   if (chunked) {
     output->append("\r\n"sv);
@@ -822,8 +819,8 @@ namespace {
 void idle_readcb(struct ev_loop *loop, ev_io *w, int revents) {
   auto conn = static_cast<Connection *>(w->data);
   auto dconn = static_cast<HttpDownstreamConnection *>(conn->data);
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, dconn) << "Idle connection EOF";
+  if (log_enabled(INFO)) {
+    Log{INFO, dconn} << "Idle connection EOF";
   }
 
   remove_from_pool(dconn);
@@ -840,8 +837,8 @@ void idle_timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
     return;
   }
 
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, dconn) << "Idle connection timeout";
+  if (log_enabled(INFO)) {
+    Log{INFO, dconn} << "Idle connection timeout";
   }
 
   remove_from_pool(dconn);
@@ -850,8 +847,8 @@ void idle_timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
 } // namespace
 
 void HttpDownstreamConnection::detach_downstream(Downstream *downstream) {
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Detaching from DOWNSTREAM:" << downstream;
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Detaching from DOWNSTREAM:" << downstream;
   }
   downstream_ = nullptr;
 
@@ -1037,8 +1034,8 @@ int htp_hdrs_completecb(llhttp_t *htp) {
       return -1;
     }
     downstream->set_request_state(DownstreamState::HEADER_COMPLETE);
-    if (LOG_ENABLED(INFO)) {
-      LOG(INFO) << "HTTP upgrade success. stream_id="
+    if (log_enabled(INFO)) {
+      Log{INFO} << "HTTP upgrade success. stream_id="
                 << downstream->get_stream_id();
     }
   }
@@ -1061,9 +1058,9 @@ int ensure_header_field_buffer(const Downstream *downstream,
   auto &resp = downstream->response();
 
   if (resp.fs.buffer_size() + len > httpconf.response_header_field_buffer) {
-    if (LOG_ENABLED(INFO)) {
-      DLOG(INFO, downstream)
-        << "Too large header header field size=" << resp.fs.buffer_size() + len;
+    if (log_enabled(INFO)) {
+      Log{INFO, downstream} << "Too large header header field size="
+                            << resp.fs.buffer_size() + len;
     }
     return -1;
   }
@@ -1078,9 +1075,9 @@ int ensure_max_header_fields(const Downstream *downstream,
   auto &resp = downstream->response();
 
   if (resp.fs.num_fields() >= httpconf.max_response_header_fields) {
-    if (LOG_ENABLED(INFO)) {
-      DLOG(INFO, downstream)
-        << "Too many header field num=" << resp.fs.num_fields() + 1;
+    if (log_enabled(INFO)) {
+      Log{INFO, downstream} << "Too many header field num="
+                            << resp.fs.num_fields() + 1;
     }
     return -1;
   }
@@ -1157,7 +1154,7 @@ int htp_bodycb(llhttp_t *htp, const char *data, size_t len) {
   resp.recv_body_length += len;
 
   return downstream->get_upstream()->on_downstream_body(
-    downstream, reinterpret_cast<const uint8_t *>(data), len, true);
+    downstream, as_uint8_span(std::span{data, len}), true);
 }
 } // namespace
 
@@ -1240,11 +1237,12 @@ int HttpDownstreamConnection::write_first() {
 int HttpDownstreamConnection::read_clear() {
   conn_.last_read = std::chrono::steady_clock::now();
 
-  std::array<uint8_t, 16_k> buf;
+  std::array<uint8_t, 16_k> rawbuf;
+  auto buf = std::span{rawbuf};
   int rv;
 
   for (;;) {
-    auto nread = conn_.read_clear(buf.data(), buf.size());
+    auto nread = conn_.read_clear(buf);
     if (nread == 0) {
       return 0;
     }
@@ -1253,9 +1251,9 @@ int HttpDownstreamConnection::read_clear() {
       if (nread == SHRPX_ERR_EOF && !downstream_->get_upgraded()) {
         auto htperr = llhttp_finish(&response_htp_);
         if (htperr != HPE_OK) {
-          if (LOG_ENABLED(INFO)) {
-            DCLOG(INFO, this) << "HTTP response ended prematurely: "
-                              << llhttp_errno_name(htperr);
+          if (log_enabled(INFO)) {
+            Log{INFO, this} << "HTTP response ended prematurely: "
+                            << llhttp_errno_name(htperr);
           }
 
           return -1;
@@ -1265,7 +1263,7 @@ int HttpDownstreamConnection::read_clear() {
       return static_cast<int>(nread);
     }
 
-    rv = process_input(buf.data(), as_unsigned(nread));
+    rv = process_input(buf.first(as_unsigned(nread)));
     if (rv != 0) {
       return rv;
     }
@@ -1282,12 +1280,15 @@ int HttpDownstreamConnection::write_clear() {
   auto upstream = downstream_->get_upstream();
   auto input = downstream_->get_request_buf();
 
-  std::array<struct iovec, MAX_WR_IOVCNT> iov;
+  std::array<struct iovec, MAX_WR_IOVCNT> iovbuf;
 
-  while (input->rleft() > 0) {
-    auto iovcnt = input->riovec(iov.data(), iov.size());
+  for (;;) {
+    auto iov = input->riovec(iovbuf);
+    if (iov.empty()) {
+      break;
+    }
 
-    auto nwrite = conn_.writev_clear(iov.data(), iovcnt);
+    auto nwrite = conn_.writev_clear(iov);
 
     if (nwrite == 0) {
       return 0;
@@ -1338,8 +1339,8 @@ int HttpDownstreamConnection::tls_handshake() {
     return rv;
   }
 
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "SSL/TLS handshake completed";
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "SSL/TLS handshake completed";
   }
 
   if (!get_config()->tls.insecure &&
@@ -1371,11 +1372,12 @@ int HttpDownstreamConnection::read_tls() {
 
   ERR_clear_error();
 
-  std::array<uint8_t, 16_k> buf;
+  std::array<uint8_t, 16_k> rawbuf;
+  auto buf = std::span{rawbuf};
   int rv;
 
   for (;;) {
-    auto nread = conn_.read_tls(buf.data(), buf.size());
+    auto nread = conn_.read_tls(buf);
     if (nread == 0) {
       return 0;
     }
@@ -1384,9 +1386,9 @@ int HttpDownstreamConnection::read_tls() {
       if (nread == SHRPX_ERR_EOF && !downstream_->get_upgraded()) {
         auto htperr = llhttp_finish(&response_htp_);
         if (htperr != HPE_OK) {
-          if (LOG_ENABLED(INFO)) {
-            DCLOG(INFO, this) << "HTTP response ended prematurely: "
-                              << llhttp_errno_name(htperr);
+          if (log_enabled(INFO)) {
+            Log{INFO, this} << "HTTP response ended prematurely: "
+                            << llhttp_errno_name(htperr);
           }
 
           return -1;
@@ -1396,7 +1398,7 @@ int HttpDownstreamConnection::read_tls() {
       return static_cast<int>(nread);
     }
 
-    rv = process_input(buf.data(), as_unsigned(nread));
+    rv = process_input(buf.first(as_unsigned(nread)));
     if (rv != 0) {
       return rv;
     }
@@ -1415,15 +1417,13 @@ int HttpDownstreamConnection::write_tls() {
   auto upstream = downstream_->get_upstream();
   auto input = downstream_->get_request_buf();
 
-  struct iovec iov;
-
-  while (input->rleft() > 0) {
-    auto iovcnt = input->riovec(&iov, 1);
-    if (iovcnt != 1) {
-      assert(0);
-      return -1;
+  for (;;) {
+    auto data = input->peek();
+    if (data.empty()) {
+      break;
     }
-    auto nwrite = conn_.write_tls(iov.iov_base, iov.iov_len);
+
+    auto nwrite = conn_.write_tls(data);
 
     if (nwrite == 0) {
       return 0;
@@ -1449,6 +1449,8 @@ int HttpDownstreamConnection::write_tls() {
   ev_timer_stop(conn_.loop, &conn_.wt);
 
   if (input->rleft() == 0) {
+    conn_.start_tls_write_idle();
+
     auto &req = downstream_->request();
 
     upstream->resume_read(SHRPX_NO_BUFFER, downstream_,
@@ -1458,14 +1460,13 @@ int HttpDownstreamConnection::write_tls() {
   return 0;
 }
 
-int HttpDownstreamConnection::process_input(const uint8_t *data,
-                                            size_t datalen) {
+int HttpDownstreamConnection::process_input(std::span<const uint8_t> data) {
   int rv;
 
   if (downstream_->get_upgraded()) {
     // For upgraded connection, just pass data to the upstream.
-    rv = downstream_->get_upstream()->on_downstream_body(downstream_, data,
-                                                         datalen, true);
+    rv =
+      downstream_->get_upstream()->on_downstream_body(downstream_, data, true);
     if (rv != 0) {
       return rv;
     }
@@ -1478,13 +1479,13 @@ int HttpDownstreamConnection::process_input(const uint8_t *data,
     return 0;
   }
 
-  auto htperr = llhttp_execute(&response_htp_,
-                               reinterpret_cast<const char *>(data), datalen);
+  auto htperr = llhttp_execute(
+    &response_htp_, reinterpret_cast<const char *>(data.data()), data.size());
   auto nproc = htperr == HPE_OK
-                 ? datalen
+                 ? data.size()
                  : static_cast<size_t>(reinterpret_cast<const uint8_t *>(
                                          llhttp_get_error_pos(&response_htp_)) -
-                                       data);
+                                       data.data());
 
   if (htperr != HPE_OK &&
       (!downstream_->get_upgraded() || htperr != HPE_PAUSED_UPGRADE)) {
@@ -1494,20 +1495,20 @@ int HttpDownstreamConnection::process_input(const uint8_t *data,
       return SHRPX_ERR_DCONN_CANCELED;
     }
 
-    if (LOG_ENABLED(INFO)) {
-      DCLOG(INFO, this) << "HTTP parser failure: "
-                        << "(" << llhttp_errno_name(htperr) << ") "
-                        << llhttp_get_error_reason(&response_htp_);
+    if (log_enabled(INFO)) {
+      Log{INFO, this} << "HTTP parser failure: "
+                      << "(" << llhttp_errno_name(htperr) << ") "
+                      << llhttp_get_error_reason(&response_htp_);
     }
 
     return -1;
   }
 
   if (downstream_->get_upgraded()) {
-    if (nproc < datalen) {
+    if (nproc < data.size()) {
       // Data from data + nproc are for upgraded protocol.
       rv = downstream_->get_upstream()->on_downstream_body(
-        downstream_, data + nproc, datalen - nproc, true);
+        downstream_, data.subspan(nproc), true);
       if (rv != 0) {
         return rv;
       }
@@ -1535,17 +1536,17 @@ int HttpDownstreamConnection::connected() {
   if (sock_error != 0) {
     conn_.wlimit.stopw();
 
-    DCLOG(WARN, this) << "Backend connect failed; addr="
-                      << util::to_numeric_addr(raddr_)
-                      << ": errno=" << sock_error;
+    Log{WARN, this} << "Backend connect failed; addr="
+                    << util::to_numeric_addr(raddr_)
+                    << ": errno=" << sock_error;
 
     downstream_failure(addr_, raddr_);
 
     return -1;
   }
 
-  if (LOG_ENABLED(INFO)) {
-    DCLOG(INFO, this) << "Connected to downstream host";
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Connected to downstream host";
   }
 
   // Reset timeout for write.  Previously, we set timeout for connect.

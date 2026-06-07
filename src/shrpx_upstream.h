@@ -56,8 +56,8 @@ public:
   virtual ClientHandler *get_client_handler() const = 0;
 
   virtual int on_downstream_header_complete(Downstream *downstream) = 0;
-  virtual int on_downstream_body(Downstream *downstream, const uint8_t *data,
-                                 size_t len, bool flush) = 0;
+  virtual int on_downstream_body(Downstream *downstream,
+                                 std::span<const uint8_t> data, bool flush) = 0;
   virtual int on_downstream_body_complete(Downstream *downstream) = 0;
 
   virtual void on_handler_delete() = 0;
@@ -70,18 +70,19 @@ public:
   virtual void pause_read(IOCtrlReason reason) = 0;
   virtual int resume_read(IOCtrlReason reason, Downstream *downstream,
                           size_t consumed) = 0;
-  virtual int send_reply(Downstream *downstream, const uint8_t *body,
-                         size_t bodylen) = 0;
+  virtual int send_reply(Downstream *downstream,
+                         std::span<const uint8_t> body) = 0;
 
   // Starts server push.  The |downstream| is an associated stream for
   // the pushed resource.  This function returns 0 if it succeeds,
   // otherwise -1.
-  virtual int initiate_push(Downstream *downstream,
-                            const std::string_view &uri) = 0;
+  virtual int initiate_push(Downstream *downstream, std::string_view uri) = 0;
 
   // Fills response data in |iov| whose capacity is |iovcnt|.  Returns
   // the number of iovs filled.
-  virtual int response_riovec(struct iovec *iov, int iovcnt) const = 0;
+  virtual std::span<struct iovec>
+  response_riovec(std::span<struct iovec> iov) const = 0;
+  virtual std::span<const uint8_t> response_peek() const = 0;
   virtual void response_drain(size_t n) = 0;
   virtual bool response_empty() const = 0;
 
