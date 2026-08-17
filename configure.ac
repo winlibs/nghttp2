@@ -25,7 +25,7 @@ dnl Do not change user variables!
 dnl https://www.gnu.org/software/automake/manual/html_node/Flag-Variables-Ordering.html
 
 AC_PREREQ(2.61)
-AC_INIT([nghttp2], [1.69.0], [t-tujikawa@users.sourceforge.net])
+AC_INIT([nghttp2], [1.70.0], [t-tujikawa@users.sourceforge.net])
 AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([config.h])
@@ -45,7 +45,7 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 dnl See versioning rule:
 dnl  https://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
 AC_SUBST(LT_CURRENT, 43)
-AC_SUBST(LT_REVISION, 4)
+AC_SUBST(LT_REVISION, 5)
 AC_SUBST(LT_AGE, 29)
 
 major=`echo $PACKAGE_VERSION |cut -d. -f1 | sed -e "s/[^0-9]//g"`
@@ -243,7 +243,7 @@ fi
 save_CXXFLAGS="$CXXFLAGS"
 CXXFLAGS=
 
-AX_CXX_COMPILE_STDCXX([20], [], [optional])
+AX_CXX_COMPILE_STDCXX([23], [], [optional])
 
 CXX1XCXXFLAGS="$CXXFLAGS"
 CXXFLAGS="$save_CXXFLAGS"
@@ -532,7 +532,7 @@ fi
 # ngtcp2 (for src)
 have_libngtcp2=no
 if test "x${request_libngtcp2}" != "xno"; then
-  PKG_CHECK_MODULES([LIBNGTCP2], [libngtcp2 >= 1.16.0], [have_libngtcp2=yes],
+  PKG_CHECK_MODULES([LIBNGTCP2], [libngtcp2 >= 1.23.0], [have_libngtcp2=yes],
                     [have_libngtcp2=no])
   if test "x${have_libngtcp2}" = "xno"; then
     AC_MSG_NOTICE($LIBNGTCP2_PKG_ERRORS)
@@ -549,7 +549,7 @@ have_libngtcp2_crypto_wolfssl=no
 if test "x${have_wolfssl_quic}" = "xyes" &&
    test "x${request_libngtcp2}" != "xno"; then
   PKG_CHECK_MODULES([LIBNGTCP2_CRYPTO_WOLFSSL],
-                    [libngtcp2_crypto_wolfssl >= 1.16.0],
+                    [libngtcp2_crypto_wolfssl >= 1.23.0],
                     [have_libngtcp2_crypto_wolfssl=yes],
                     [have_libngtcp2_crypto_wolfssl=no])
   if test "x${have_libngtcp2_crypto_wolfssl}" = "xno"; then
@@ -573,7 +573,7 @@ if test "x${have_ssl_provide_quic_data}" = "xyes" &&
    test "x${have_boringssl_quic}" != "xyes" &&
    test "x${request_libngtcp2}" != "xno"; then
   PKG_CHECK_MODULES([LIBNGTCP2_CRYPTO_QUICTLS],
-                    [libngtcp2_crypto_quictls >= 1.16.0],
+                    [libngtcp2_crypto_quictls >= 1.23.0],
                     [have_libngtcp2_crypto_quictls=yes],
                     [have_libngtcp2_crypto_quictls=no])
   if test "x${have_libngtcp2_crypto_quictls}" = "xno"; then
@@ -598,7 +598,7 @@ if test "x${have_ssl_provide_quic_data}" = "xyes" &&
    test "x${have_libressl}" = "xyes" &&
    test "x${request_libngtcp2}" != "xno"; then
   PKG_CHECK_MODULES([LIBNGTCP2_CRYPTO_LIBRESSL],
-                    [libngtcp2_crypto_libressl >= 1.16.0],
+                    [libngtcp2_crypto_libressl >= 1.23.0],
                     [have_libngtcp2_crypto_libressl=yes],
                     [have_libngtcp2_crypto_libressl=no])
   if test "x${have_libngtcp2_crypto_libressl}" = "xno"; then
@@ -643,7 +643,7 @@ have_libngtcp2_crypto_ossl=no
 if test "x${have_ossl_quic}" = "xyes" &&
    test "x${request_libngtcp2}" != "xno"; then
   PKG_CHECK_MODULES([LIBNGTCP2_CRYPTO_OSSL],
-                    [libngtcp2_crypto_ossl >= 1.16.0],
+                    [libngtcp2_crypto_ossl >= 1.23.0],
                     [have_libngtcp2_crypto_ossl=yes],
                     [have_libngtcp2_crypto_ossl=no])
   if test "x${have_libngtcp2_crypto_ossl}" = "xno"; then
@@ -663,7 +663,7 @@ fi
 # nghttp3 (for src)
 have_libnghttp3=no
 if test "x${request_libnghttp3}" != "xno"; then
-  PKG_CHECK_MODULES([LIBNGHTTP3], [libnghttp3 >= 1.12.0], [have_libnghttp3=yes],
+  PKG_CHECK_MODULES([LIBNGHTTP3], [libnghttp3 >= 1.17.0], [have_libnghttp3=yes],
                     [have_libnghttp3=no])
   if test "x${have_libnghttp3}" = "xno"; then
     AC_MSG_NOTICE($LIBNGHTTP3_PKG_ERRORS)

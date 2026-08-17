@@ -29,6 +29,7 @@
 
 #include <functional>
 #include <random>
+#include <expected>
 
 #include "ssl_compat.h"
 
@@ -44,6 +45,7 @@
 #include <nghttp2/nghttp2.h>
 
 #include "shrpx_connection.h"
+#include "errors.h"
 
 namespace shrpx {
 
@@ -62,32 +64,32 @@ public:
   void on_success();
   void on_failure();
 
-  int initiate_connection();
+  std::expected<void, Error> initiate_connection();
 
   // Schedules next connection attempt
   void schedule();
 
   // Low level I/O operation callback; they are called from do_read()
   // or do_write().
-  int noop();
-  int connected();
-  int tls_handshake();
-  int read_tls();
-  int write_tls();
-  int read_clear();
-  int write_clear();
+  std::expected<void, Error> noop() { return {}; }
+  std::expected<void, Error> connected();
+  std::expected<void, Error> tls_handshake();
+  std::expected<void, Error> read_tls();
+  std::expected<void, Error> write_tls();
+  std::expected<void, Error> read_clear();
+  std::expected<void, Error> write_clear();
 
-  int do_read();
-  int do_write();
+  std::expected<void, Error> do_read();
+  std::expected<void, Error> do_write();
 
   // These functions are used to feed / extract data to
   // nghttp2_session object.
-  int on_read(std::span<const uint8_t> data);
-  int on_write();
+  std::expected<void, Error> on_read(std::span<const uint8_t> data);
+  std::expected<void, Error> on_write();
 
   // Call this function when HTTP/2 connection was established.  We
   // don't call this function for HTTP/1 at the moment.
-  int connection_made();
+  std::expected<void, Error> connection_made();
 
   void start_settings_timer();
   void stop_settings_timer();
@@ -103,28 +105,30 @@ private:
   std::mt19937 &gen_;
   ev_timer backoff_timer_;
   ev_timer settings_timer_;
-  std::function<int(LiveCheck &)> read_, write_;
+  std::function<std::expected<void, Error>(LiveCheck &)> read_{
+    &LiveCheck::noop},
+    write_{&LiveCheck::noop};
   Worker *worker_;
   // nullptr if no TLS is configured
   SSL_CTX *ssl_ctx_;
   // Address of remote endpoint
   DownstreamAddr *addr_;
-  nghttp2_session *session_;
+  nghttp2_session *session_{};
   // Actual remote address used to contact backend.  This is initially
   // nullptr, and may point to either &addr_->addr, or
   // resolved_addr_.get().
-  const Address *raddr_;
+  const Address *raddr_{};
   // Resolved IP address if dns parameter is used
   std::unique_ptr<Address> resolved_addr_;
   std::unique_ptr<DNSQuery> dns_query_;
   // The number of successful connect attempt in a row.
-  size_t success_count_;
+  size_t success_count_{};
   // The number of unsuccessful connect attempt in a row.
-  size_t fail_count_;
+  size_t fail_count_{};
   // true when SETTINGS ACK has been received from server.
-  bool settings_ack_received_;
+  bool settings_ack_received_{};
   // true when GOAWAY has been queued.
-  bool session_closing_;
+  bool session_closing_{};
 };
 
 } // namespace shrpx

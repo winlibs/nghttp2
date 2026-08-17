@@ -28,8 +28,8 @@
 /* Define to 1 if you have the `clock_gettime' function. */
 #undef HAVE_CLOCK_GETTIME
 
-/* define if the compiler supports basic C++20 syntax */
-#undef HAVE_CXX20
+/* define if the compiler supports basic C++23 syntax */
+#undef HAVE_CXX23
 
 /* Define to 1 if you have the declaration of `CLOCK_MONOTONIC', and to 0 if
    you don't. */

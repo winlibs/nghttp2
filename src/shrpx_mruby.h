@@ -28,11 +28,13 @@
 #include "shrpx.h"
 
 #include <memory>
+#include <expected>
 
 #include <mruby.h>
 #include <mruby/proc.h>
 
 #include "template.h"
+#include "errors.h"
 
 using namespace nghttp2;
 
@@ -47,10 +49,10 @@ public:
   MRubyContext(mrb_state *mrb, mrb_value app, mrb_value env);
   ~MRubyContext();
 
-  int run_on_request_proc(Downstream *downstream);
-  int run_on_response_proc(Downstream *downstream);
+  std::expected<void, Error> run_on_request_proc(Downstream *downstream);
+  std::expected<void, Error> run_on_response_proc(Downstream *downstream);
 
-  int run_app(Downstream *downstream, int phase);
+  std::expected<void, Error> run_app(Downstream *downstream, int phase);
 
   void delete_downstream(Downstream *downstream);
 
@@ -71,9 +73,11 @@ struct MRubyAssocData {
   int phase;
 };
 
-RProc *compile(mrb_state *mrb, std::string_view filename);
+std::expected<RProc *, Error> compile(mrb_state *mrb,
+                                      std::string_view filename);
 
-std::unique_ptr<MRubyContext> create_mruby_context(std::string_view filename);
+std::expected<std::unique_ptr<MRubyContext>, Error>
+create_mruby_context(std::string_view filename);
 
 // Return interned |ptr|.
 mrb_sym intern_ptr(mrb_state *mrb, void *ptr);

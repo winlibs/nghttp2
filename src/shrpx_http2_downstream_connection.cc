@@ -48,10 +48,7 @@ using namespace nghttp2;
 namespace shrpx {
 
 Http2DownstreamConnection::Http2DownstreamConnection(Http2Session *http2session)
-  : dlnext(nullptr),
-    dlprev(nullptr),
-    http2session_(http2session),
-    sd_(nullptr) {}
+  : http2session_(http2session) {}
 
 Http2DownstreamConnection::~Http2DownstreamConnection() {
   if (log_enabled(INFO)) {
@@ -73,11 +70,11 @@ Http2DownstreamConnection::~Http2DownstreamConnection() {
 
     if (http2session_->get_state() == Http2SessionState::CONNECTED &&
         downstream_->get_downstream_stream_id() != -1) {
-      submit_rst_stream(downstream_, error_code);
+      (void)submit_rst_stream(downstream_, error_code);
 
       auto &resp = downstream_->response();
 
-      http2session_->consume(
+      (void)http2session_->consume(
         static_cast<int32_t>(downstream_->get_downstream_stream_id()),
         resp.unconsumed_body_length);
 
@@ -93,7 +90,8 @@ Http2DownstreamConnection::~Http2DownstreamConnection() {
   }
 }
 
-int Http2DownstreamConnection::attach_downstream(Downstream *downstream) {
+std::expected<void, Error>
+Http2DownstreamConnection::attach_downstream(Downstream *downstream) {
   if (log_enabled(INFO)) {
     Log{INFO, this} << "Attaching to DOWNSTREAM:" << downstream;
   }
@@ -110,10 +108,11 @@ int Http2DownstreamConnection::attach_downstream(Downstream *downstream) {
     req.upgrade_request = false;
   }
 
-  return 0;
+  return {};
 }
 
-void Http2DownstreamConnection::detach_downstream(Downstream *downstream) {
+std::expected<void, Error>
+Http2DownstreamConnection::detach_downstream(Downstream *downstream) {
   if (log_enabled(INFO)) {
     Log{INFO, this} << "Detaching from DOWNSTREAM:" << downstream;
   }
@@ -121,13 +120,18 @@ void Http2DownstreamConnection::detach_downstream(Downstream *downstream) {
   auto &resp = downstream_->response();
 
   if (downstream_->get_downstream_stream_id() != -1) {
-    if (submit_rst_stream(downstream) == 0) {
-      http2session_->signal_write();
+    if (auto rv = submit_rst_stream(downstream); !rv) {
+      return rv;
     }
 
-    http2session_->consume(
-      static_cast<int32_t>(downstream_->get_downstream_stream_id()),
-      resp.unconsumed_body_length);
+    http2session_->signal_write();
+
+    if (auto rv = http2session_->consume(
+          static_cast<int32_t>(downstream_->get_downstream_stream_id()),
+          resp.unconsumed_body_length);
+        !rv) {
+      return rv;
+    }
 
     resp.unconsumed_body_length = 0;
 
@@ -137,17 +141,19 @@ void Http2DownstreamConnection::detach_downstream(Downstream *downstream) {
   downstream->disable_downstream_rtimer();
   downstream->disable_downstream_wtimer();
   downstream_ = nullptr;
+
+  return {};
 }
 
-int Http2DownstreamConnection::submit_rst_stream(Downstream *downstream,
-                                                 uint32_t error_code) {
-  int rv = -1;
+std::expected<void, Error>
+Http2DownstreamConnection::submit_rst_stream(Downstream *downstream,
+                                             uint32_t error_code) {
   if (http2session_->get_state() == Http2SessionState::CONNECTED &&
       downstream->get_downstream_stream_id() != -1) {
     switch (downstream->get_response_state()) {
     case DownstreamState::MSG_RESET:
     case DownstreamState::MSG_BAD_HEADER:
-      return rv;
+      return std::unexpected{Error::INTERNAL};
     default:
       break;
     }
@@ -158,10 +164,10 @@ int Http2DownstreamConnection::submit_rst_stream(Downstream *downstream,
                       << downstream->get_downstream_stream_id()
                       << ", error_code=" << error_code;
     }
-    rv = http2session_->submit_rst_stream(
+    return http2session_->submit_rst_stream(
       static_cast<int32_t>(downstream->get_downstream_stream_id()), error_code);
   }
-  return rv;
+  return std::unexpected{Error::INTERNAL};
 }
 
 namespace {
@@ -220,7 +226,9 @@ nghttp2_ssize http2_data_read_callback(nghttp2_session *session,
   }
 
   if (nread == 0 && (*data_flags & NGHTTP2_DATA_FLAG_EOF) == 0) {
-    downstream->disable_downstream_wtimer();
+    if (input->rleft() == 0) {
+      downstream->disable_downstream_wtimer();
+    }
 
     return NGHTTP2_ERR_DEFERRED;
   }
@@ -229,10 +237,9 @@ nghttp2_ssize http2_data_read_callback(nghttp2_session *session,
 }
 } // namespace
 
-int Http2DownstreamConnection::push_request_headers() {
-  int rv;
+std::expected<void, Error> Http2DownstreamConnection::push_request_headers() {
   if (!downstream_) {
-    return 0;
+    return {};
   }
   if (!http2session_->can_push_request(downstream_)) {
     // The HTTP2 session to the backend has not been established or
@@ -240,7 +247,7 @@ int Http2DownstreamConnection::push_request_headers() {
     // again just after it is established.
     downstream_->set_request_pending(true);
     http2session_->start_checking_connection();
-    return 0;
+    return {};
   }
 
   downstream_->set_request_pending(false);
@@ -249,7 +256,7 @@ int Http2DownstreamConnection::push_request_headers() {
 
   if (req.connect_proto != ConnectProto::NONE &&
       !http2session_->get_allow_connect_proto()) {
-    return -1;
+    return std::unexpected{Error::INTERNAL};
   }
 
   auto &balloc = downstream_->get_block_allocator();
@@ -464,18 +471,25 @@ int Http2DownstreamConnection::push_request_headers() {
   }
 
   if (log_enabled(INFO)) {
-    std::stringstream ss;
+    std::string ss;
     for (auto &nv : nva) {
       auto name = as_string_view(nv.name, nv.namelen);
 
       if ("authorization"sv == name) {
-        ss << TTY_HTTP_HD << name << TTY_RST << ": <redacted>\n";
+        ss += tty_http_hd();
+        ss += name;
+        ss += tty_rst();
+        ss += ": <redacted>\n";
         continue;
       }
-      ss << TTY_HTTP_HD << name << TTY_RST << ": "
-         << as_string_view(nv.value, nv.valuelen) << "\n";
+      ss += tty_http_hd();
+      ss += name;
+      ss += tty_rst();
+      ss += ": ";
+      ss += as_string_view(nv.value, nv.valuelen);
+      ss += '\n';
     }
-    Log{INFO, this} << "HTTP request headers\n" << ss.str();
+    Log{INFO, this} << "HTTP request headers\n" << ss;
   }
 
   auto transfer_encoding = req.fs.header(http2::HD_TRANSFER_ENCODING);
@@ -492,84 +506,79 @@ int Http2DownstreamConnection::push_request_headers() {
     data_prdptr = &data_prd;
   }
 
-  rv = http2session_->submit_request(this, nva.data(), nva.size(), data_prdptr);
-  if (rv != 0) {
+  if (auto rv = http2session_->submit_request(this, nva.data(), nva.size(),
+                                              data_prdptr);
+      !rv) {
     Log{FATAL, this} << "nghttp2_submit_request() failed";
-    return -1;
+    return rv;
   }
 
-  if (data_prdptr) {
+  if (downstream_->get_buffered_request_body_length()) {
     downstream_->reset_downstream_wtimer();
   }
 
   http2session_->signal_write();
-  return 0;
+  return {};
 }
 
-int Http2DownstreamConnection::push_upload_data_chunk(
+std::expected<void, Error> Http2DownstreamConnection::push_upload_data_chunk(
   std::span<const uint8_t> data) {
   if (!downstream_->get_request_header_sent()) {
     auto output = downstream_->get_blocked_request_buf();
     auto &req = downstream_->request();
     output->append(data);
     req.unconsumed_body_length += data.size();
-    return 0;
+    return {};
   }
 
-  int rv;
   auto output = downstream_->get_request_buf();
   output->append(data);
   if (downstream_->get_downstream_stream_id() != -1) {
-    rv = http2session_->resume_data(this);
-    if (rv != 0) {
-      return -1;
+    if (auto rv = http2session_->resume_data(this); !rv) {
+      return rv;
     }
 
     downstream_->ensure_downstream_wtimer();
 
     http2session_->signal_write();
   }
-  return 0;
+  return {};
 }
 
-int Http2DownstreamConnection::end_upload_data() {
+std::expected<void, Error> Http2DownstreamConnection::end_upload_data() {
   if (!downstream_->get_request_header_sent()) {
     downstream_->set_blocked_request_data_eof(true);
-    return 0;
+    return {};
   }
 
-  int rv;
   if (downstream_->get_downstream_stream_id() != -1) {
-    rv = http2session_->resume_data(this);
-    if (rv != 0) {
-      return -1;
+    if (auto rv = http2session_->resume_data(this); !rv) {
+      return rv;
     }
 
     downstream_->ensure_downstream_wtimer();
 
     http2session_->signal_write();
   }
-  return 0;
+  return {};
 }
 
-int Http2DownstreamConnection::resume_read(IOCtrlReason reason,
-                                           size_t consumed) {
-  int rv;
-
+std::expected<void, Error>
+Http2DownstreamConnection::resume_read(IOCtrlReason reason, size_t consumed) {
   if (http2session_->get_state() != Http2SessionState::CONNECTED) {
-    return 0;
+    return {};
   }
 
   if (!downstream_ || downstream_->get_downstream_stream_id() == -1) {
-    return 0;
+    return {};
   }
 
   if (consumed > 0) {
-    rv = http2session_->consume(
-      static_cast<int32_t>(downstream_->get_downstream_stream_id()), consumed);
-
-    if (rv != 0) {
-      return -1;
+    if (auto rv = http2session_->consume(
+          static_cast<int32_t>(downstream_->get_downstream_stream_id()),
+          consumed);
+        !rv) {
+      return rv;
     }
 
     auto &resp = downstream_->response();
@@ -579,12 +588,8 @@ int Http2DownstreamConnection::resume_read(IOCtrlReason reason,
     http2session_->signal_write();
   }
 
-  return 0;
+  return {};
 }
-
-int Http2DownstreamConnection::on_read() { return 0; }
-
-int Http2DownstreamConnection::on_write() { return 0; }
 
 void Http2DownstreamConnection::attach_stream_data(StreamData *sd) {
   // It is possible sd->dconn is not NULL. sd is detached when
@@ -607,12 +612,18 @@ StreamData *Http2DownstreamConnection::detach_stream_data() {
   return nullptr;
 }
 
-int Http2DownstreamConnection::on_timeout() {
+std::expected<void, Error> Http2DownstreamConnection::on_timeout() {
   if (!downstream_) {
-    return 0;
+    return {};
   }
 
-  return submit_rst_stream(downstream_, NGHTTP2_NO_ERROR);
+  if (auto rv = submit_rst_stream(downstream_, NGHTTP2_NO_ERROR); !rv) {
+    return rv;
+  }
+
+  http2session_->signal_write();
+
+  return {};
 }
 
 const std::shared_ptr<DownstreamAddrGroup> &

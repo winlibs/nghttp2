@@ -33,6 +33,7 @@
 #include <memory>
 #include <chrono>
 #include <algorithm>
+#include <expected>
 
 #include <ev.h>
 
@@ -49,6 +50,7 @@
 #include "http2.h"
 #include "memchunk.h"
 #include "allocator.h"
+#include "errors.h"
 
 using namespace nghttp2;
 
@@ -63,11 +65,7 @@ struct DownstreamAddr;
 class FieldStore {
 public:
   FieldStore(BlockAllocator &balloc, size_t headers_initial_capacity)
-    : content_length(-1),
-      balloc_(balloc),
-      buffer_size_(0),
-      header_key_prev_(false),
-      trailer_key_prev_(false) {
+    : balloc_(balloc) {
     headers_.reserve(headers_initial_capacity);
   }
 
@@ -104,9 +102,8 @@ public:
 
   bool header_key_prev() const { return header_key_prev_; }
 
-  // Parses content-length, and records it in the field.  If there are
-  // multiple Content-Length, returns -1.
-  int parse_content_length();
+  // Parses content-length, and records it in the field.
+  std::expected<void, Error> parse_content_length();
 
   // Empties headers.
   void clear_headers();
@@ -129,7 +126,7 @@ public:
   void erase_content_length_and_transfer_encoding();
 
   // content-length, -1 if it is unknown.
-  int64_t content_length;
+  int64_t content_length{-1};
 
 private:
   BlockAllocator &balloc_;
@@ -140,9 +137,9 @@ private:
   // Sum of the length of name and value in headers_ and trailers_.
   // This could also be increased by add_extra_buffer_size() to take
   // into account for request URI in case of HTTP/1.x request.
-  size_t buffer_size_;
-  bool header_key_prev_;
-  bool trailer_key_prev_;
+  size_t buffer_size_{};
+  bool header_key_prev_{};
+  bool trailer_key_prev_{};
 };
 
 // Protocols allowed in HTTP/2 :protocol header field.
@@ -152,21 +149,7 @@ enum class ConnectProto {
 };
 
 struct Request {
-  Request(BlockAllocator &balloc)
-    : fs(balloc, 16),
-      recv_body_length(0),
-      unconsumed_body_length(0),
-      method(-1),
-      http_major(1),
-      http_minor(1),
-      connect_proto(ConnectProto::NONE),
-      upgrade_request(false),
-      http2_upgrade_seen(false),
-      connection_close(false),
-      http2_expect_body(false),
-      no_authority(false),
-      forwarded_once(false),
-      http1_msg_complete(false) {}
+  Request(BlockAllocator &balloc) : fs(balloc, 16) {}
 
   void consume(size_t len) {
     assert(unconsumed_body_length >= len);
@@ -204,50 +187,42 @@ struct Request {
   // mruby script.
   std::string_view orig_path;
   // the length of request body received so far
-  int64_t recv_body_length;
+  int64_t recv_body_length{};
   // The number of bytes not consumed by the application yet.
-  size_t unconsumed_body_length;
-  int method;
+  size_t unconsumed_body_length{};
+  int method{-1};
   // HTTP major and minor version
-  int http_major, http_minor;
+  int http_major{1}, http_minor{1};
   // connect_proto specified in HTTP/2 :protocol pseudo header field
   // which enables extended CONNECT method.  This field is also set if
   // WebSocket upgrade is requested in h1 frontend for convenience.
-  ConnectProto connect_proto;
+  ConnectProto connect_proto{ConnectProto::NONE};
   // Returns true if the request is HTTP upgrade (HTTP Upgrade or
   // CONNECT method).  Upgrade to HTTP/2 is excluded.  For HTTP/2
   // Upgrade, check get_http2_upgrade_request().
-  bool upgrade_request;
+  bool upgrade_request{};
   // true if h2c is seen in Upgrade header field.
-  bool http2_upgrade_seen;
-  bool connection_close;
+  bool http2_upgrade_seen{};
+  bool connection_close{};
   // true if this is HTTP/2, and request body is expected.  Note that
   // we don't take into account HTTP method here.
-  bool http2_expect_body;
+  bool http2_expect_body{};
   // true if request does not have any information about authority.
   // This happens when: For HTTP/2 request, :authority is missing.
   // For HTTP/1 request, origin or asterisk form is used.
-  bool no_authority;
+  bool no_authority{};
   // true if backend selection is done for request once.
   // orig_authority and orig_path have the authority and path which
   // are used for the first backend selection.
-  bool forwarded_once;
+  bool forwarded_once{};
   // true if HTTP/1 request message has been completed.  This field is
   // added because Downstream::get_request_state() might be altered
   // from DownstreamState::MSG_COMPLETE.
-  bool http1_msg_complete;
+  bool http1_msg_complete{};
 };
 
 struct Response {
-  Response(BlockAllocator &balloc)
-    : fs(balloc, 32),
-      recv_body_length(0),
-      unconsumed_body_length(0),
-      http_status(0),
-      http_major(1),
-      http_minor(1),
-      connection_close(false),
-      headers_only(false) {}
+  Response(BlockAllocator &balloc) : fs(balloc, 32) {}
 
   void consume(size_t len) {
     assert(unconsumed_body_length >= len);
@@ -290,18 +265,18 @@ struct Response {
     std::tuple<std::string_view, std::string_view, std::string_view>>>
     pushed_resources;
   // the length of response body received so far
-  int64_t recv_body_length;
+  int64_t recv_body_length{};
   // The number of bytes not consumed by the application yet.  This is
   // mainly for HTTP/2 backend.
-  size_t unconsumed_body_length;
+  size_t unconsumed_body_length{};
   // HTTP status code
-  unsigned int http_status;
-  int http_major, http_minor;
-  bool connection_close;
+  unsigned int http_status{};
+  int http_major{1}, http_minor{1};
+  bool connection_close{};
   // true if response only consists of HEADERS, and it bears
   // END_STREAM.  This is used to tell Http2Upstream that it can send
   // response with single HEADERS with END_STREAM flag only.
-  bool headers_only;
+  bool headers_only{};
 };
 
 enum class DownstreamState {
@@ -339,14 +314,15 @@ public:
   void set_assoc_stream_id(int64_t stream_id);
   int64_t get_assoc_stream_id() const;
   void pause_read(IOCtrlReason reason);
-  int resume_read(IOCtrlReason reason, size_t consumed);
+  std::expected<void, Error> resume_read(IOCtrlReason reason, size_t consumed);
   void force_resume_read();
   // Set stream ID for downstream HTTP2 connection.
   void set_downstream_stream_id(int64_t stream_id);
   int64_t get_downstream_stream_id() const;
 
-  int attach_downstream_connection(std::unique_ptr<DownstreamConnection> dconn);
-  void detach_downstream_connection();
+  std::expected<void, Error>
+  attach_downstream_connection(std::unique_ptr<DownstreamConnection> dconn);
+  std::expected<void, Error> detach_downstream_connection();
   DownstreamConnection *get_downstream_connection();
   // Returns dconn_ and nullifies dconn_.
   std::unique_ptr<DownstreamConnection> pop_downstream_connection();
@@ -386,15 +362,14 @@ public:
   // crumble_request_cookie().
   std::string_view assemble_request_cookie();
 
-  void
-  set_request_start_time(std::chrono::high_resolution_clock::time_point time);
-  const std::chrono::high_resolution_clock::time_point &
-  get_request_start_time() const;
-  int push_request_headers();
+  void set_request_start_time(std::chrono::steady_clock::time_point time);
+  std::chrono::steady_clock::time_point get_request_start_time() const;
+  std::expected<void, Error> push_request_headers();
   bool get_chunked_request() const;
   void set_chunked_request(bool f);
-  int push_upload_data_chunk(std::span<const uint8_t> data);
-  int end_upload_data();
+  std::expected<void, Error>
+  push_upload_data_chunk(std::span<const uint8_t> data);
+  std::expected<void, Error> end_upload_data();
   // Validates that received request body length and content-length
   // matches.
   bool validate_request_recv_body_length() const;
@@ -452,7 +427,7 @@ public:
 
   // Call this method when there is incoming data in downstream
   // connection.
-  int on_read();
+  std::expected<void, Error> on_read();
 
   void repeat_header_timer();
   void stop_header_timer();
@@ -479,6 +454,9 @@ public:
   void ensure_downstream_wtimer();
   void disable_downstream_rtimer();
   void disable_downstream_wtimer();
+
+  void register_upstream_write_rate_timer();
+  void unregister_upstream_write_rate_timer();
 
   // Returns true if accesslog can be written for this downstream.
   bool accesslog_ready() const;
@@ -533,18 +511,30 @@ public:
   bool get_stop_reading() const;
   void set_stop_reading(bool f);
 
+  size_t get_buffered_request_body_length() const {
+    return blocked_request_buf_.rleft() + request_buf_.rleft();
+  }
+
+  void set_upstream_write_rate_member(bool b) {
+    upstream_write_rate_member_ = b;
+  }
+
+  bool is_upstream_write_rate_member() const {
+    return upstream_write_rate_member_;
+  }
+
   enum {
     EVENT_ERROR = 0x1,
     EVENT_TIMEOUT = 0x2,
   };
 
-  Downstream *dlnext, *dlprev;
+  Downstream *dlnext{}, *dlprev{};
 
   // the length of response body sent to upstream client
-  int64_t response_sent_body_length;
+  int64_t response_sent_body_length{};
 
 private:
-  BlockAllocator balloc_;
+  BlockAllocator balloc_{1024, 1024};
 
   std::vector<nghttp2_rcbuf *> rcbufs_;
 #ifdef ENABLE_HTTP3
@@ -554,7 +544,7 @@ private:
   Request req_;
   Response resp_;
 
-  std::chrono::high_resolution_clock::time_point request_start_time_;
+  std::chrono::steady_clock::time_point request_start_time_;
 
   // host we requested to downstream.  This is used to rewrite
   // location header field to decide the location should be rewritten
@@ -583,55 +573,56 @@ private:
   std::unique_ptr<DownstreamConnection> dconn_;
 
   // only used by HTTP/2 upstream
-  BlockedLink *blocked_link_;
+  BlockedLink *blocked_link_{};
   // The backend address used to fulfill this request.  These are for
   // logging purpose.
   std::shared_ptr<DownstreamAddrGroup> group_;
-  const DownstreamAddr *addr_;
+  const DownstreamAddr *addr_{};
   // How many times we tried in backend connection
-  size_t num_retry_;
+  size_t num_retry_{};
   // The stream ID in frontend connection
   int64_t stream_id_;
   // The associated stream ID in frontend connection if this is pushed
   // stream.
-  int64_t assoc_stream_id_;
+  int64_t assoc_stream_id_{-1};
   // stream ID in backend connection
-  int64_t downstream_stream_id_;
+  int64_t downstream_stream_id_{-1};
   // RST_STREAM error_code from downstream HTTP2 connection
-  uint32_t response_rst_stream_error_code_;
+  uint32_t response_rst_stream_error_code_{NGHTTP2_NO_ERROR};
   // An affinity cookie value.
-  uint32_t affinity_cookie_;
+  uint32_t affinity_cookie_{};
   // request state
-  DownstreamState request_state_;
+  DownstreamState request_state_{DownstreamState::INITIAL};
   // response state
-  DownstreamState response_state_;
+  DownstreamState response_state_{DownstreamState::INITIAL};
   // only used by HTTP/2 upstream
-  DispatchState dispatch_state_;
+  DispatchState dispatch_state_{DispatchState::NONE};
   // true if the connection is upgraded (HTTP Upgrade or CONNECT),
   // excluding upgrade to HTTP/2.
-  bool upgraded_;
+  bool upgraded_{};
   // true if backend request uses chunked transfer-encoding
-  bool chunked_request_;
+  bool chunked_request_{};
   // true if response to client uses chunked transfer-encoding
-  bool chunked_response_;
+  bool chunked_response_{};
   // true if we have not got final response code
-  bool expect_final_response_;
+  bool expect_final_response_{};
   // true if downstream request is pending because backend connection
   // has not been established or should be checked before use;
   // currently used only with HTTP/2 connection.
-  bool request_pending_;
+  bool request_pending_{};
   // true if downstream request header is considered to be sent.
-  bool request_header_sent_;
+  bool request_header_sent_{};
   // true if access.log has been written.
-  bool accesslog_written_;
+  bool accesslog_written_{};
   // true if affinity cookie is generated for this request.
-  bool new_affinity_cookie_;
+  bool new_affinity_cookie_{};
   // true if eof is received from client before sending header fields
   // to backend.
-  bool blocked_request_data_eof_;
+  bool blocked_request_data_eof_{};
   // true if request contains "expect: 100-continue" header field.
-  bool expect_100_continue_;
-  bool stop_reading_;
+  bool expect_100_continue_{};
+  bool stop_reading_{};
+  bool upstream_write_rate_member_{};
 };
 
 } // namespace shrpx

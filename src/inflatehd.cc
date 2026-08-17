@@ -37,7 +37,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <vector>
-#include <iostream>
+#include <print>
 
 #include <jansson.h>
 
@@ -103,12 +103,12 @@ static int inflate_hd(json_t *obj, nghttp2_hd_inflater *inflater, int seq) {
   auto wire = json_object_get(obj, "wire");
 
   if (wire == nullptr) {
-    fprintf(stderr, "'wire' key is missing at %d\n", seq);
+    std::println(stderr, "'wire' key is missing at {}", seq);
     return -1;
   }
 
   if (!json_is_string(wire)) {
-    fprintf(stderr, "'wire' value is not string at %d\n", seq);
+    std::println(stderr, "'wire' value is not string at {}", seq);
     return -1;
   }
 
@@ -116,17 +116,17 @@ static int inflate_hd(json_t *obj, nghttp2_hd_inflater *inflater, int seq) {
 
   if (table_size) {
     if (!json_is_integer(table_size)) {
-      fprintf(stderr,
-              "The value of 'header_table_size key' is not integer at %d\n",
-              seq);
+      std::println(stderr,
+                   "The value of 'header_table_size key' is not integer at {}",
+                   seq);
       return -1;
     }
     auto rv = nghttp2_hd_inflate_change_table_size(
       inflater, static_cast<size_t>(json_integer_value(table_size)));
     if (rv != 0) {
-      fprintf(stderr,
-              "nghttp2_hd_change_table_size() failed with error %s at %d\n",
-              nghttp2_strerror(rv), seq);
+      std::println(stderr,
+                   "nghttp2_hd_change_table_size() failed with error {} at {}",
+                   nghttp2_strerror(rv), seq);
       return -1;
     }
   }
@@ -134,7 +134,7 @@ static int inflate_hd(json_t *obj, nghttp2_hd_inflater *inflater, int seq) {
   auto inputlen = strlen(json_string_value(wire));
 
   if (inputlen & 1) {
-    fprintf(stderr, "Badly formatted output value at %d\n", seq);
+    std::println(stderr, "Badly formatted output value at {}", seq);
     exit(EXIT_FAILURE);
   }
 
@@ -151,7 +151,7 @@ static int inflate_hd(json_t *obj, nghttp2_hd_inflater *inflater, int seq) {
     auto rv =
       nghttp2_hd_inflate_hd3(inflater, &nv, &inflate_flags, p, buflen, 1);
     if (rv < 0) {
-      fprintf(stderr, "inflate failed with error code %zd at %d\n", rv, seq);
+      std::println(stderr, "inflate failed with error code {} at {}", rv, seq);
       exit(EXIT_FAILURE);
     }
     p += rv;
@@ -179,19 +179,19 @@ static int perform(void) {
   auto json = json_loadf(stdin, 0, &error);
 
   if (json == nullptr) {
-    fprintf(stderr, "JSON loading failed\n");
+    std::println(stderr, "JSON loading failed");
     exit(EXIT_FAILURE);
   }
 
   auto cases = json_object_get(json, "cases");
 
   if (cases == nullptr) {
-    fprintf(stderr, "Missing 'cases' key in root object\n");
+    std::println(stderr, "Missing 'cases' key in root object");
     exit(EXIT_FAILURE);
   }
 
   if (!json_is_array(cases)) {
-    fprintf(stderr, "'cases' must be JSON array\n");
+    std::println(stderr, "'cases' must be JSON array");
     exit(EXIT_FAILURE);
   }
 
@@ -202,7 +202,8 @@ static int perform(void) {
   for (size_t i = 0; i < len; ++i) {
     auto obj = json_array_get(cases, i);
     if (!json_is_object(obj)) {
-      fprintf(stderr, "Unexpected JSON type at %zu. It should be object.\n", i);
+      std::println(stderr, "Unexpected JSON type at {}. It should be object.",
+                   i);
       continue;
     }
     if (inflate_hd(obj, inflater, static_cast<int>(i)) != 0) {
@@ -220,7 +221,7 @@ static int perform(void) {
 }
 
 static void print_help(void) {
-  std::cout << R"(HPACK HTTP/2 header decoder
+  std::println(R"(HPACK HTTP/2 header decoder
 Usage: inflatehd [OPTIONS] < INPUT
 
 Reads JSON  data from stdin  and outputs inflated name/value  pairs in
@@ -237,22 +238,20 @@ compressed header block in hex string.
 
 Example:
 
-{
+{{
   "context": "request",
   "cases":
   [
-    { "wire": "0284f77778ff" },
-    { "wire": "0185fafd3c3c7f81" }
+    {{ "wire": "0284f77778ff" }},
+    {{ "wire": "0185fafd3c3c7f81" }}
   ]
-}
+}}
 
 The output of this program can be used as input for deflatehd.
 
 OPTIONS:
     -d, --dump-header-table
-                      Output dynamic header table.)"
-            << std::endl;
-  ;
+                      Output dynamic header table.)");
 }
 
 constexpr static struct option long_options[] = {

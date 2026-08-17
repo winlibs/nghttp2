@@ -40,6 +40,7 @@
 #include <unordered_set>
 #include <chrono>
 #include <memory>
+#include <expected>
 
 #include "ssl_compat.h"
 
@@ -61,6 +62,7 @@
 #include "http2.h"
 #include "nghttp2_gzip.h"
 #include "template.h"
+#include "errors.h"
 
 namespace nghttp2 {
 
@@ -80,31 +82,31 @@ struct Config {
   std::string scheme_override;
   std::string host_override;
   nghttp2_option *http2_option;
-  int64_t header_table_size;
-  int64_t min_header_table_size;
-  int64_t encoder_header_table_size;
-  size_t padding;
-  size_t max_concurrent_streams;
-  size_t peer_max_concurrent_streams;
-  int multiply;
+  int64_t header_table_size{-1};
+  int64_t min_header_table_size{std::numeric_limits<uint32_t>::max()};
+  int64_t encoder_header_table_size{-1};
+  size_t padding{};
+  size_t max_concurrent_streams{100};
+  size_t peer_max_concurrent_streams{100};
+  int multiply{1};
   // milliseconds
-  ev_tstamp timeout;
-  int window_bits;
-  int connection_window_bits;
-  int verbose;
-  uint16_t port_override;
-  bool null_out;
-  bool remote_name;
-  bool get_assets;
-  bool stat;
-  bool upgrade;
-  bool continuation;
-  bool no_content_length;
-  bool hexdump;
-  bool no_push;
-  bool expect_continue;
-  bool verify_peer;
-  bool ktls;
+  ev_tstamp timeout{};
+  int window_bits{-1};
+  int connection_window_bits{-1};
+  int verbose{};
+  uint16_t port_override{};
+  bool null_out{};
+  bool remote_name{};
+  bool get_assets{};
+  bool stat{};
+  bool upgrade{};
+  bool continuation{};
+  bool no_content_length{};
+  bool hexdump{};
+  bool no_push{};
+  bool expect_continue{};
+  bool verify_peer{true};
+  bool ktls{};
 };
 
 enum class RequestState { INITIAL, ON_REQUEST, ON_RESPONSE, ON_COMPLETE };
@@ -119,8 +121,8 @@ struct RequestTiming {
   // The point in time when last byte of response is received.
   // Corresponds to responseEnd in Resource Timing TR.
   std::chrono::steady_clock::time_point response_end_time;
-  RequestState state;
-  RequestTiming() : state(RequestState::INITIAL) {}
+  RequestState state{RequestState::INITIAL};
+  RequestTiming() noexcept = default;
 };
 
 struct Request; // forward declaration for ContinueTimer
@@ -150,7 +152,8 @@ struct Request {
   void init_inflater();
 
   void init_html_parser();
-  int update_html_parser(std::span<const uint8_t> data, int fin);
+  std::expected<void, Error> update_html_parser(std::span<const uint8_t> data,
+                                                int fin);
 
   std::string make_reqpath() const;
 
@@ -181,21 +184,21 @@ struct Request {
   nghttp2_extpri extpri;
   RequestTiming timing;
   int64_t data_length;
-  int64_t data_offset;
+  int64_t data_offset{};
   // Number of bytes received from server
-  int64_t response_len;
-  nghttp2_gzip *inflater;
+  int64_t response_len{};
+  nghttp2_gzip *inflater{};
   std::unique_ptr<HtmlParser> html_parser;
   const nghttp2_data_provider2 *data_prd;
-  size_t header_buffer_size;
-  int32_t stream_id;
-  int status;
+  size_t header_buffer_size{};
+  int32_t stream_id{-1};
+  int status{};
   // Recursion level: 0: first entity, 1: entity linked from first entity
   int level;
   http2::HeaderIndex res_hdidx;
   // used for incoming PUSH_PROMISE
   http2::HeaderIndex req_hdidx;
-  bool expect_final_response;
+  bool expect_final_response{};
   // only assigned if this request is using Expect/Continue
   std::unique_ptr<ContinueTimer> continue_timer;
 };
@@ -223,27 +226,28 @@ struct HttpClient {
   ~HttpClient();
 
   bool need_upgrade() const;
-  int resolve_host(const std::string &host, uint16_t port);
-  int initiate_connection();
+  std::expected<void, Error> resolve_host(const std::string &host,
+                                          uint16_t port);
+  std::expected<void, Error> initiate_connection();
   void disconnect();
 
-  int noop();
-  int read_clear();
-  int write_clear();
-  int connected();
-  int tls_handshake();
-  int read_tls();
-  int write_tls();
+  std::expected<void, Error> noop() { return {}; }
+  std::expected<void, Error> read_clear();
+  std::expected<void, Error> write_clear();
+  std::expected<void, Error> connected();
+  std::expected<void, Error> tls_handshake();
+  std::expected<void, Error> read_tls();
+  std::expected<void, Error> write_tls();
 
-  int do_read();
-  int do_write();
+  std::expected<void, Error> do_read();
+  std::expected<void, Error> do_write();
 
-  int on_upgrade_connect();
-  int on_upgrade_read(std::span<const uint8_t> data);
-  int on_read(std::span<const uint8_t> data);
-  int on_write();
+  std::expected<void, Error> on_upgrade_connect();
+  std::expected<void, Error> on_upgrade_read(std::span<const uint8_t> data);
+  std::expected<void, Error> on_read(std::span<const uint8_t> data);
+  std::expected<void, Error> on_write();
 
-  int connection_made();
+  std::expected<void, Error> connection_made();
   void connect_fail();
   void request_done(Request *req);
 
@@ -280,35 +284,35 @@ struct HttpClient {
   ev_timer wt;
   ev_timer rt;
   ev_timer settings_timer;
-  std::function<int(HttpClient &)> readfn, writefn;
-  std::function<int(HttpClient &, std::span<const uint8_t>)> on_readfn;
-  std::function<int(HttpClient &)> on_writefn;
-  nghttp2_session *session;
+  std::function<std::expected<void, Error>(HttpClient &)> readfn, writefn;
+  std::function<std::expected<void, Error>(HttpClient &,
+                                           std::span<const uint8_t>)>
+    on_readfn;
+  std::function<std::expected<void, Error>(HttpClient &)> on_writefn;
+  nghttp2_session *session{};
   const nghttp2_session_callbacks *callbacks;
   struct ev_loop *loop;
   SSL_CTX *ssl_ctx;
-  SSL *ssl;
-  addrinfo *addrs;
-  addrinfo *next_addr;
-  addrinfo *cur_addr;
+  SSL *ssl{};
+  addrinfo *addrs{};
+  addrinfo *next_addr{};
+  addrinfo *cur_addr{};
   // The number of completed requests, including failed ones.
-  size_t complete;
+  size_t complete{};
   // The number of requests that local endpoint received END_STREAM
   // from peer.
-  size_t success;
+  size_t success{};
   // The length of settings_payload
-  size_t settings_payloadlen;
-  ClientState state;
+  size_t settings_payloadlen{};
+  ClientState state{ClientState::IDLE};
   // The HTTP status code of the response message of HTTP Upgrade.
-  unsigned int upgrade_response_status_code;
-  int fd;
+  unsigned int upgrade_response_status_code{};
+  int fd{-1};
   // true if the response message of HTTP Upgrade request is fully
   // received. It is not relevant the upgrade succeeds, or not.
-  bool upgrade_response_complete;
+  bool upgrade_response_complete{};
   // SETTINGS payload sent as token68 in HTTP Upgrade
   std::array<uint8_t, 128> settings_payload;
-
-  enum { ERR_CONNECT_FAIL = -100 };
 };
 
 } // namespace nghttp2

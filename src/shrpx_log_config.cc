@@ -27,7 +27,6 @@
 #include <unistd.h>
 
 #include <thread>
-#include <sstream>
 
 #include "util.h"
 
@@ -35,7 +34,7 @@ using namespace nghttp2;
 
 namespace shrpx {
 
-Timestamp::Timestamp(const std::chrono::system_clock::time_point &tp) {
+Timestamp::Timestamp(std::chrono::system_clock::time_point tp) {
   time_local = util::format_common_log(time_local_buf.data(), tp);
   time_iso8601 = util::format_iso8601(time_iso8601_buf.data(), tp);
   time_http = util::format_http_date(time_http_buf.data(), tp);
@@ -44,10 +43,7 @@ Timestamp::Timestamp(const std::chrono::system_clock::time_point &tp) {
 LogConfig::LogConfig()
   : time_str_updated(std::chrono::system_clock::now()),
     tstamp(std::make_shared<Timestamp>(time_str_updated)),
-    pid(getpid()),
-    accesslog_fd(-1),
-    errorlog_fd(-1),
-    errorlog_tty(false) {
+    pid(getpid()) {
   auto tid = std::this_thread::get_id();
   auto tid_hash =
     util::hash32(std::string_view{reinterpret_cast<char *>(&tid), sizeof(tid)});
@@ -61,7 +57,7 @@ LogConfig *log_config() {
 }
 
 void LogConfig::update_tstamp_millis(
-  const std::chrono::system_clock::time_point &now) {
+  std::chrono::system_clock::time_point now) {
   if (std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()) ==
       std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -74,8 +70,7 @@ void LogConfig::update_tstamp_millis(
   tstamp = std::make_shared<Timestamp>(now);
 }
 
-void LogConfig::update_tstamp(
-  const std::chrono::system_clock::time_point &now) {
+void LogConfig::update_tstamp(std::chrono::system_clock::time_point now) {
   if (std::chrono::duration_cast<std::chrono::seconds>(
         now.time_since_epoch()) ==
       std::chrono::duration_cast<std::chrono::seconds>(

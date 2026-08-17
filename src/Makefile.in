@@ -130,7 +130,9 @@ TESTS = $(am__EXEEXT_3)
 @ENABLE_APP_TRUE@@ENABLE_HTTP3_TRUE@	siphash.cc siphash.h
 
 @ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@am__append_6 = \
-@ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@	-I${top_srcdir}/third-party/mruby/include @LIBMRUBY_CFLAGS@
+@ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@	-I${top_srcdir}/third-party/mruby/include \
+@ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@	-I${top_builddir}/third-party/mruby/build/include \
+@ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@	@LIBMRUBY_CFLAGS@
 
 @ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@am__append_7 = -L${top_builddir}/third-party/mruby/build/lib @LIBMRUBY_LIBS@
 @ENABLE_APP_TRUE@@HAVE_NEVERBLEED_TRUE@am__append_8 = -I${top_srcdir}/third-party/neverbleed
@@ -138,7 +140,9 @@ TESTS = $(am__EXEEXT_3)
 @ENABLE_APP_TRUE@am__append_10 = nghttpx-unittest
 @ENABLE_APP_TRUE@@ENABLE_HTTP3_TRUE@am__append_11 = siphash_test.cc siphash_test.h
 @ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@am__append_12 = \
-@ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@	-I${top_srcdir}/third-party/mruby/include @LIBMRUBY_CFLAGS@
+@ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@	-I${top_srcdir}/third-party/mruby/include \
+@ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@	-I${top_builddir}/third-party/mruby/build/include \
+@ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@	@LIBMRUBY_CFLAGS@
 
 @ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@am__append_13 = \
 @ENABLE_APP_TRUE@@HAVE_MRUBY_TRUE@	-L${top_builddir}/third-party/mruby/build/lib @LIBMRUBY_LIBS@
@@ -215,8 +219,8 @@ am__libnghttpx_a_SOURCES_DIST = util.cc util.h http2.cc http2.h \
 	shrpx_dns_resolver.h shrpx_dual_dns_resolver.cc \
 	shrpx_dual_dns_resolver.h shrpx_dns_tracker.cc \
 	shrpx_dns_tracker.h buffer.h memchunk.h template.h allocator.h \
-	xsi_strerror.c xsi_strerror.h shrpx_mruby.cc shrpx_mruby.h \
-	shrpx_mruby_module.cc shrpx_mruby_module.h \
+	errors.h xsi_strerror.c xsi_strerror.h shrpx_mruby.cc \
+	shrpx_mruby.h shrpx_mruby_module.cc shrpx_mruby_module.h \
 	shrpx_mruby_module_env.cc shrpx_mruby_module_env.h \
 	shrpx_mruby_module_request.cc shrpx_mruby_module_request.h \
 	shrpx_mruby_module_response.cc shrpx_mruby_module_response.h \
@@ -300,7 +304,7 @@ am__h2load_SOURCES_DIST = util.cc util.h http2.cc http2.h h2load.cc \
 	h2load.h timegm.c timegm.h tls.cc tls.h ssl_compat.h \
 	h2load_session.h h2load_http2_session.cc \
 	h2load_http2_session.h h2load_http1_session.cc \
-	h2load_http1_session.h network.cc network.h \
+	h2load_http1_session.h network.cc network.h errors.h \
 	h2load_http3_session.cc h2load_http3_session.h h2load_quic.cc \
 	h2load_quic.h
 @ENABLE_APP_TRUE@@ENABLE_HTTP3_TRUE@am__objects_5 = h2load_http3_session.$(OBJEXT) \
@@ -327,8 +331,8 @@ inflatehd_DEPENDENCIES = $(top_builddir)/lib/libnghttp2.la \
 	$(top_builddir)/third-party/libllhttp.la
 am__nghttp_SOURCES_DIST = util.cc http2.cc timegm.c app_helper.cc \
 	nghttp2_gzip.c network.cc util.h http2.h timegm.h app_helper.h \
-	nghttp2_config.h nghttp2_gzip.h network.h nghttp.cc nghttp.h \
-	HtmlParser.cc HtmlParser.h tls.cc tls.h ssl_compat.h
+	nghttp2_config.h nghttp2_gzip.h network.h errors.h nghttp.cc \
+	nghttp.h HtmlParser.cc HtmlParser.h tls.cc tls.h ssl_compat.h
 @ENABLE_APP_TRUE@am__objects_6 = util.$(OBJEXT) http2.$(OBJEXT) \
 @ENABLE_APP_TRUE@	timegm.$(OBJEXT) app_helper.$(OBJEXT) \
 @ENABLE_APP_TRUE@	nghttp2_gzip.$(OBJEXT) network.$(OBJEXT)
@@ -346,8 +350,8 @@ nghttp_DEPENDENCIES = $(top_builddir)/lib/libnghttp2.la \
 	$(top_builddir)/third-party/libllhttp.la
 am__nghttpd_SOURCES_DIST = util.cc http2.cc timegm.c app_helper.cc \
 	nghttp2_gzip.c network.cc util.h http2.h timegm.h app_helper.h \
-	nghttp2_config.h nghttp2_gzip.h network.h nghttpd.cc tls.cc \
-	tls.h ssl_compat.h HttpServer.cc HttpServer.h
+	nghttp2_config.h nghttp2_gzip.h network.h errors.h nghttpd.cc \
+	tls.cc tls.h ssl_compat.h HttpServer.cc HttpServer.h
 @ENABLE_APP_TRUE@am_nghttpd_OBJECTS = $(am__objects_6) \
 @ENABLE_APP_TRUE@	$(am__objects_7) nghttpd.$(OBJEXT) \
 @ENABLE_APP_TRUE@	tls.$(OBJEXT) HttpServer.$(OBJEXT)
@@ -861,7 +865,7 @@ EXTRA_DEFS = @EXTRA_DEFS@
 FGREP = @FGREP@
 FILECMD = @FILECMD@
 GREP = @GREP@
-HAVE_CXX20 = @HAVE_CXX20@
+HAVE_CXX23 = @HAVE_CXX23@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
@@ -1094,7 +1098,7 @@ LDADD = $(top_builddir)/lib/libnghttp2.la \
 
 @ENABLE_APP_TRUE@HELPER_HFILES = util.h \
 @ENABLE_APP_TRUE@	http2.h timegm.h app_helper.h nghttp2_config.h \
-@ENABLE_APP_TRUE@	nghttp2_gzip.h network.h
+@ENABLE_APP_TRUE@	nghttp2_gzip.h network.h errors.h
 
 @ENABLE_APP_TRUE@HTML_PARSER_OBJECTS = $(am__append_2)
 @ENABLE_APP_TRUE@HTML_PARSER_HFILES = HtmlParser.h
@@ -1113,7 +1117,7 @@ LDADD = $(top_builddir)/lib/libnghttp2.la \
 @ENABLE_APP_TRUE@	h2load_http2_session.h \
 @ENABLE_APP_TRUE@	h2load_http1_session.cc \
 @ENABLE_APP_TRUE@	h2load_http1_session.h network.cc network.h \
-@ENABLE_APP_TRUE@	$(am__append_3)
+@ENABLE_APP_TRUE@	errors.h $(am__append_3)
 @ENABLE_APP_TRUE@NGHTTPX_SRCS = util.cc util.h http2.cc http2.h \
 @ENABLE_APP_TRUE@	timegm.c timegm.h base64.h app_helper.cc \
 @ENABLE_APP_TRUE@	app_helper.h tls.cc tls.h ssl_compat.h \
@@ -1171,8 +1175,8 @@ LDADD = $(top_builddir)/lib/libnghttp2.la \
 @ENABLE_APP_TRUE@	shrpx_dual_dns_resolver.h \
 @ENABLE_APP_TRUE@	shrpx_dns_tracker.cc shrpx_dns_tracker.h \
 @ENABLE_APP_TRUE@	buffer.h memchunk.h template.h allocator.h \
-@ENABLE_APP_TRUE@	xsi_strerror.c xsi_strerror.h $(am__append_4) \
-@ENABLE_APP_TRUE@	$(am__append_5)
+@ENABLE_APP_TRUE@	errors.h xsi_strerror.c xsi_strerror.h \
+@ENABLE_APP_TRUE@	$(am__append_4) $(am__append_5)
 @ENABLE_APP_TRUE@noinst_LIBRARIES = libnghttpx.a
 @ENABLE_APP_TRUE@libnghttpx_a_SOURCES = ${NGHTTPX_SRCS}
 @ENABLE_APP_TRUE@libnghttpx_a_CPPFLAGS = ${AM_CPPFLAGS} \

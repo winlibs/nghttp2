@@ -29,8 +29,12 @@
 
 #include <memory>
 #include <span>
+#include <expected>
 
 #include "shrpx_io_control.h"
+#include "errors.h"
+
+using namespace nghttp2;
 
 namespace shrpx {
 
@@ -42,22 +46,26 @@ struct DownstreamAddr;
 
 class DownstreamConnection {
 public:
-  DownstreamConnection();
+  DownstreamConnection() noexcept = default;
   virtual ~DownstreamConnection();
-  virtual int attach_downstream(Downstream *downstream) = 0;
-  virtual void detach_downstream(Downstream *downstream) = 0;
+  virtual std::expected<void, Error>
+  attach_downstream(Downstream *downstream) = 0;
+  virtual std::expected<void, Error>
+  detach_downstream(Downstream *downstream) = 0;
 
-  virtual int push_request_headers() = 0;
-  virtual int push_upload_data_chunk(std::span<const uint8_t> data) = 0;
-  virtual int end_upload_data() = 0;
+  virtual std::expected<void, Error> push_request_headers() = 0;
+  virtual std::expected<void, Error>
+  push_upload_data_chunk(std::span<const uint8_t> data) = 0;
+  virtual std::expected<void, Error> end_upload_data() = 0;
 
   virtual void pause_read(IOCtrlReason reason) = 0;
-  virtual int resume_read(IOCtrlReason reason, size_t consumed) = 0;
+  virtual std::expected<void, Error> resume_read(IOCtrlReason reason,
+                                                 size_t consumed) = 0;
   virtual void force_resume_read() = 0;
 
-  virtual int on_read() = 0;
-  virtual int on_write() = 0;
-  virtual int on_timeout() { return 0; }
+  virtual std::expected<void, Error> on_read() = 0;
+  virtual std::expected<void, Error> on_write() = 0;
+  virtual std::expected<void, Error> on_timeout() { return {}; }
 
   virtual void on_upstream_change(Upstream *upstream) = 0;
 
@@ -73,8 +81,8 @@ public:
   Downstream *get_downstream();
 
 protected:
-  ClientHandler *client_handler_;
-  Downstream *downstream_;
+  ClientHandler *client_handler_{};
+  Downstream *downstream_{};
 };
 
 } // namespace shrpx

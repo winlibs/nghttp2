@@ -228,43 +228,23 @@ std::string_view make_string_ref(BlockAllocator &alloc, R &&r) {
   return make_string_ref(alloc, std::ranges::begin(r), std::ranges::end(r));
 }
 
-// private function used in concat_string_ref.  this is the base
-// function of concat_string_ref_count().
-constexpr size_t concat_string_ref_count(size_t acc) { return acc; }
-
-// private function used in concat_string_ref.  This function counts
-// the sum of length of given arguments.  The calculated length is
-// accumulated, and passed to the next function.
-template <std::ranges::sized_range R, std::ranges::sized_range... Args>
-requires(!std::is_array_v<std::remove_cvref_t<R>>)
-constexpr size_t concat_string_ref_count(size_t acc, R &&r, Args &&...args) {
-  return concat_string_ref_count(acc + std::ranges::size(r), args...);
-}
-
-// private function used in concat_string_ref.  this is the base
-// function of concat_string_ref_copy().
-inline constexpr void concat_string_ref_copy(std::span<uint8_t> dst) {}
-
 // private function used in concat_string_ref.  This function copies
-// given strings into |dst|.
-template <std::ranges::sized_range R, std::ranges::sized_range... Args>
-requires(!std::is_array_v<std::remove_cvref_t<R>>)
-constexpr void concat_string_ref_copy(std::span<uint8_t> dst, R &&r,
-                                      Args &&...args) {
-  concat_string_ref_copy(
-    {std::ranges::copy(std::forward<R>(r), std::ranges::begin(dst)).out,
-     std::ranges::end(dst)},
-    std::forward<Args>(args)...);
+// given strings to |result|.  The region that |result| iterates over
+// should have sufficient capacity to write all strings.
+template <std::weakly_incrementable O, std::ranges::sized_range... Args>
+requires(!std::is_array_v<std::remove_cvref_t<Args>> && ...)
+constexpr void concat_string_ref_copy(O result, Args &&...args) {
+  ((result = std::ranges::copy(std::forward<Args>(args), result).out), ...);
 }
 
 // Returns the string which is the concatenation of |args| in the
 // given order.  The resulting string will be NULL-terminated.
 template <std::ranges::sized_range... Args>
 std::string_view concat_string_ref(BlockAllocator &alloc, Args &&...args) {
-  auto len = concat_string_ref_count(0, args...);
+  auto len = (0UZ + ... + std::ranges::size(args));
   auto res = alloc.alloc(len + 1);
 
-  concat_string_ref_copy(res, std::forward<Args>(args)...);
+  concat_string_ref_copy(std::ranges::begin(res), std::forward<Args>(args)...);
   res.back() = '\0';
 
   return as_string_view(res.first(len));
@@ -284,11 +264,12 @@ std::string_view realloc_concat_string_ref(BlockAllocator &alloc,
     return concat_string_ref(alloc, std::forward<Args>(args)...);
   }
 
-  auto len = value.size() + concat_string_ref_count(0, args...);
+  auto len = (value.size() + ... + std::ranges::size(args));
   auto res =
     alloc.realloc(reinterpret_cast<const uint8_t *>(value.data()), len + 1);
-  concat_string_ref_copy(res.subspan(value.size()),
-                         std::forward<Args>(args)...);
+  concat_string_ref_copy(
+    std::ranges::next(std::ranges::begin(res), as_signed(value.size())),
+    std::forward<Args>(args)...);
   res.back() = '\0';
 
   return as_string_view(res.first(len));

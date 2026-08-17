@@ -52,8 +52,8 @@ public:
   struct HostEntry {
     HostEntry(ImmutableString &&key);
 
-    HostEntry(HostEntry &&) = default;
-    HostEntry &operator=(HostEntry &&) = default;
+    HostEntry(HostEntry &&) noexcept = default;
+    HostEntry &operator=(HostEntry &&) noexcept = default;
 
     HostEntry(const HostEntry &) = delete;
     HostEntry &operator=(const HostEntry &) = delete;
@@ -63,7 +63,7 @@ public:
     // Set of stream ID that blocked by conn_max_per_host_.
     DList<BlockedLink> blocked;
     // The number of connections currently made to this host.
-    size_t num_active;
+    size_t num_active{};
   };
 
   using HostEntryMap = std::unordered_map<std::string_view, HostEntry>;

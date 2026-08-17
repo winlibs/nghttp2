@@ -27,9 +27,12 @@
 
 #include "shrpx.h"
 
+#include <expected>
+
 #include <ev.h>
 
 #include "shrpx_dns_resolver.h"
+#include "errors.h"
 
 using namespace nghttp2;
 
@@ -49,7 +52,7 @@ public:
   DualDNSResolver(struct ev_loop *loop, int family);
 
   // Resolves |host|.  |host| must be NULL-terminated string.
-  int resolve(std::string_view host);
+  std::expected<void, Error> resolve(std::string_view host);
   CompleteCb get_complete_cb() const;
   void set_complete_cb(CompleteCb cb);
   DNSResolverStatus get_status(Address *result) const;

@@ -26,7 +26,6 @@
 
 #include <cassert>
 #include <cstring>
-#include <iostream>
 
 #include "munitxx.h"
 
@@ -37,12 +36,6 @@
 
 using namespace nghttp2;
 using namespace std::literals;
-
-#define MAKE_NV(K, V)                                                          \
-  {                                                                            \
-    (uint8_t *)K,  (uint8_t *)V,         sizeof(K) - 1,                        \
-    sizeof(V) - 1, NGHTTP2_NV_FLAG_NONE,                                       \
-  }
 
 namespace shrpx {
 
@@ -65,12 +58,14 @@ const MunitTest tests[]{
   munit_void_test(test_http2_contains_trailers),
   munit_void_test(test_http2_check_transfer_encoding),
   munit_void_test(test_http2_capitalize),
+  munit_void_test(test_http2_make_websocket_accept_token),
   munit_test_end(),
 };
 } // namespace
 
 const MunitSuite http2_suite{
-  "/http2", tests, nullptr, 1, MUNIT_SUITE_OPTION_NONE,
+  .prefix = "/http2",
+  .tests = tests,
 };
 
 namespace {
@@ -278,13 +273,13 @@ void test_http2_rewrite_location_uri(void) {
 }
 
 void test_http2_parse_http_status_code(void) {
-  assert_int(200, ==, http2::parse_http_status_code("200"sv));
-  assert_int(102, ==, http2::parse_http_status_code("102"sv));
-  assert_int(-1, ==, http2::parse_http_status_code("099"sv));
-  assert_int(-1, ==, http2::parse_http_status_code("99"sv));
-  assert_int(-1, ==, http2::parse_http_status_code("-1"sv));
-  assert_int(-1, ==, http2::parse_http_status_code("20a"sv));
-  assert_int(-1, ==, http2::parse_http_status_code(""sv));
+  assert_int(200, ==, http2::parse_http_status_code("200"sv).value_or(-1));
+  assert_int(102, ==, http2::parse_http_status_code("102"sv).value_or(-1));
+  assert_int(-1, ==, http2::parse_http_status_code("099"sv).value_or(-1));
+  assert_int(-1, ==, http2::parse_http_status_code("99"sv).value_or(-1));
+  assert_int(-1, ==, http2::parse_http_status_code("-1"sv).value_or(-1));
+  assert_int(-1, ==, http2::parse_http_status_code("20a"sv).value_or(-1));
+  assert_int(-1, ==, http2::parse_http_status_code(""sv).value_or(-1));
 }
 
 void test_http2_index_header(void) {
@@ -1041,66 +1036,58 @@ void test_http2_get_pure_path_component(void) {
 
 void test_http2_construct_push_component(void) {
   BlockAllocator balloc(4096, 4096);
-  std::string_view base, uri;
-  std::string_view scheme, authority, path;
+  auto base = "/b/"sv;
 
-  base = "/b/"sv;
-  uri = "https://example.org/foo"sv;
+  {
+    auto rv = http2::construct_push_component(balloc, base,
+                                              "https://example.org/foo"sv);
 
-  assert_int(0, ==,
-             http2::construct_push_component(balloc, scheme, authority, path,
-                                             base, uri));
-  assert_stdsv_equal("https"sv, scheme);
-  assert_stdsv_equal("example.org"sv, authority);
-  assert_stdsv_equal("/foo"sv, path);
+    assert_true(rv.has_value());
 
-  scheme = ""sv;
-  authority = ""sv;
-  path = ""sv;
+    const auto &pc = *rv;
 
-  uri = "/foo/bar?q=a"sv;
+    assert_stdsv_equal("https"sv, pc.scheme);
+    assert_stdsv_equal("example.org"sv, pc.authority);
+    assert_stdsv_equal("/foo"sv, pc.path);
+  }
 
-  assert_int(0, ==,
-             http2::construct_push_component(balloc, scheme, authority, path,
-                                             base, uri));
-  assert_stdsv_equal(""sv, scheme);
-  assert_stdsv_equal(""sv, authority);
-  assert_stdsv_equal("/foo/bar?q=a"sv, path);
+  {
+    auto rv = http2::construct_push_component(balloc, base, "/foo/bar?q=a"sv);
 
-  scheme = ""sv;
-  authority = ""sv;
-  path = ""sv;
+    assert_true(rv.has_value());
 
-  uri = "foo/../bar?q=a"sv;
+    const auto &pc = *rv;
 
-  assert_int(0, ==,
-             http2::construct_push_component(balloc, scheme, authority, path,
-                                             base, uri));
-  assert_stdsv_equal(""sv, scheme);
-  assert_stdsv_equal(""sv, authority);
-  assert_stdsv_equal("/b/bar?q=a"sv, path);
+    assert_stdsv_equal(""sv, pc.scheme);
+    assert_stdsv_equal(""sv, pc.authority);
+    assert_stdsv_equal("/foo/bar?q=a"sv, pc.path);
+  }
 
-  scheme = ""sv;
-  authority = ""sv;
-  path = ""sv;
+  {
+    auto rv = http2::construct_push_component(balloc, base, "foo/../bar?q=a"sv);
 
-  uri = ""sv;
+    assert_true(rv.has_value());
 
-  assert_int(-1, ==,
-             http2::construct_push_component(balloc, scheme, authority, path,
-                                             base, uri));
-  scheme = ""sv;
-  authority = ""sv;
-  path = ""sv;
+    const auto &pc = *rv;
 
-  uri = "?q=a"sv;
+    assert_stdsv_equal(""sv, pc.scheme);
+    assert_stdsv_equal(""sv, pc.authority);
+    assert_stdsv_equal("/b/bar?q=a"sv, pc.path);
+  }
 
-  assert_int(0, ==,
-             http2::construct_push_component(balloc, scheme, authority, path,
-                                             base, uri));
-  assert_stdsv_equal(""sv, scheme);
-  assert_stdsv_equal(""sv, authority);
-  assert_stdsv_equal("/b/?q=a"sv, path);
+  assert_false(http2::construct_push_component(balloc, base, ""sv).has_value());
+
+  {
+    auto rv = http2::construct_push_component(balloc, base, "?q=a"sv);
+
+    assert_true(rv.has_value());
+
+    const auto &pc = *rv;
+
+    assert_stdsv_equal(""sv, pc.scheme);
+    assert_stdsv_equal(""sv, pc.authority);
+    assert_stdsv_equal("/b/?q=a"sv, pc.path);
+  }
 }
 
 void test_http2_contains_trailers(void) {
@@ -1227,6 +1214,15 @@ void test_http2_capitalize(void) {
 
     m.reset();
   }
+}
+
+void test_http2_make_websocket_accept_token(void) {
+  std::array<uint8_t, base64::encode_length(20)> dest;
+
+  assert_stdsv_equal(
+    "XBQHBK544W3hcfGPAAFf0t3lU+8="sv,
+    http2::make_websocket_accept_token(dest, "uq3K/rqtyv66rcr+uq3K/g=="sv)
+      .value_or(""sv));
 }
 
 } // namespace shrpx

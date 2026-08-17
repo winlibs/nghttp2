@@ -32,6 +32,8 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <compare>
+#include <expected>
 
 #include <nghttp2/nghttp2.h>
 
@@ -42,52 +44,73 @@
 #include "template.h"
 #include "allocator.h"
 #include "base64.h"
+#include "errors.h"
 
 namespace nghttp2 {
 
 struct Header {
-  Header(std::string name, std::string value, bool no_index = false,
-         int32_t token = -1)
-    : name(std::move(name)),
-      value(std::move(value)),
-      token(token),
-      no_index(no_index) {}
+  constexpr Header(std::string name, std::string value, bool no_index = false,
+                   int32_t token = -1) noexcept
+    : name{std::move(name)},
+      value{std::move(value)},
+      token{token},
+      no_index{no_index} {}
 
-  Header() : token(-1), no_index(false) {}
+  constexpr Header() noexcept = default;
+  constexpr Header(const Header &) = default;
+  constexpr Header(Header &&) noexcept = default;
 
-  bool operator==(const Header &other) const {
+  constexpr Header &operator=(const Header &) = default;
+  constexpr Header &operator=(Header &&) noexcept = default;
+
+  constexpr bool operator==(const Header &other) const noexcept {
     return name == other.name && value == other.value;
   }
 
-  bool operator<(const Header &rhs) const {
-    return name < rhs.name || (name == rhs.name && value < rhs.value);
+  constexpr std::strong_ordering
+  operator<=>(const Header &other) const noexcept {
+    if (auto cmp = name <=> other.name; cmp != 0) {
+      return cmp;
+    }
+
+    return value <=> other.value;
   }
 
   std::string name;
   std::string value;
-  int32_t token;
-  bool no_index;
+  int32_t token{-1};
+  bool no_index{};
 };
 
 struct HeaderRef {
-  HeaderRef(std::string_view name, std::string_view value,
-            bool no_index = false, int32_t token = -1)
-    : name(name), value(value), token(token), no_index(no_index) {}
+  constexpr HeaderRef(std::string_view name, std::string_view value,
+                      bool no_index = false, int32_t token = -1) noexcept
+    : name{name}, value{value}, token{token}, no_index{no_index} {}
 
-  HeaderRef() : token(-1), no_index(false) {}
+  constexpr HeaderRef() noexcept = default;
+  constexpr HeaderRef(const HeaderRef &) noexcept = default;
+  constexpr HeaderRef(HeaderRef &&) noexcept = default;
 
-  bool operator==(const HeaderRef &other) const {
+  constexpr HeaderRef &operator=(const HeaderRef &) noexcept = default;
+  constexpr HeaderRef &operator=(HeaderRef &&) noexcept = default;
+
+  constexpr bool operator==(const HeaderRef &other) const noexcept {
     return name == other.name && value == other.value;
   }
 
-  bool operator<(const HeaderRef &rhs) const {
-    return name < rhs.name || (name == rhs.name && value < rhs.value);
+  constexpr std::strong_ordering
+  operator<=>(const HeaderRef &other) const noexcept {
+    if (auto cmp = name <=> other.name; cmp != 0) {
+      return cmp;
+    }
+
+    return value <=> other.value;
   }
 
   std::string_view name;
   std::string_view value;
-  int32_t token;
-  bool no_index;
+  int32_t token{-1};
+  bool no_index{};
 };
 
 using Headers = std::vector<Header>;
@@ -262,8 +285,8 @@ std::string_view rewrite_location_uri(BlockAllocator &balloc,
                                       std::string_view request_authority,
                                       std::string_view upstream_scheme);
 
-// Returns parsed HTTP status code.  Returns -1 on failure.
-int parse_http_status_code(std::string_view src);
+// Returns parsed HTTP status code.
+std::expected<int, Error> parse_http_status_code(std::string_view src);
 
 // Header fields to be indexed, except HD_MAXIDX which is convenient
 // member to get maximum value.
@@ -387,25 +410,30 @@ std::string_view rewrite_clean_path(BlockAllocator &balloc,
 // fails.
 std::string_view get_pure_path_component(std::string_view uri);
 
-// Deduces scheme, authority and path from given |uri|, and stores
-// them in |scheme|, |authority|, and |path| respectively.  If |uri|
-// is relative path, path resolution takes place using path given in
-// |base| of length |baselen|.  This function returns 0 if it
-// succeeds, or -1.
-int construct_push_component(BlockAllocator &balloc, std::string_view &scheme,
-                             std::string_view &authority,
-                             std::string_view &path, std::string_view base,
-                             std::string_view uri);
+struct PushComponent {
+  std::string_view scheme;
+  std::string_view authority;
+  std::string_view path;
+};
+
+// Deduces scheme, authority and path from given |uri|.  If |uri| is
+// relative path, path resolution takes place using path given in
+// |base|.
+std::expected<PushComponent, Error>
+construct_push_component(BlockAllocator &balloc, std::string_view base,
+                         std::string_view uri);
 
 // Returns true if te header field value |s| contains "trailers".
 bool contains_trailers(std::string_view s);
 
-// Creates Sec-WebSocket-Accept value for |key|.  The capacity of
-// buffer pointed by |dest| must have at least 24 bytes (base64
-// encoded length of 16 bytes data).  It returns empty string in case
-// of error.
-std::string_view make_websocket_accept_token(uint8_t *dest,
-                                             std::string_view key);
+// Creates Sec-WebSocket-Accept value for |key|.  The length of |key|
+// must be base64::encode_length(16), which is 24.  The result is
+// written to |dest|.  The function returns std::string_view that
+// references |dest|.  The length of return value is equal to
+// |dest|.size().
+std::expected<std::string_view, Error>
+make_websocket_accept_token(std::span<uint8_t, base64::encode_length(20)> dest,
+                            std::string_view key);
 
 // Returns true if HTTP version represents pre-HTTP/1.1 (e.g.,
 // HTTP/0.9 or HTTP/1.0).

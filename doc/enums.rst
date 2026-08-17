@@ -289,12 +289,12 @@ Enums
         preceding HEADERS/PUSH_PROMISE as a single frame.
     .. enum:: NGHTTP2_ALTSVC
 
-        (``0x0a``) 
+        (``0x0A``) 
         The ALTSVC frame, which is defined in `RFC 7383
         <https://tools.ietf.org/html/rfc7838#section-4>`_.
     .. enum:: NGHTTP2_ORIGIN
 
-        (``0x0c``) 
+        (``0x0C``) 
         The ORIGIN frame, which is defined by `RFC 8336
         <https://tools.ietf.org/html/rfc8336>`_.
     .. enum:: NGHTTP2_PRIORITY_UPDATE
@@ -417,19 +417,19 @@ Enums
         COMPRESSION_ERROR
     .. enum:: NGHTTP2_CONNECT_ERROR
 
-        (``0x0a``) 
+        (``0x0A``) 
         CONNECT_ERROR
     .. enum:: NGHTTP2_ENHANCE_YOUR_CALM
 
-        (``0x0b``) 
+        (``0x0B``) 
         ENHANCE_YOUR_CALM
     .. enum:: NGHTTP2_INADEQUATE_SECURITY
 
-        (``0x0c``) 
+        (``0x0C``) 
         INADEQUATE_SECURITY
     .. enum:: NGHTTP2_HTTP_1_1_REQUIRED
 
-        (``0x0d``) 
+        (``0x0D``) 
         HTTP_1_1_REQUIRED
 
 .. type:: nghttp2_data_flag

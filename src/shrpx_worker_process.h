@@ -29,11 +29,15 @@
 
 #include <vector>
 #include <array>
+#include <expected>
 
 #include "shrpx_connection_handler.h"
 #ifdef ENABLE_HTTP3
 #  include "shrpx_quic.h"
 #endif // defined(ENABLE_HTTP3)
+#include "errors.h"
+
+using namespace nghttp2;
 
 namespace shrpx {
 
@@ -60,7 +64,8 @@ struct WorkerProcessConfig {
 #endif // defined(ENABLE_HTTP3)
 };
 
-int worker_process_event_loop(WorkerProcessConfig *wpconf);
+std::expected<void, Error>
+worker_process_event_loop(WorkerProcessConfig *wpconf);
 
 } // namespace shrpx
 

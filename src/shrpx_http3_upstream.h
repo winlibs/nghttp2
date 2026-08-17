@@ -50,34 +50,47 @@ public:
   Http3Upstream(ClientHandler *handler);
   ~Http3Upstream() override;
 
-  int on_read() override;
-  int on_write() override;
-  int on_timeout(Downstream *downstream) override;
-  int on_downstream_abort_request(Downstream *downstream,
-                                  unsigned int status_code) override;
-  int on_downstream_abort_request_with_https_redirect(
+  std::expected<void, Error> on_read() override { return {}; }
+  std::expected<void, Error> on_write() override;
+  std::expected<void, Error> on_timeout(Downstream *downstream) override;
+  std::expected<void, Error>
+  on_downstream_abort_request(Downstream *downstream,
+                              unsigned int status_code) override;
+  std::expected<void, Error> on_downstream_abort_request_with_https_redirect(
     Downstream *downstream) override;
-  int downstream_read(DownstreamConnection *dconn) override;
-  int downstream_write(DownstreamConnection *dconn) override;
-  int downstream_eof(DownstreamConnection *dconn) override;
-  int downstream_error(DownstreamConnection *dconn, int events) override;
+  std::expected<void, Error>
+  downstream_read(DownstreamConnection *dconn) override;
+  std::expected<void, Error>
+  downstream_write(DownstreamConnection *dconn) override;
+  std::expected<void, Error>
+  downstream_eof(DownstreamConnection *dconn) override;
+  std::expected<void, Error> downstream_error(DownstreamConnection *dconn,
+                                              int events) override;
   ClientHandler *get_client_handler() const override;
 
-  int on_downstream_header_complete(Downstream *downstream) override;
-  int on_downstream_body(Downstream *downstream, std::span<const uint8_t> data,
-                         bool flush) override;
-  int on_downstream_body_complete(Downstream *downstream) override;
+  std::expected<void, Error>
+  on_downstream_header_complete(Downstream *downstream) override;
+  std::expected<void, Error> on_downstream_body(Downstream *downstream,
+                                                std::span<const uint8_t> data,
+                                                bool flush) override;
+  std::expected<void, Error>
+  on_downstream_body_complete(Downstream *downstream) override;
 
   void on_handler_delete() override;
-  int on_downstream_reset(Downstream *downstream, bool no_retry) override;
+  std::expected<void, Error> on_downstream_reset(Downstream *downstream,
+                                                 bool no_retry) override;
 
   void pause_read(IOCtrlReason reason) override;
-  int resume_read(IOCtrlReason reason, Downstream *downstream,
-                  size_t consumed) override;
-  int send_reply(Downstream *downstream,
-                 std::span<const uint8_t> body) override;
+  std::expected<void, Error> resume_read(IOCtrlReason reason,
+                                         Downstream *downstream,
+                                         size_t consumed) override;
+  std::expected<void, Error> send_reply(Downstream *downstream,
+                                        std::span<const uint8_t> body) override;
 
-  int initiate_push(Downstream *downstream, std::string_view uri) override;
+  std::expected<void, Error> initiate_push(Downstream *downstream,
+                                           std::string_view uri) override {
+    return {};
+  }
 
   std::span<struct iovec>
   response_riovec(std::span<struct iovec> iov) const override;
@@ -87,64 +100,84 @@ public:
 
   Downstream *on_downstream_push_promise(Downstream *downstream,
                                          int32_t promised_stream_id) override;
-  int on_downstream_push_promise_complete(
-    Downstream *downstream, Downstream *promised_downstream) override;
+  std::expected<void, Error> on_downstream_push_promise_complete(
+    Downstream *downstream, Downstream *promised_downstream) override {
+    return {};
+  }
   bool push_enabled() const override;
   void cancel_premature_downstream(Downstream *promised_downstream) override;
 
-  int init(const UpstreamAddr *faddr, const Address &remote_addr,
-           const Address &local_addr, const ngtcp2_pkt_hd &initial_hd,
-           const ngtcp2_cid *odcid, std::span<const uint8_t> token,
-           ngtcp2_token_type token_type);
+  std::expected<void, Error>
+  init(const UpstreamAddr *faddr, const Address &remote_addr,
+       const Address &local_addr, const ngtcp2_pkt_hd &initial_hd,
+       const ngtcp2_cid *odcid, std::span<const uint8_t> token,
+       ngtcp2_token_type token_type);
 
-  int on_read(const UpstreamAddr *faddr, const Address &remote_addr,
-              const Address &local_addr, const ngtcp2_pkt_info &pi,
-              std::span<const uint8_t> data);
+  std::expected<void, Error> on_read(const UpstreamAddr *faddr,
+                                     const Address &remote_addr,
+                                     const Address &local_addr,
+                                     const ngtcp2_pkt_info &pi,
+                                     std::span<const uint8_t> data);
 
-  int write_streams();
+  std::expected<void, Error> write_streams();
   ngtcp2_ssize write_pkt(ngtcp2_path *path, ngtcp2_pkt_info *pi, uint8_t *dest,
                          size_t destlen, ngtcp2_tstamp ts);
 
-  int handle_error();
-  int send_connection_close(const ngtcp2_ccerr &ccerr);
+  std::expected<void, Error> handle_error();
+  std::expected<void, Error> send_connection_close(const ngtcp2_ccerr &ccerr);
 
-  int handle_expiry();
+  std::expected<void, Error> handle_expiry();
   void reset_timer();
 
-  int setup_httpconn();
+  std::expected<void, Error> setup_httpconn();
   void add_pending_downstream(std::unique_ptr<Downstream> downstream);
-  int recv_stream_data(uint32_t flags, int64_t stream_id,
-                       std::span<const uint8_t> data);
-  int acked_stream_data_offset(int64_t stream_id, uint64_t datalen);
-  int extend_max_stream_data(int64_t stream_id);
+  std::expected<void, Error> recv_stream_data(uint32_t flags, int64_t stream_id,
+                                              std::span<const uint8_t> data);
+  std::expected<void, Error> acked_stream_data_offset(int64_t stream_id,
+                                                      uint64_t datalen);
+  std::expected<void, Error> extend_max_stream_data(int64_t stream_id);
   void extend_max_remote_streams_bidi(uint64_t max_streams);
-  int error_reply(Downstream *downstream, unsigned int status_code);
+  std::expected<void, Error> stream_close(int64_t stream_id,
+                                          uint64_t app_error_code);
+  std::expected<void, Error> http_shutdown_stream_read(int64_t stream_id);
+  std::expected<void, Error> handshake_completed();
+  std::expected<void, Error> error_reply(Downstream *downstream,
+                                         unsigned int status_code);
   void http_begin_request_headers(int64_t stream_id);
-  int http_recv_request_header(Downstream *downstream, int32_t token,
-                               nghttp3_rcbuf *name, nghttp3_rcbuf *value,
-                               uint8_t flags, bool trailer);
-  int http_end_request_headers(Downstream *downstream, int fin);
-  int http_end_stream(Downstream *downstream);
-  void start_downstream(Downstream *downstream);
-  void initiate_downstream(Downstream *downstream);
-  int shutdown_stream(Downstream *downstream, uint64_t app_error_code);
-  int shutdown_stream_read(int64_t stream_id, uint64_t app_error_code);
-  int http_stream_close(Downstream *downstream, uint64_t app_error_code);
+  std::expected<void, Error>
+  http_recv_request_header(Downstream *downstream, int32_t token,
+                           nghttp3_rcbuf *name, nghttp3_rcbuf *value,
+                           uint8_t flags, bool trailer);
+  std::expected<void, Error> http_end_request_headers(Downstream *downstream,
+                                                      int fin);
+  std::expected<void, Error> http_end_stream(Downstream *downstream);
+  std::expected<void, Error> http_stream_close(Downstream *downstream,
+                                               uint64_t app_error_code);
+  std::expected<void, Error> http_acked_stream_data(Downstream *downstream,
+                                                    uint64_t datalen);
+  std::expected<void, Error> http_reset_stream(int64_t stream_id,
+                                               uint64_t app_error_code);
+  std::expected<void, Error> http_stop_sending(int64_t stream_id,
+                                               uint64_t app_error_code);
+  std::expected<void, Error> http_recv_data(Downstream *downstream,
+                                            std::span<const uint8_t> data);
+  std::expected<void, Error> start_downstream(Downstream *downstream);
+  std::expected<void, Error> initiate_downstream(Downstream *downstream);
+  std::expected<void, Error> shutdown_stream(Downstream *downstream,
+                                             uint64_t app_error_code);
+  std::expected<void, Error> shutdown_stream_read(int64_t stream_id,
+                                                  uint64_t app_error_code);
   void consume(int64_t stream_id, size_t nconsumed);
-  void remove_downstream(Downstream *downstream);
-  int stream_close(int64_t stream_id, uint64_t app_error_code);
+  std::expected<void, Error> remove_downstream(Downstream *downstream);
   void log_response_headers(Downstream *downstream,
                             const std::vector<nghttp3_nv> &nva) const;
-  int http_acked_stream_data(Downstream *downstream, uint64_t datalen);
-  int http_shutdown_stream_read(int64_t stream_id);
-  int http_reset_stream(int64_t stream_id, uint64_t app_error_code);
-  int http_stop_sending(int64_t stream_id, uint64_t app_error_code);
-  int http_recv_data(Downstream *downstream, std::span<const uint8_t> data);
-  int handshake_completed();
-  int check_shutdown();
-  int start_graceful_shutdown();
-  int submit_goaway();
-  std::pair<std::span<const uint8_t>, int>
+  std::expected<void, Error> check_shutdown();
+  std::expected<void, Error> start_graceful_shutdown();
+  std::expected<void, Error> submit_goaway();
+  // send_packet sends packet(s).  If send is blocked, this function
+  // returns the packet(s) that are not yet sent.  This function
+  // returns empty span if all packet(s) are sent.
+  std::span<const uint8_t>
   send_packet(const UpstreamAddr *faddr, const sockaddr *remote_sa,
               socklen_t remote_salen, const sockaddr *local_sa,
               socklen_t local_salen, const ngtcp2_pkt_info &pi,
@@ -153,30 +186,35 @@ public:
                    std::span<const uint8_t> data, size_t gso_size);
 
   void qlog_write(const void *data, size_t datalen, bool fin);
-  int open_qlog_file(std::string_view dir, const ngtcp2_cid &scid) const;
+  std::expected<int, Error> open_qlog_file(std::string_view dir,
+                                           const ngtcp2_cid &scid) const;
 
   void on_send_blocked(const ngtcp2_path &path, const ngtcp2_pkt_info &pi,
                        std::span<const uint8_t> data, size_t gso_size);
-  int send_blocked_packet();
+  void send_blocked_packet();
   void signal_write_upstream_addr(const UpstreamAddr *faddr);
+  void reset_upstream_addr_fd();
 
   ngtcp2_conn *get_conn() const;
 
-  int send_new_token(const ngtcp2_addr *remote_addr);
+  std::expected<void, Error> send_new_token(const ngtcp2_addr *remote_addr);
+
+  std::expected<size_t, Error> on_stream_write(int64_t stream_id,
+                                               size_t datalen);
 
 private:
   ClientHandler *handler_;
   ev_timer timer_;
   ev_timer shutdown_timer_;
   ev_prepare prep_;
-  int qlog_fd_;
-  ngtcp2_cid hashed_scid_;
-  ngtcp2_conn *conn_;
+  int qlog_fd_{-1};
+  ngtcp2_cid hashed_scid_{};
+  ngtcp2_conn *conn_{};
   ngtcp2_ccerr last_error_;
 #if OPENSSL_3_5_0_API
-  ngtcp2_crypto_ossl_ctx *ossl_ctx_;
+  ngtcp2_crypto_ossl_ctx *ossl_ctx_{};
 #endif // OPENSSL_3_5_0_API
-  nghttp3_conn *httpconn_;
+  nghttp3_conn *httpconn_{};
   DownstreamQueue downstream_queue_;
   std::unique_ptr<uint8_t[]> conn_close_;
   size_t conn_closelen_{};
@@ -192,8 +230,12 @@ private:
       std::span<const uint8_t> data;
       size_t gso_size;
     } blocked;
-    bool no_gso;
-  } tx_;
+    bool no_gso{
+#ifndef UDP_SEGMENT
+      true
+#endif // !defined(UDP_SEGMENT)
+    };
+  } tx_{};
   std::array<uint8_t, 64_k> txbuf_;
 };
 

@@ -32,7 +32,7 @@
 namespace shrpx {
 
 DownstreamQueue::HostEntry::HostEntry(ImmutableString &&key)
-  : key(std::move(key)), num_active(0) {}
+  : key(std::move(key)) {}
 
 DownstreamQueue::DownstreamQueue(size_t conn_max_per_host, bool unified_host)
   : conn_max_per_host_(conn_max_per_host == 0

@@ -65,7 +65,7 @@ int verbose_error_callback(nghttp2_session *session, int lib_error_code,
 // Returns difference between |a| and |b| in milliseconds, assuming
 // |a| is more recent than |b|.
 template <typename TimePoint>
-std::chrono::milliseconds time_delta(const TimePoint &a, const TimePoint &b) {
+std::chrono::milliseconds time_delta(TimePoint a, TimePoint b) {
   return std::chrono::duration_cast<std::chrono::milliseconds>(a - b);
 }
 

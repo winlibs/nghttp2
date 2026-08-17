@@ -50,20 +50,22 @@ class Http2DownstreamConnection : public DownstreamConnection {
 public:
   Http2DownstreamConnection(Http2Session *http2session);
   ~Http2DownstreamConnection() override;
-  int attach_downstream(Downstream *downstream) override;
-  void detach_downstream(Downstream *downstream) override;
+  std::expected<void, Error> attach_downstream(Downstream *downstream) override;
+  std::expected<void, Error> detach_downstream(Downstream *downstream) override;
 
-  int push_request_headers() override;
-  int push_upload_data_chunk(std::span<const uint8_t> data) override;
-  int end_upload_data() override;
+  std::expected<void, Error> push_request_headers() override;
+  std::expected<void, Error>
+  push_upload_data_chunk(std::span<const uint8_t> data) override;
+  std::expected<void, Error> end_upload_data() override;
 
   void pause_read(IOCtrlReason reason) override {}
-  int resume_read(IOCtrlReason reason, size_t consumed) override;
+  std::expected<void, Error> resume_read(IOCtrlReason reason,
+                                         size_t consumed) override;
   void force_resume_read() override {}
 
-  int on_read() override;
-  int on_write() override;
-  int on_timeout() override;
+  std::expected<void, Error> on_read() override { return {}; }
+  std::expected<void, Error> on_write() override { return {}; }
+  std::expected<void, Error> on_timeout() override;
 
   void on_upstream_change(Upstream *upstream) override {}
 
@@ -75,19 +77,18 @@ public:
   get_downstream_addr_group() const override;
   DownstreamAddr *get_addr() const override;
 
-  int send();
-
   void attach_stream_data(StreamData *sd);
   StreamData *detach_stream_data();
 
-  int submit_rst_stream(Downstream *downstream,
-                        uint32_t error_code = NGHTTP2_INTERNAL_ERROR);
+  std::expected<void, Error>
+  submit_rst_stream(Downstream *downstream,
+                    uint32_t error_code = NGHTTP2_INTERNAL_ERROR);
 
-  Http2DownstreamConnection *dlnext, *dlprev;
+  Http2DownstreamConnection *dlnext{}, *dlprev{};
 
 private:
   Http2Session *http2session_;
-  StreamData *sd_;
+  StreamData *sd_{};
 };
 
 } // namespace shrpx

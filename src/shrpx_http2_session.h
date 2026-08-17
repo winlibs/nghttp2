@@ -27,8 +27,8 @@
 
 #include "shrpx.h"
 
-#include <unordered_set>
 #include <memory>
+#include <expected>
 
 #include "ssl_compat.h"
 
@@ -48,6 +48,7 @@
 #include "shrpx_connection.h"
 #include "buffer.h"
 #include "template.h"
+#include "errors.h"
 
 using namespace nghttp2;
 
@@ -113,53 +114,58 @@ public:
 
   // If hard is true, all pending requests are abandoned and
   // associated ClientHandlers will be deleted.
-  int disconnect(bool hard = false);
-  int initiate_connection();
-  int resolve_name();
+  void disconnect(bool hard = false);
+  std::expected<void, Error> initiate_connection();
+  std::expected<void, Error> resolve_name();
 
   void add_downstream_connection(Http2DownstreamConnection *dconn);
   void remove_downstream_connection(Http2DownstreamConnection *dconn);
 
   void remove_stream_data(StreamData *sd);
 
-  int submit_request(Http2DownstreamConnection *dconn, const nghttp2_nv *nva,
-                     size_t nvlen, const nghttp2_data_provider2 *data_prd);
+  std::expected<void, Error>
+  submit_request(Http2DownstreamConnection *dconn, const nghttp2_nv *nva,
+                 size_t nvlen, const nghttp2_data_provider2 *data_prd);
 
-  int submit_rst_stream(int32_t stream_id, uint32_t error_code);
+  std::expected<void, Error> submit_rst_stream(int32_t stream_id,
+                                               uint32_t error_code);
 
-  int terminate_session(uint32_t error_code);
+  std::expected<void, Error> terminate_session(uint32_t error_code);
 
   nghttp2_session *get_session() const;
 
-  int resume_data(Http2DownstreamConnection *dconn);
+  std::expected<void, Error> resume_data(Http2DownstreamConnection *dconn);
 
-  int connection_made();
+  std::expected<void, Error> connection_made();
 
-  int do_read();
-  int do_write();
+  std::expected<void, Error> do_read();
+  std::expected<void, Error> do_write();
 
-  int on_read(std::span<const uint8_t> data);
-  int on_write();
+  std::expected<void, Error> on_read(std::span<const uint8_t> data);
+  std::expected<void, Error> on_write();
 
-  int connected();
-  int read_clear();
-  int write_clear();
-  int tls_handshake();
-  int read_tls();
-  int write_tls();
+  std::expected<void, Error> connected();
+  std::expected<void, Error> read_clear();
+  std::expected<void, Error> write_clear();
+  std::expected<void, Error> tls_handshake();
+  std::expected<void, Error> read_tls();
+  std::expected<void, Error> write_tls();
   // This is a special write function which just stop write event
   // watcher.
-  int write_void();
+  std::expected<void, Error> write_void();
 
-  int downstream_read_proxy(std::span<const uint8_t> data);
-  int downstream_connect_proxy();
+  std::expected<void, Error>
+  downstream_read_proxy(std::span<const uint8_t> data);
+  std::expected<void, Error> downstream_connect_proxy();
 
-  int downstream_read(std::span<const uint8_t> data);
-  int downstream_write();
+  std::expected<void, Error> downstream_read(std::span<const uint8_t> data);
+  std::expected<void, Error> downstream_write();
 
-  int noop();
-  int read_noop(std::span<const uint8_t> data);
-  int write_noop();
+  std::expected<void, Error> noop() { return {}; }
+  std::expected<void, Error> read_noop(std::span<const uint8_t> data) {
+    return {};
+  }
+  std::expected<void, Error> write_noop() { return {}; }
 
   void signal_write();
 
@@ -175,7 +181,7 @@ public:
 
   SSL *get_ssl() const;
 
-  int consume(int32_t stream_id, size_t len);
+  std::expected<void, Error> consume(int32_t stream_id, size_t len);
 
   // Returns true if request can be issued on downstream connection.
   bool can_push_request(const Downstream *downstream) const;
@@ -189,23 +195,25 @@ public:
   void reset_connection_check_timer_if_not_checking();
   // Signals that connection is alive.  Internally
   // reset_connection_check_timer() is called.
-  void connection_alive();
+  std::expected<void, Error> connection_alive();
   // Change connection check state.
   void set_connection_check_state(ConnectionCheck state);
   ConnectionCheck get_connection_check_state() const;
 
   bool should_hard_fail() const;
 
-  void submit_pending_requests();
+  std::expected<void, Error> submit_pending_requests();
 
   DownstreamAddr *get_addr() const;
 
   const std::shared_ptr<DownstreamAddrGroup> &get_downstream_addr_group() const;
 
-  int handle_downstream_push_promise(Downstream *downstream,
-                                     int32_t promised_stream_id);
-  int handle_downstream_push_promise_complete(Downstream *downstream,
-                                              Downstream *promised_downstream);
+  std::expected<void, Error>
+  handle_downstream_push_promise(Downstream *downstream,
+                                 int32_t promised_stream_id);
+  std::expected<void, Error>
+  handle_downstream_push_promise_complete(Downstream *downstream,
+                                          Downstream *promised_downstream);
 
   // Returns number of downstream connections, including pushed
   // streams.
@@ -246,13 +254,13 @@ public:
 
   // This is called when SETTINGS frame without ACK flag set is
   // received.
-  void on_settings_received(const nghttp2_frame *frame);
+  std::expected<void, Error> on_settings_received(const nghttp2_frame *frame);
 
   bool get_allow_connect_proto() const;
 
   using ReadBuf = Buffer<8_k>;
 
-  Http2Session *dlnext, *dlprev;
+  Http2Session *dlnext{}, *dlprev{};
 
 private:
   Connection conn_;
@@ -268,9 +276,11 @@ private:
   ev_prepare prep_;
   DList<Http2DownstreamConnection> dconns_;
   DList<StreamData> streams_;
-  std::function<int(Http2Session &)> read_, write_;
-  std::function<int(Http2Session &, std::span<const uint8_t>)> on_read_;
-  std::function<int(Http2Session &)> on_write_;
+  std::function<std::expected<void, Error>(Http2Session &)> read_, write_;
+  std::function<std::expected<void, Error>(Http2Session &,
+                                           std::span<const uint8_t>)>
+    on_read_;
+  std::function<std::expected<void, Error>(Http2Session &)> on_write_;
   // Used to parse the response from HTTP proxy
   std::unique_ptr<llhttp_t> proxy_htp_;
   Worker *worker_;
@@ -279,21 +289,21 @@ private:
   std::shared_ptr<DownstreamAddrGroup> group_;
   // Address of remote endpoint
   DownstreamAddr *addr_;
-  nghttp2_session *session_;
+  nghttp2_session *session_{};
   // Actual remote address used to contact backend.  This is initially
   // nullptr, and may point to either &addr_->addr,
   // resolved_addr_.get(), or HTTP proxy's address structure.
-  const Address *raddr_;
+  const Address *raddr_{};
   // Resolved IP address if dns parameter is used
   std::unique_ptr<Address> resolved_addr_;
   std::unique_ptr<DNSQuery> dns_query_;
-  Http2SessionState state_;
-  ConnectionCheck connection_check_state_;
-  FreelistZone freelist_zone_;
+  Http2SessionState state_{Http2SessionState::DISCONNECTED};
+  ConnectionCheck connection_check_state_{ConnectionCheck::NONE};
+  FreelistZone freelist_zone_{FreelistZone::NONE};
   // true if SETTINGS without ACK is received from peer.
-  bool settings_recved_;
+  bool settings_recved_{};
   // true if peer enables RFC 8441 CONNECT protocol.
-  bool allow_connect_proto_;
+  bool allow_connect_proto_{};
 };
 
 nghttp2_session_callbacks *create_http2_downstream_callbacks();

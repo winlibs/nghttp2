@@ -29,6 +29,12 @@
 
 #include <signal.h>
 
+#include <expected>
+
+#include "errors.h"
+
+using namespace nghttp2;
+
 namespace shrpx {
 
 inline constexpr int REOPEN_LOG_SIGNAL = SIGUSR1;
@@ -36,24 +42,21 @@ inline constexpr int EXEC_BINARY_SIGNAL = SIGUSR2;
 inline constexpr int GRACEFUL_SHUTDOWN_SIGNAL = SIGQUIT;
 inline constexpr int RELOAD_SIGNAL = SIGHUP;
 
-// Blocks all signals.  The previous signal mask is stored into
-// |oldset| if it is not nullptr.  This function returns 0 if it
-// succeeds, or -1.  The errno will indicate the error.
-int shrpx_signal_block_all(sigset_t *oldset);
+// Blocks all signals and returns the previous signal mask.  The errno
+// will indicate the error.
+std::expected<sigset_t, Error> shrpx_signal_block_all();
 
-// Unblocks all signals.  This function returns 0 if it succeeds, or
-// -1.  The errno will indicate the error.
-int shrpx_signal_unblock_all();
+// Unblocks all signals.  The errno will indicate the error.
+std::expected<void, Error> shrpx_signal_unblock_all();
 
-// Sets signal mask |set|.  This function returns 0 if it succeeds, or
-// -1.  The errno will indicate the error.
-int shrpx_signal_set(sigset_t *set);
+// Sets signal mask |set|.  The errno will indicate the error.
+std::expected<void, Error> shrpx_signal_set(const sigset_t *set);
 
-int shrpx_signal_set_main_proc_ign_handler();
-int shrpx_signal_unset_main_proc_ign_handler();
+std::expected<void, Error> shrpx_signal_set_main_proc_ign_handler();
+std::expected<void, Error> shrpx_signal_unset_main_proc_ign_handler();
 
-int shrpx_signal_set_worker_proc_ign_handler();
-int shrpx_signal_unset_worker_proc_ign_handler();
+std::expected<void, Error> shrpx_signal_set_worker_proc_ign_handler();
+std::expected<void, Error> shrpx_signal_unset_worker_proc_ign_handler();
 
 } // namespace shrpx
 

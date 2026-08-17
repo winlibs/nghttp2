@@ -37,6 +37,7 @@
 #ifndef NOTHREADS
 #  include <future>
 #endif // !defined(NOTHREADS)
+#include <expected>
 
 #include "ssl_compat.h"
 
@@ -63,6 +64,7 @@
 #  include "shrpx_quic.h"
 #endif // defined(ENABLE_HTTP3)
 #include "allocator.h"
+#include "errors.h"
 
 using namespace nghttp2;
 
@@ -206,19 +208,13 @@ struct WeightGroupEntryGreater {
 };
 
 struct SharedDownstreamAddr {
-  SharedDownstreamAddr()
-    : balloc(1024, 1024),
-      affinity{SessionAffinity::NONE},
-      redirect_if_not_tls{false},
-      dnf{false},
-      timeout{} {}
-
+  SharedDownstreamAddr() noexcept = default;
   SharedDownstreamAddr(const SharedDownstreamAddr &) = delete;
   SharedDownstreamAddr(SharedDownstreamAddr &&) = delete;
   SharedDownstreamAddr &operator=(const SharedDownstreamAddr &) = delete;
   SharedDownstreamAddr &operator=(SharedDownstreamAddr &&) = delete;
 
-  BlockAllocator balloc;
+  BlockAllocator balloc{1024, 1024};
   std::vector<DownstreamAddr> addrs;
   std::vector<WeightGroup> wgs;
   std::priority_queue<WeightGroupEntry, std::vector<WeightGroupEntry>,
@@ -234,22 +230,22 @@ struct SharedDownstreamAddr {
   std::shared_ptr<mruby::MRubyContext> mruby_ctx;
 #endif // defined(HAVE_MRUBY)
   // Configuration for session affinity
-  AffinityConfig affinity;
+  AffinityConfig affinity{SessionAffinity::NONE};
   // Session affinity
   // true if this group requires that client connection must be TLS,
   // and the request must be redirected to https URI.
-  bool redirect_if_not_tls;
+  bool redirect_if_not_tls{};
   // true if a request should not be forwarded to a backend.
-  bool dnf;
+  bool dnf{};
   // Timeouts for backend connection.
   struct {
     ev_tstamp read;
     ev_tstamp write;
-  } timeout;
+  } timeout{};
 };
 
 struct DownstreamAddrGroup {
-  DownstreamAddrGroup();
+  DownstreamAddrGroup() noexcept = default;
   ~DownstreamAddrGroup();
 
   DownstreamAddrGroup(const DownstreamAddrGroup &) = delete;
@@ -262,7 +258,7 @@ struct DownstreamAddrGroup {
   // true if this group is no longer used for new request.  If this is
   // true, the connection made using one of address in shared_addr
   // must not be pooled.
-  bool retired;
+  bool retired{};
 };
 
 struct WorkerStat {
@@ -272,6 +268,7 @@ struct WorkerStat {
 
 #ifdef ENABLE_HTTP3
 struct QUICPacket {
+  QUICPacket() noexcept = default;
   QUICPacket(size_t upstream_addr_index, const Address &remote_addr,
              const Address &local_addr, const ngtcp2_pkt_info &pi,
              std::span<const uint8_t> data)
@@ -280,11 +277,10 @@ struct QUICPacket {
       local_addr{local_addr},
       pi{pi},
       data{std::ranges::begin(data), std::ranges::end(data)} {}
-  QUICPacket() : upstream_addr_index{}, remote_addr{}, local_addr{}, pi{} {}
-  size_t upstream_addr_index;
-  Address remote_addr;
-  Address local_addr;
-  ngtcp2_pkt_info pi;
+  size_t upstream_addr_index{};
+  Address remote_addr{};
+  Address local_addr{};
+  ngtcp2_pkt_info pi{};
   std::vector<uint8_t> data;
 };
 #endif // defined(ENABLE_HTTP3)
@@ -350,7 +346,7 @@ public:
   std::mt19937 &get_randgen();
 
 #ifdef HAVE_MRUBY
-  int create_mruby_context();
+  std::expected<void, Error> create_mruby_context();
 
   mruby::MRubyContext *get_mruby_context() const;
 #endif // defined(HAVE_MRUBY)
@@ -367,9 +363,9 @@ public:
 
   ConnectionHandler *get_connection_handler() const;
 
-  int setup_server_socket();
+  std::expected<void, Error> setup_server_socket();
   void drain_and_delete_listener();
-  int create_tcp_server_socket(UpstreamAddr &addr);
+  std::expected<void, Error> create_tcp_server_socket(UpstreamAddr &addr);
   void enable_listener();
   void disable_listener();
   void sleep_listener(ev_tstamp t);
@@ -377,7 +373,7 @@ public:
 #ifdef ENABLE_HTTP3
   QUICConnectionHandler *get_quic_connection_handler();
 
-  int setup_quic_server_socket();
+  std::expected<void, Error> setup_quic_server_socket();
 
   const WorkerID &get_worker_id() const;
 
@@ -389,16 +385,26 @@ public:
   uint32_t compute_sk_index() const;
 #  endif // defined(HAVE_LIBBPF)
 
-  int create_quic_server_socket(UpstreamAddr &addr);
+  std::expected<void, Error> create_quic_server_socket(UpstreamAddr &addr);
 
   // Returns a pointer to UpstreamAddr which matches |local_addr|.
-  const UpstreamAddr *find_quic_upstream_addr(const Address &local_addr);
+  std::expected<const UpstreamAddr *, Error>
+  find_quic_upstream_addr(const Address &local_addr);
+
+  std::expected<void, Error>
+  setup_quic_keying_materials(const std::unique_ptr<QUICKeyingMaterials> &qkms);
+
+  [[nodiscard]] const std::unique_ptr<QUICKeyingMaterials> &
+  get_quic_keying_materials() const {
+    return quic_keying_materials_;
+  }
 #endif // defined(ENABLE_HTTP3)
 
   DNSTracker *get_dns_tracker();
 
-  int handle_connection(int fd, const sockaddr *addr, socklen_t addrlen,
-                        const UpstreamAddr *faddr);
+  std::expected<void, Error> handle_connection(int fd, const sockaddr *addr,
+                                               socklen_t addrlen,
+                                               const UpstreamAddr *faddr);
 
 private:
 #ifndef NOTHREADS
@@ -422,6 +428,7 @@ private:
 
 #ifdef ENABLE_HTTP3
   WorkerID worker_id_;
+  std::unique_ptr<QUICKeyingMaterials> quic_keying_materials_;
   std::vector<UpstreamAddr> quic_upstream_addrs_;
   std::vector<std::unique_ptr<QUICListener>> quic_listeners_;
 #endif // defined(ENABLE_HTTP3)
@@ -456,7 +463,7 @@ private:
   // this is used when file descriptor is exhausted.
   std::unique_ptr<ConnectBlocker> connect_blocker_;
 
-  bool graceful_shutdown_;
+  bool graceful_shutdown_{};
 };
 
 // Selects group based on request's |hostport| and |path|.  |hostport|

@@ -35,44 +35,30 @@ NullDownstreamConnection::NullDownstreamConnection(
 
 NullDownstreamConnection::~NullDownstreamConnection() {}
 
-int NullDownstreamConnection::attach_downstream(Downstream *downstream) {
+std::expected<void, Error>
+NullDownstreamConnection::attach_downstream(Downstream *downstream) {
   if (log_enabled(INFO)) {
     Log{INFO, this} << "Attaching to DOWNSTREAM:" << downstream;
   }
 
   downstream_ = downstream;
 
-  return 0;
+  return {};
 }
 
-void NullDownstreamConnection::detach_downstream(Downstream *downstream) {
+std::expected<void, Error>
+NullDownstreamConnection::detach_downstream(Downstream *downstream) {
   if (log_enabled(INFO)) {
     Log{INFO, this} << "Detaching from DOWNSTREAM:" << downstream;
   }
   downstream_ = nullptr;
+
+  return {};
 }
-
-int NullDownstreamConnection::push_request_headers() { return 0; }
-
-int NullDownstreamConnection::push_upload_data_chunk(
-  std::span<const uint8_t> data) {
-  return 0;
-}
-
-int NullDownstreamConnection::end_upload_data() { return 0; }
 
 void NullDownstreamConnection::pause_read(IOCtrlReason reason) {}
 
-int NullDownstreamConnection::resume_read(IOCtrlReason reason,
-                                          size_t consumed) {
-  return 0;
-}
-
 void NullDownstreamConnection::force_resume_read() {}
-
-int NullDownstreamConnection::on_read() { return 0; }
-
-int NullDownstreamConnection::on_write() { return 0; }
 
 void NullDownstreamConnection::on_upstream_change(Upstream *upstream) {}
 

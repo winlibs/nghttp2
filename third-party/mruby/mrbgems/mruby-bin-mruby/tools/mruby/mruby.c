@@ -12,7 +12,6 @@
 #include <mruby/variable.h>
 #include <mruby/proc.h>
 #include <mruby/error.h>
-#include <mruby/presym.h>
 
 #if defined(_WIN32)
 # include <io.h> /* for setmode */
@@ -282,8 +281,9 @@ main(int argc, char **argv)
   mrb_value ARGV;
   mrb_value v;
 
-  if (mrb == NULL) {
-    fprintf(stderr, "%s: Invalid mrb_state, exiting mruby\n", *argv);
+  if (MRB_OPEN_FAILURE(mrb)) {
+    mrb_print_error(mrb);  /* handles NULL */
+    mrb_close(mrb);        /* handles NULL */
     return EXIT_FAILURE;
   }
 
@@ -344,6 +344,7 @@ main(int argc, char **argv)
 
     /* set program filename */
     mrb_ccontext_filename(mrb, c, cmdline);
+    c->no_return_value = TRUE;  /* main program doesn't need return value */
 
     /* Load program */
     if (args.mrbfile || mrb_extension_p(cmdline)) {

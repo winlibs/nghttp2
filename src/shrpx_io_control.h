@@ -36,7 +36,10 @@
 
 namespace shrpx {
 
-enum IOCtrlReason { SHRPX_NO_BUFFER = 1 << 0, SHRPX_MSG_BLOCK = 1 << 1 };
+enum IOCtrlReason : uint32_t {
+  SHRPX_NO_BUFFER = 1 << 0,
+  SHRPX_MSG_BLOCK = 1 << 1,
+};
 
 class IOControl {
 public:
@@ -50,7 +53,7 @@ public:
 
 private:
   RateLimit *lim_;
-  uint32_t rdbits_;
+  uint32_t rdbits_{};
 };
 
 } // namespace shrpx

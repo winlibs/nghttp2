@@ -24,7 +24,7 @@
  */
 #include "h2load_http3_session.h"
 
-#include <iostream>
+#include <print>
 
 #include <ngtcp2/ngtcp2.h>
 
@@ -41,17 +41,16 @@
 
 namespace h2load {
 
-Http3Session::Http3Session(Client *client)
-  : client_(client), conn_(nullptr), npending_request_(0), reqidx_(0) {}
+Http3Session::Http3Session(Client *client) : client_(client) {}
 
 Http3Session::~Http3Session() { nghttp3_conn_del(conn_); }
 
 void Http3Session::on_connect() {}
 
-int Http3Session::submit_request() {
+std::expected<void, Error> Http3Session::submit_request() {
   if (npending_request_) {
     ++npending_request_;
-    return 0;
+    return {};
   }
 
   auto config = client_->worker->config;
@@ -61,16 +60,16 @@ int Http3Session::submit_request() {
     client_->reqidx = 0;
   }
 
-  auto stream_id = submit_request_internal();
-  if (stream_id < 0) {
-    if (stream_id == NGTCP2_ERR_STREAM_ID_BLOCKED) {
+  auto rv = submit_request_internal();
+  if (!rv) {
+    if (rv.error() == Error::STREAM_ID_BLOCKED) {
       ++npending_request_;
-      return 0;
+      return {};
     }
-    return -1;
+    return std::unexpected{rv.error()};
   }
 
-  return 0;
+  return {};
 }
 
 namespace {
@@ -96,7 +95,7 @@ void Http3Session::read_data(nghttp3_vec *vec, size_t veccnt,
   *pflags |= NGHTTP3_DATA_FLAG_EOF;
 }
 
-int64_t Http3Session::submit_request_internal() {
+std::expected<void, Error> Http3Session::submit_request_internal() {
   int rv;
   int64_t stream_id;
 
@@ -105,7 +104,11 @@ int64_t Http3Session::submit_request_internal() {
 
   rv = ngtcp2_conn_open_bidi_stream(client_->quic.conn, &stream_id, nullptr);
   if (rv != 0) {
-    return rv;
+    if (rv == NGTCP2_ERR_STREAM_ID_BLOCKED) {
+      return std::unexpected{Error::STREAM_ID_BLOCKED};
+    }
+
+    return std::unexpected{Error::QUIC};
   }
 
   nghttp3_data_reader dr{
@@ -116,7 +119,7 @@ int64_t Http3Session::submit_request_internal() {
     conn_, stream_id, reinterpret_cast<nghttp3_nv *>(nva.data()), nva.size(),
     config->data_fd == -1 ? nullptr : &dr, nullptr);
   if (rv != 0) {
-    return rv;
+    return std::unexpected{Error::HTTP3};
   }
 
   client_->on_request(stream_id);
@@ -124,12 +127,8 @@ int64_t Http3Session::submit_request_internal() {
   assert(req_stat);
   client_->record_request_time(req_stat);
 
-  return stream_id;
+  return {};
 }
-
-int Http3Session::on_read(std::span<const uint8_t> data) { return -1; }
-
-int Http3Session::on_write() { return -1; }
 
 void Http3Session::terminate() {}
 
@@ -141,43 +140,35 @@ namespace {
 int stream_close(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code,
                  void *user_data, void *stream_user_data) {
   auto s = static_cast<Http3Session *>(user_data);
-  if (s->stream_close(stream_id, app_error_code) != 0) {
-    return NGHTTP3_ERR_CALLBACK_FAILURE;
-  }
+  s->stream_close(stream_id, app_error_code);
+
   return 0;
 }
 } // namespace
 
-int Http3Session::stream_close(int64_t stream_id, uint64_t app_error_code) {
+void Http3Session::stream_close(int64_t stream_id, uint64_t app_error_code) {
   if (ngtcp2_is_bidi_stream(stream_id)) {
     client_->on_stream_close(stream_id, app_error_code == NGHTTP3_H3_NO_ERROR);
 
-    return 0;
+    return;
   }
 
-  if (!ngtcp2_conn_is_local_stream(client_->quic.conn, stream_id)) {
+  if (!ngtcp2_conn_is_local_stream2(client_->quic.conn, stream_id)) {
     ngtcp2_conn_extend_max_streams_uni(client_->quic.conn, 1);
   }
-
-  return 0;
 }
 
 namespace {
 int end_stream(nghttp3_conn *conn, int64_t stream_id, void *user_data,
                void *stream_user_data) {
   auto s = static_cast<Http3Session *>(user_data);
-  if (s->end_stream(stream_id) != 0) {
-    return NGHTTP3_ERR_CALLBACK_FAILURE;
-  }
+  s->end_stream(stream_id);
+
   return 0;
 }
 } // namespace
 
-int Http3Session::end_stream(int64_t stream_id) {
-  client_->record_ttfb();
-
-  return 0;
-}
+void Http3Session::end_stream(int64_t stream_id) { client_->record_ttfb(); }
 
 namespace {
 int recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data,
@@ -219,7 +210,7 @@ int begin_headers(nghttp3_conn *conn, int64_t stream_id, void *user_data,
 } // namespace
 
 void Http3Session::begin_headers(int64_t stream_id) {
-  auto payloadlen = nghttp3_conn_get_frame_payload_left(conn_, stream_id);
+  auto payloadlen = nghttp3_conn_get_frame_payload_left2(conn_, stream_id);
   assert(payloadlen > 0);
 
   client_->worker->stats.bytes_head += payloadlen;
@@ -247,80 +238,86 @@ namespace {
 int stop_sending(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code,
                  void *user_data, void *stream_user_data) {
   auto s = static_cast<Http3Session *>(user_data);
-  if (s->stop_sending(stream_id, app_error_code) != 0) {
+  if (!s->stop_sending(stream_id, app_error_code)) {
     return NGHTTP3_ERR_CALLBACK_FAILURE;
   }
   return 0;
 }
 } // namespace
 
-int Http3Session::stop_sending(int64_t stream_id, uint64_t app_error_code) {
+std::expected<void, Error> Http3Session::stop_sending(int64_t stream_id,
+                                                      uint64_t app_error_code) {
   auto rv = ngtcp2_conn_shutdown_stream_read(client_->quic.conn, 0, stream_id,
                                              app_error_code);
   if (rv != 0) {
-    std::cerr << "ngtcp2_conn_shutdown_stream_read: " << ngtcp2_strerror(rv)
-              << std::endl;
-    return -1;
+    std::println(stderr, "ngtcp2_conn_shutdown_stream_read: {}",
+                 ngtcp2_strerror(rv));
+    return std::unexpected{Error::QUIC};
   }
-  return 0;
+  return {};
 }
 
 namespace {
 int reset_stream(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code,
                  void *user_data, void *stream_user_data) {
   auto s = static_cast<Http3Session *>(user_data);
-  if (s->reset_stream(stream_id, app_error_code) != 0) {
+  if (!s->reset_stream(stream_id, app_error_code)) {
     return NGHTTP3_ERR_CALLBACK_FAILURE;
   }
   return 0;
 }
 } // namespace
 
-int Http3Session::reset_stream(int64_t stream_id, uint64_t app_error_code) {
+std::expected<void, Error> Http3Session::reset_stream(int64_t stream_id,
+                                                      uint64_t app_error_code) {
   auto rv = ngtcp2_conn_shutdown_stream_write(client_->quic.conn, 0, stream_id,
                                               app_error_code);
   if (rv != 0) {
-    std::cerr << "ngtcp2_conn_shutdown_stream_write: " << ngtcp2_strerror(rv)
-              << std::endl;
-    return -1;
+    std::println(stderr, "ngtcp2_conn_shutdown_stream_write: {}",
+                 ngtcp2_strerror(rv));
+    return std::unexpected{Error::QUIC};
   }
-  return 0;
+  return {};
 }
 
-int Http3Session::close_stream(int64_t stream_id, uint64_t app_error_code) {
+std::expected<void, Error> Http3Session::close_stream(int64_t stream_id,
+                                                      uint64_t app_error_code) {
   auto rv = nghttp3_conn_close_stream(conn_, stream_id, app_error_code);
-  switch (rv) {
-  case 0:
-    return 0;
-  case NGHTTP3_ERR_STREAM_NOT_FOUND:
-    if (!ngtcp2_is_bidi_stream(stream_id)) {
-      assert(!ngtcp2_conn_is_local_stream(client_->quic.conn, stream_id));
-      ngtcp2_conn_extend_max_streams_uni(client_->quic.conn, 1);
+  if (rv != 0) {
+    if (rv == NGHTTP3_ERR_STREAM_NOT_FOUND) {
+      if (!ngtcp2_is_bidi_stream(stream_id)) {
+        assert(!ngtcp2_conn_is_local_stream2(client_->quic.conn, stream_id));
+        ngtcp2_conn_extend_max_streams_uni(client_->quic.conn, 1);
+      }
+
+      return {};
     }
-    return 0;
-  default:
-    return -1;
+
+    return std::unexpected{Error::HTTP3};
   }
+
+  return {};
 }
 
-int Http3Session::shutdown_stream_read(int64_t stream_id) {
+std::expected<void, Error>
+Http3Session::shutdown_stream_read(int64_t stream_id) {
   auto rv = nghttp3_conn_shutdown_stream_read(conn_, stream_id);
   if (rv != 0) {
-    return -1;
+    return std::unexpected{Error::HTTP3};
   }
-  return 0;
+  return {};
 }
 
-int Http3Session::extend_max_local_streams() {
+std::expected<void, Error> Http3Session::extend_max_local_streams() {
   auto config = client_->worker->config;
 
   for (; npending_request_; --npending_request_) {
-    auto stream_id = submit_request_internal();
-    if (stream_id < 0) {
-      if (stream_id == NGTCP2_ERR_STREAM_ID_BLOCKED) {
-        return 0;
+    auto rv = submit_request_internal();
+    if (!rv) {
+      if (rv.error() == Error::STREAM_ID_BLOCKED) {
+        return {};
       }
-      return -1;
+      return rv;
     }
 
     if (++reqidx_ == config->nva.size()) {
@@ -328,7 +325,7 @@ int Http3Session::extend_max_local_streams() {
     }
   }
 
-  return 0;
+  return {};
 }
 
 namespace {
@@ -342,13 +339,13 @@ void rand(uint8_t *dest, size_t destlen) {
 }
 } // namespace
 
-int Http3Session::init_conn() {
+std::expected<void, Error> Http3Session::init_conn() {
   int rv;
 
   assert(conn_ == nullptr);
 
-  if (ngtcp2_conn_get_streams_uni_left(client_->quic.conn) < 3) {
-    return -1;
+  if (ngtcp2_conn_get_streams_uni_left2(client_->quic.conn) < 3) {
+    return std::unexpected{Error::INTERNAL};
   }
 
   static constexpr auto callbacks = nghttp3_callbacks{
@@ -375,9 +372,8 @@ int Http3Session::init_conn() {
 
   rv = nghttp3_conn_client_new(&conn_, &callbacks, &settings, mem, this);
   if (rv != 0) {
-    std::cerr << "nghttp3_conn_client_new: " << nghttp3_strerror(rv)
-              << std::endl;
-    return -1;
+    std::println(stderr, "nghttp3_conn_client_new: {}", nghttp3_strerror(rv));
+    return std::unexpected{Error::HTTP3};
   }
 
   int64_t ctrl_stream_id;
@@ -385,16 +381,16 @@ int Http3Session::init_conn() {
   rv =
     ngtcp2_conn_open_uni_stream(client_->quic.conn, &ctrl_stream_id, nullptr);
   if (rv != 0) {
-    std::cerr << "ngtcp2_conn_open_uni_stream: " << ngtcp2_strerror(rv)
-              << std::endl;
-    return -1;
+    std::println(stderr, "ngtcp2_conn_open_uni_stream: {}",
+                 ngtcp2_strerror(rv));
+    return std::unexpected{Error::QUIC};
   }
 
   rv = nghttp3_conn_bind_control_stream(conn_, ctrl_stream_id);
   if (rv != 0) {
-    std::cerr << "nghttp3_conn_bind_control_stream: " << nghttp3_strerror(rv)
-              << std::endl;
-    return -1;
+    std::println(stderr, "nghttp3_conn_bind_control_stream: {}",
+                 nghttp3_strerror(rv));
+    return std::unexpected{Error::HTTP3};
   }
 
   int64_t qpack_enc_stream_id, qpack_dec_stream_id;
@@ -402,98 +398,109 @@ int Http3Session::init_conn() {
   rv = ngtcp2_conn_open_uni_stream(client_->quic.conn, &qpack_enc_stream_id,
                                    nullptr);
   if (rv != 0) {
-    std::cerr << "ngtcp2_conn_open_uni_stream: " << ngtcp2_strerror(rv)
-              << std::endl;
-    return -1;
+    std::println(stderr, "ngtcp2_conn_open_uni_stream: {}",
+                 ngtcp2_strerror(rv));
+    return std::unexpected{Error::QUIC};
   }
 
   rv = ngtcp2_conn_open_uni_stream(client_->quic.conn, &qpack_dec_stream_id,
                                    nullptr);
   if (rv != 0) {
-    std::cerr << "ngtcp2_conn_open_uni_stream: " << ngtcp2_strerror(rv)
-              << std::endl;
-    return -1;
+    std::println(stderr, "ngtcp2_conn_open_uni_stream: {}",
+                 ngtcp2_strerror(rv));
+    return std::unexpected{Error::QUIC};
   }
 
   rv = nghttp3_conn_bind_qpack_streams(conn_, qpack_enc_stream_id,
                                        qpack_dec_stream_id);
   if (rv != 0) {
-    std::cerr << "nghttp3_conn_bind_qpack_streams: " << nghttp3_strerror(rv)
-              << std::endl;
-    return -1;
+    std::println(stderr, "nghttp3_conn_bind_qpack_streams: {}",
+                 nghttp3_strerror(rv));
+    return std::unexpected{Error::HTTP3};
   }
 
-  return 0;
+  return {};
 }
 
-ssize_t Http3Session::read_stream(uint32_t flags, int64_t stream_id,
-                                  std::span<const uint8_t> data) {
+std::expected<size_t, Error>
+Http3Session::read_stream(uint32_t flags, int64_t stream_id,
+                          std::span<const uint8_t> data) {
   auto nconsumed =
     nghttp3_conn_read_stream2(conn_, stream_id, data.data(), data.size(),
                               flags & NGTCP2_STREAM_DATA_FLAG_FIN,
                               ngtcp2_conn_get_timestamp(client_->quic.conn));
   if (nconsumed < 0) {
-    std::cerr << "nghttp3_conn_read_stream2: "
-              << nghttp3_strerror(static_cast<int>(nconsumed)) << std::endl;
+    std::println(stderr, "nghttp3_conn_read_stream2: {}",
+                 nghttp3_strerror(static_cast<int>(nconsumed)));
     ngtcp2_ccerr_set_application_error(
       &client_->quic.last_error,
       nghttp3_err_infer_quic_app_error_code(static_cast<int>(nconsumed)),
       nullptr, 0);
-    return -1;
+    return std::unexpected{Error::HTTP3};
   }
-  return nconsumed;
+  return as_unsigned(nconsumed);
 }
 
-ssize_t Http3Session::write_stream(int64_t &stream_id, int &fin,
-                                   nghttp3_vec *vec, size_t veccnt) {
-  auto sveccnt =
-    nghttp3_conn_writev_stream(conn_, &stream_id, &fin, vec, veccnt);
+std::expected<Http3Session::WriteResult, Error>
+Http3Session::write_stream(std::span<nghttp3_vec> dest) {
+  int64_t stream_id;
+  int fin;
+
+  auto sveccnt = nghttp3_conn_writev_stream(conn_, &stream_id, &fin,
+                                            dest.data(), dest.size());
   if (sveccnt < 0) {
     ngtcp2_ccerr_set_application_error(
       &client_->quic.last_error,
       nghttp3_err_infer_quic_app_error_code(static_cast<int>(sveccnt)), nullptr,
       0);
-    return -1;
+    return std::unexpected{Error::HTTP3};
   }
-  return sveccnt;
+
+  return WriteResult{
+    .stream_id = stream_id,
+    .data = dest.first(as_unsigned(sveccnt)),
+    .fin = fin,
+  };
 }
 
 void Http3Session::block_stream(int64_t stream_id) {
   nghttp3_conn_block_stream(conn_, stream_id);
 }
 
-int Http3Session::unblock_stream(int64_t stream_id) {
+std::expected<void, Error> Http3Session::unblock_stream(int64_t stream_id) {
   if (nghttp3_conn_unblock_stream(conn_, stream_id) != 0) {
-    return -1;
+    return std::unexpected{Error::HTTP3};
   }
 
-  return 0;
+  return {};
 }
 
 void Http3Session::shutdown_stream_write(int64_t stream_id) {
   nghttp3_conn_shutdown_stream_write(conn_, stream_id);
 }
 
-int Http3Session::add_write_offset(int64_t stream_id, size_t ndatalen) {
+std::expected<void, Error> Http3Session::add_write_offset(int64_t stream_id,
+                                                          size_t ndatalen) {
   auto rv = nghttp3_conn_add_write_offset(conn_, stream_id, ndatalen);
   if (rv != 0) {
     ngtcp2_ccerr_set_application_error(
       &client_->quic.last_error, nghttp3_err_infer_quic_app_error_code(rv),
       nullptr, 0);
-    return -1;
+    return std::unexpected{Error::HTTP3};
   }
-  return 0;
+  return {};
 }
 
-int Http3Session::add_ack_offset(int64_t stream_id, size_t datalen) {
+std::expected<void, Error> Http3Session::add_ack_offset(int64_t stream_id,
+                                                        size_t datalen) {
   auto rv = nghttp3_conn_add_ack_offset(conn_, stream_id, datalen);
   if (rv != 0) {
     ngtcp2_ccerr_set_application_error(
       &client_->quic.last_error, nghttp3_err_infer_quic_app_error_code(rv),
       nullptr, 0);
-    return -1;
+    return std::unexpected{Error::HTTP3};
   }
-  return 0;
+  return {};
 }
 
 } // namespace h2load

@@ -30,8 +30,10 @@
 #include <sys/types.h>
 
 #include <cinttypes>
+#include <expected>
 
 #include "h2load.h"
+#include "errors.h"
 
 namespace h2load {
 
@@ -41,13 +43,13 @@ public:
   // Called when the connection was made.
   virtual void on_connect() = 0;
   // Called when one request must be issued.
-  virtual int submit_request() = 0;
+  virtual std::expected<void, Error> submit_request() = 0;
   // Called when incoming bytes are available. The subclass has to
   // return the number of bytes read.
-  virtual int on_read(std::span<const uint8_t> data) = 0;
+  virtual std::expected<void, Error> on_read(std::span<const uint8_t> data) = 0;
   // Called when write is available. Returns 0 on success, otherwise
   // return -1.
-  virtual int on_write() = 0;
+  virtual std::expected<void, Error> on_write() = 0;
   // Called when the underlying session must be terminated.
   virtual void terminate() = 0;
   // Return the maximum concurrency per connection

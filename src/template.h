@@ -42,6 +42,7 @@
 #include <string_view>
 #include <compare>
 #include <type_traits>
+#include <print>
 
 namespace nghttp2 {
 
@@ -92,7 +93,7 @@ template <typename T, typename F> bool test_flags(T t, F flags) {
 // T *dlnext, which point to previous element and next element in the
 // list respectively.
 template <typename T> struct DList {
-  DList() : head(nullptr), tail(nullptr), len(0) {}
+  DList() noexcept = default;
 
   DList(const DList &) = delete;
   DList &operator=(const DList &) = delete;
@@ -145,8 +146,8 @@ template <typename T> struct DList {
 
   size_t size() const { return len; }
 
-  T *head, *tail;
-  size_t len;
+  T *head{}, *tail{};
+  size_t len{};
 };
 
 template <typename T> void dlist_delete_all(DList<T> &dl) {
@@ -159,37 +160,40 @@ template <typename T> void dlist_delete_all(DList<T> &dl) {
 
 // User-defined literals for K, M, and G (powers of 1024)
 
-constexpr unsigned long long operator"" _k(unsigned long long k) {
+[[nodiscard]] constexpr unsigned long long
+operator""_k(unsigned long long k) noexcept {
   return k * 1024;
 }
 
-constexpr unsigned long long operator"" _m(unsigned long long m) {
+[[nodiscard]] constexpr unsigned long long
+operator""_m(unsigned long long m) noexcept {
   return m * 1024 * 1024;
 }
 
-constexpr unsigned long long operator"" _g(unsigned long long g) {
+[[nodiscard]] constexpr unsigned long long
+operator""_g(unsigned long long g) noexcept {
   return g * 1024 * 1024 * 1024;
 }
 
 // User-defined literals for time, converted into double in seconds
 
 // hours
-constexpr double operator"" _h(unsigned long long h) {
+[[nodiscard]] constexpr double operator""_h(unsigned long long h) noexcept {
   return static_cast<double>(h * 60 * 60);
 }
 
 // minutes
-constexpr double operator"" _min(unsigned long long min) {
+[[nodiscard]] constexpr double operator""_min(unsigned long long min) noexcept {
   return static_cast<double>(min * 60);
 }
 
 // seconds
-constexpr double operator"" _s(unsigned long long s) {
+[[nodiscard]] constexpr double operator""_s(unsigned long long s) noexcept {
   return static_cast<double>(s);
 }
 
 // milliseconds
-constexpr double operator"" _ms(unsigned long long ms) {
+[[nodiscard]] constexpr double operator""_ms(unsigned long long ms) noexcept {
   return static_cast<double>(ms) / 1000.;
 }
 
@@ -211,7 +215,7 @@ public:
   using const_iterator = const_pointer;
   using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
-  constexpr ImmutableString() noexcept : len(0), base("") {}
+  constexpr ImmutableString() noexcept = default;
 
   constexpr ImmutableString(const char *s, size_t slen)
     : len(slen), base(copystr(s, s + len)) {}
@@ -315,8 +319,8 @@ private:
     return copystr(std::ranges::begin(r), std::ranges::end(r));
   }
 
-  size_type len;
-  const char *base;
+  size_type len{};
+  const char *base{""};
 };
 
 inline bool operator==(const ImmutableString &lhs, const ImmutableString &rhs) {
@@ -397,7 +401,7 @@ inline int run_app(std::function<int(int, char **)> app, int argc,
   } catch (const std::bad_alloc &) {
     fputs("Out of memory\n", stderr);
   } catch (const std::exception &x) {
-    fprintf(stderr, "Caught %s:\n%s\n", typeid(x).name(), x.what());
+    std::println(stderr, "Caught {}:\n{}", typeid(x).name(), x.what());
   } catch (...) {
     fputs("Unknown exception caught\n", stderr);
   }

@@ -36,9 +36,17 @@
 
 #define MAKE_NV(NAME, VALUE)                                                   \
   {                                                                            \
-    (uint8_t *)(NAME),          (uint8_t *)(VALUE),                            \
-    nghttp2_strlen_lit((NAME)), nghttp2_strlen_lit((VALUE)),                   \
-    NGHTTP2_NV_FLAG_NONE,                                                      \
+    .name = (uint8_t *)(NAME),                                                 \
+    .value = (uint8_t *)(VALUE),                                               \
+    .namelen = nghttp2_strlen_lit((NAME)),                                     \
+    .valuelen = nghttp2_strlen_lit((VALUE)),                                   \
+    .flags = NGHTTP2_NV_FLAG_NONE,                                             \
+  }
+#define MAKE_RCBUF(S)                                                          \
+  {                                                                            \
+    .base = (uint8_t *)(S),                                                    \
+    .len = nghttp2_strlen_lit((S)),                                            \
+    .ref = -1,                                                                 \
   }
 #define ARRLEN(ARR) (sizeof(ARR) / sizeof(ARR[0]))
 

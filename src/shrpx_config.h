@@ -44,6 +44,7 @@
 #include <memory>
 #include <unordered_set>
 #include <unordered_map>
+#include <expected>
 
 #include "ssl_compat.h"
 
@@ -67,6 +68,7 @@
 #include "http2.h"
 #include "network.h"
 #include "allocator.h"
+#include "errors.h"
 
 using namespace nghttp2;
 
@@ -386,6 +388,20 @@ inline constexpr auto SHRPX_OPT_GROUPS = "groups"sv;
 inline constexpr auto SHRPX_OPT_ECH_CONFIG_FILE = "ech-config-file"sv;
 inline constexpr auto SHRPX_OPT_ECH_RETRY_CONFIG_FILE =
   "ech-retry-config-file"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_STREAM_READ_TIMEOUT =
+  "frontend-stream-read-timeout"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_STREAM_WRITE_TIMEOUT =
+  "frontend-stream-write-timeout"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_STREAM_READ_TIMEOUT =
+  "backend-stream-read-timeout"sv;
+inline constexpr auto SHRPX_OPT_BACKEND_STREAM_WRITE_TIMEOUT =
+  "backend-stream-write-timeout"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_MIN_WRITE_RATE =
+  "frontend-min-write-rate"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_INITIAL_WRITE_RATE_TIMEOUT =
+  "frontend-initial-write-rate-timeout"sv;
+inline constexpr auto SHRPX_OPT_FRONTEND_MAX_WRITE_RATE_TIMEOUT =
+  "frontend-max-write-rate-timeout"sv;
 
 inline constexpr size_t SHRPX_OBFUSCATED_NODE_LENGTH = 8;
 
@@ -558,12 +574,7 @@ struct AffinityHash {
 };
 
 struct DownstreamAddrGroupConfig {
-  DownstreamAddrGroupConfig(std::string_view pattern)
-    : pattern(pattern),
-      affinity{SessionAffinity::NONE},
-      redirect_if_not_tls(false),
-      dnf{false},
-      timeout{} {}
+  DownstreamAddrGroupConfig(std::string_view pattern) : pattern(pattern) {}
 
   std::string_view pattern;
   std::string_view mruby_file;
@@ -575,17 +586,17 @@ struct DownstreamAddrGroupConfig {
   // addrs.  It is only assigned when strict stickiness is enabled.
   std::unordered_map<uint32_t, size_t> affinity_hash_map;
   // Cookie based session affinity configuration.
-  AffinityConfig affinity;
+  AffinityConfig affinity{SessionAffinity::NONE};
   // true if this group requires that client connection must be TLS,
   // and the request must be redirected to https URI.
-  bool redirect_if_not_tls;
+  bool redirect_if_not_tls{};
   // true if a request should not be forwarded to a backend.
-  bool dnf;
+  bool dnf{};
   // Timeouts for backend connection.
   struct {
     ev_tstamp read;
     ev_tstamp write;
-  } timeout;
+  } timeout{};
 };
 
 struct TicketKey {
@@ -622,11 +633,20 @@ struct TLSCertificate {
 #ifdef ENABLE_HTTP3
 struct QUICKeyingMaterial {
   QUICKeyingMaterial() noexcept = default;
+  // This copy constructor does not copy cid_encryption_ctx and
+  // cid_decryption_ctx from |other|.
+  QUICKeyingMaterial(const QUICKeyingMaterial &other) noexcept;
   QUICKeyingMaterial(QUICKeyingMaterial &&other) noexcept;
   ~QUICKeyingMaterial() noexcept;
+  // This copy assignment operator does not copy cid_encryption_ctx
+  // and cid_decryption_ctx from |other|.  The original
+  // cid_encryption_ctx and cid_decryption_ctx are deleted if they are
+  // not nullptr, and initialized to nullptr.
+  QUICKeyingMaterial &operator=(const QUICKeyingMaterial &other) noexcept;
   QUICKeyingMaterial &operator=(QUICKeyingMaterial &&other) noexcept;
-  EVP_CIPHER_CTX *cid_encryption_ctx;
-  EVP_CIPHER_CTX *cid_decryption_ctx;
+  std::expected<void, Error> init_ciphers();
+  EVP_CIPHER_CTX *cid_encryption_ctx{};
+  EVP_CIPHER_CTX *cid_decryption_ctx{};
   std::array<uint8_t, SHRPX_QUIC_SECRET_RESERVEDLEN> reserved;
   std::array<uint8_t, SHRPX_QUIC_SECRETLEN> secret;
   std::array<uint8_t, SHRPX_QUIC_SALTLEN> salt;
@@ -845,6 +865,21 @@ struct HttpConfig {
   struct {
     ev_tstamp header;
   } timeout;
+  struct {
+    struct {
+      ev_tstamp stream_read;
+      ev_tstamp stream_write;
+      ev_tstamp initial_write_rate;
+      ev_tstamp max_write_rate;
+    } timeout;
+    size_t min_write_rate;
+  } upstream;
+  struct {
+    struct {
+      ev_tstamp stream_read;
+      ev_tstamp stream_write;
+    } timeout;
+  } downstream;
   std::vector<AltSvc> altsvcs;
   // altsvcs serialized in a wire format.
   std::string_view altsvc_header_value;
@@ -907,10 +942,6 @@ struct Http2Config {
     int32_t connection_window_size;
     size_t max_concurrent_streams;
   } downstream;
-  struct {
-    ev_tstamp stream_read;
-    ev_tstamp stream_write;
-  } timeout;
   bool no_cookie_crumbling;
   bool no_server_push;
 };
@@ -964,15 +995,7 @@ struct RouterConfig {
 };
 
 struct DownstreamConfig {
-  DownstreamConfig()
-    : balloc(1024, 1024),
-      timeout{},
-      addr_group_catch_all{0},
-      connections_per_host{0},
-      connections_per_frontend{0},
-      request_buffer_size{0},
-      response_buffer_size{0},
-      family{0} {}
+  DownstreamConfig() noexcept = default;
 
   DownstreamConfig(const DownstreamConfig &) = delete;
   DownstreamConfig(DownstreamConfig &&) = delete;
@@ -983,7 +1006,7 @@ struct DownstreamConfig {
   // we may swap around DownstreamConfig in arbitrary times with API
   // calls, we should use their own allocator instead of per Config
   // allocator.
-  BlockAllocator balloc;
+  BlockAllocator balloc{1024, 1024};
   struct {
     ev_tstamp read;
     ev_tstamp write;
@@ -993,19 +1016,19 @@ struct DownstreamConfig {
     // backend or while detaching failed backend from load balancing
     // group temporarily.
     ev_tstamp max_backoff;
-  } timeout;
+  } timeout{};
   RouterConfig router;
   std::vector<DownstreamAddrGroupConfig> addr_groups;
   // The index of catch-all group in downstream_addr_groups.
-  size_t addr_group_catch_all;
-  size_t connections_per_host;
-  size_t connections_per_frontend;
-  size_t request_buffer_size;
-  size_t response_buffer_size;
+  size_t addr_group_catch_all{};
+  size_t connections_per_host{};
+  size_t connections_per_frontend{};
+  size_t request_buffer_size{};
+  size_t response_buffer_size{};
   // Address family of backend connection.  One of either AF_INET,
   // AF_INET6 or AF_UNSPEC.  This is ignored if backend connection
   // is made via Unix domain socket.
-  int family;
+  int family{};
 };
 
 struct ConnectionConfig {
@@ -1064,37 +1087,7 @@ struct DNSConfig {
 };
 
 struct Config {
-  Config()
-    : balloc(4096, 4096),
-      downstream_http_proxy{},
-      http{},
-      http2{},
-      tls{},
-#ifdef ENABLE_HTTP3
-      quic{},
-#endif // defined(ENABLE_HTTP3)
-      logging{},
-      conn{},
-      api{},
-      dns{},
-      config_revision{0},
-      num_worker{0},
-      padding{0},
-      rlimit_nofile{0},
-      rlimit_memlock{0},
-      uid{0},
-      gid{0},
-      pid{0},
-      verbose{false},
-      daemon{false},
-      http2_proxy{false},
-      single_process{false},
-      single_thread{false},
-      ignore_per_pattern_mruby_error{false},
-      ev_loop_flags{0},
-      max_worker_processes{0},
-      worker_process_grace_shutdown_period{0.} {
-  }
+  Config() noexcept = default;
   ~Config();
 
   Config(Config &&) = delete;
@@ -1105,19 +1098,19 @@ struct Config {
   // Allocator to allocate memory for this object except for
   // DownstreamConfig.  Currently, it is used to allocate memory for
   // strings.
-  BlockAllocator balloc;
-  HttpProxy downstream_http_proxy;
-  HttpConfig http;
-  Http2Config http2;
-  TLSConfig tls;
+  BlockAllocator balloc{4096, 4096};
+  HttpProxy downstream_http_proxy{};
+  HttpConfig http{};
+  Http2Config http2{};
+  TLSConfig tls{};
 #ifdef ENABLE_HTTP3
-  QUICConfig quic;
-  Http3Config http3;
+  QUICConfig quic{};
+  Http3Config http3{};
 #endif // defined(ENABLE_HTTP3)
-  LoggingConfig logging;
-  ConnectionConfig conn;
-  APIConfig api;
-  DNSConfig dns;
+  LoggingConfig logging{};
+  ConnectionConfig conn{};
+  APIConfig api{};
+  DNSConfig dns{};
   std::string_view pid_file;
   std::string_view conf_path;
   std::string_view user;
@@ -1128,27 +1121,27 @@ struct Config {
   // as "nghttpx-conf-rev" response header field.  The external
   // program can check this value to know whether reloading has
   // completed or not.
-  uint64_t config_revision;
-  size_t num_worker;
-  size_t padding;
-  size_t rlimit_nofile;
-  size_t rlimit_memlock;
-  uid_t uid;
-  gid_t gid;
-  pid_t pid;
-  bool verbose;
-  bool daemon;
-  bool http2_proxy;
+  uint64_t config_revision{};
+  size_t num_worker{};
+  size_t padding{};
+  size_t rlimit_nofile{};
+  size_t rlimit_memlock{};
+  uid_t uid{};
+  gid_t gid{};
+  pid_t pid{};
+  bool verbose{};
+  bool daemon{};
+  bool http2_proxy{};
   // Run nghttpx in single process mode.  With this mode, signal
   // handling is omitted.
-  bool single_process;
-  bool single_thread;
+  bool single_process{};
+  bool single_thread{};
   // Ignore mruby compile error for per-pattern mruby script.
-  bool ignore_per_pattern_mruby_error;
+  bool ignore_per_pattern_mruby_error{};
   // flags passed to ev_default_loop() and ev_loop_new()
-  uint32_t ev_loop_flags;
-  size_t max_worker_processes;
-  ev_tstamp worker_process_grace_shutdown_period;
+  uint32_t ev_loop_flags{};
+  size_t max_worker_processes{};
+  ev_tstamp worker_process_grace_shutdown_period{};
 };
 
 const Config *get_config();
@@ -1198,6 +1191,8 @@ enum {
   SHRPX_OPTID_BACKEND_READ_TIMEOUT,
   SHRPX_OPTID_BACKEND_REQUEST_BUFFER,
   SHRPX_OPTID_BACKEND_RESPONSE_BUFFER,
+  SHRPX_OPTID_BACKEND_STREAM_READ_TIMEOUT,
+  SHRPX_OPTID_BACKEND_STREAM_WRITE_TIMEOUT,
   SHRPX_OPTID_BACKEND_TLS,
   SHRPX_OPTID_BACKEND_TLS_SNI_FIELD,
   SHRPX_OPTID_BACKEND_WRITE_TIMEOUT,
@@ -1253,8 +1248,11 @@ enum {
   SHRPX_OPTID_FRONTEND_HTTP3_MAX_WINDOW_SIZE,
   SHRPX_OPTID_FRONTEND_HTTP3_READ_TIMEOUT,
   SHRPX_OPTID_FRONTEND_HTTP3_WINDOW_SIZE,
+  SHRPX_OPTID_FRONTEND_INITIAL_WRITE_RATE_TIMEOUT,
   SHRPX_OPTID_FRONTEND_KEEP_ALIVE_TIMEOUT,
   SHRPX_OPTID_FRONTEND_MAX_REQUESTS,
+  SHRPX_OPTID_FRONTEND_MAX_WRITE_RATE_TIMEOUT,
+  SHRPX_OPTID_FRONTEND_MIN_WRITE_RATE,
   SHRPX_OPTID_FRONTEND_NO_TLS,
   SHRPX_OPTID_FRONTEND_QUIC_CONGESTION_CONTROLLER,
   SHRPX_OPTID_FRONTEND_QUIC_DEBUG_LOG,
@@ -1265,6 +1263,8 @@ enum {
   SHRPX_OPTID_FRONTEND_QUIC_REQUIRE_TOKEN,
   SHRPX_OPTID_FRONTEND_QUIC_SECRET_FILE,
   SHRPX_OPTID_FRONTEND_READ_TIMEOUT,
+  SHRPX_OPTID_FRONTEND_STREAM_READ_TIMEOUT,
+  SHRPX_OPTID_FRONTEND_STREAM_WRITE_TIMEOUT,
   SHRPX_OPTID_FRONTEND_WRITE_TIMEOUT,
   SHRPX_OPTID_GROUPS,
   SHRPX_OPTID_HEADER_FIELD_BUFFER,
@@ -1371,39 +1371,37 @@ enum {
 int option_lookup_token(std::string_view name);
 
 // Parses option name |opt| and value |optarg|.  The results are
-// stored into the object pointed by |config|. This function returns 0
-// if it succeeds, or -1.  The |included_set| contains the all paths
-// already included while processing this configuration, to avoid loop
-// in --include option.  The |pattern_addr_indexer| contains a pair of
-// pattern of backend, and its index in DownstreamConfig::addr_groups.
-// It is introduced to speed up loading configuration file with lots
-// of backends.
-int parse_config(
+// stored into the object pointed by |config|.  The |included_set|
+// contains the all paths already included while processing this
+// configuration, to avoid loop in --include option.  The
+// |pattern_addr_indexer| contains a pair of pattern of backend, and
+// its index in DownstreamConfig::addr_groups.  It is introduced to
+// speed up loading configuration file with lots of backends.
+std::expected<void, Error> parse_config(
   Config *config, std::string_view opt, std::string_view optarg,
   std::unordered_set<std::string_view> &included_set,
   std::unordered_map<std::string_view, size_t> &pattern_addr_indexer);
 
 // Similar to parse_config() above, but additional |optid| which
 // should be the return value of option_lookup_token(opt).
-int parse_config(
+std::expected<void, Error> parse_config(
   Config *config, int optid, std::string_view opt, std::string_view optarg,
   std::unordered_set<std::string_view> &included_set,
   std::unordered_map<std::string_view, size_t> &pattern_addr_indexer);
 
 // Loads configurations from |filename| and stores them in |config|.
-// This function returns 0 if it succeeds, or -1.  See parse_config()
-// for |include_set|.
-int load_config(
-  Config *config, const char *filename,
-  std::unordered_set<std::string_view> &include_set,
-  std::unordered_map<std::string_view, size_t> &pattern_addr_indexer);
+// See parse_config() for |include_set|.
+std::expected<void, Error>
+load_config(Config *config, const char *filename,
+            std::unordered_set<std::string_view> &include_set,
+            std::unordered_map<std::string_view, size_t> &pattern_addr_indexer);
 
 // Parses header field in |optarg|.  We expect header field is formed
 // like "NAME: VALUE".  We require that NAME is non empty string.  ":"
 // is allowed at the start of the NAME, but NAME == ":" is not
 // allowed.  This function returns pair of NAME and VALUE.
-HeaderRefs::value_type parse_header(BlockAllocator &balloc,
-                                    std::string_view optarg);
+std::expected<HeaderRef, Error> parse_header(BlockAllocator &balloc,
+                                             std::string_view optarg);
 
 std::vector<LogFragment> parse_log_format(BlockAllocator &balloc,
                                           std::string_view optarg);
@@ -1412,9 +1410,9 @@ std::vector<LogFragment> parse_log_format(BlockAllocator &balloc,
 std::string_view str_syslog_facility(int facility);
 
 // Returns integer value of syslog |facility| string.
-int int_syslog_facility(std::string_view strfacility);
+std::expected<int, Error> int_syslog_facility(std::string_view strfacility);
 
-FILE *open_file_for_write(const char *filename);
+std::expected<FILE *, Error> open_file_for_write(const char *filename);
 
 // Reads TLS ticket key file in |files| and returns TicketKey which
 // stores read key data.  The given |cipher| and |hmac| determine the
@@ -1425,19 +1423,21 @@ read_tls_ticket_key_file(const std::vector<std::string_view> &files,
                          const EVP_CIPHER *cipher, const EVP_MD *hmac);
 
 #ifdef ENABLE_HTTP3
-std::shared_ptr<QUICKeyingMaterials>
+std::expected<std::unique_ptr<QUICKeyingMaterials>, Error>
 read_quic_secret_file(std::string_view path);
 #endif // defined(ENABLE_HTTP3)
 
 // Returns string representation of |proto|.
 std::string_view strproto(Proto proto);
 
-int configure_downstream_group(Config *config, bool http2_proxy,
-                               bool numeric_addr_only,
-                               const TLSConfig &tlsconf);
+std::expected<void, Error> configure_downstream_group(Config *config,
+                                                      bool http2_proxy,
+                                                      bool numeric_addr_only,
+                                                      const TLSConfig &tlsconf);
 
-int resolve_hostname(Address *addr, const char *hostname, uint16_t port,
-                     int family, int additional_flags = 0);
+std::expected<Address, Error> resolve_hostname(const char *hostname,
+                                               uint16_t port, int family,
+                                               int additional_flags = 0);
 
 } // namespace shrpx
 

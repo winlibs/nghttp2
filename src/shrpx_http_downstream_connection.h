@@ -47,20 +47,22 @@ public:
                            DownstreamAddr *addr, struct ev_loop *loop,
                            Worker *worker);
   ~HttpDownstreamConnection() override;
-  int attach_downstream(Downstream *downstream) override;
-  void detach_downstream(Downstream *downstream) override;
+  std::expected<void, Error> attach_downstream(Downstream *downstream) override;
+  std::expected<void, Error> detach_downstream(Downstream *downstream) override;
 
-  int push_request_headers() override;
-  int push_upload_data_chunk(std::span<const uint8_t> data) override;
-  int end_upload_data() override;
+  std::expected<void, Error> push_request_headers() override;
+  std::expected<void, Error>
+  push_upload_data_chunk(std::span<const uint8_t> data) override;
+  std::expected<void, Error> end_upload_data() override;
   void end_upload_data_chunk();
 
   void pause_read(IOCtrlReason reason) override;
-  int resume_read(IOCtrlReason reason, size_t consumed) override;
+  std::expected<void, Error> resume_read(IOCtrlReason reason,
+                                         size_t consumed) override;
   void force_resume_read() override;
 
-  int on_read() override;
-  int on_write() override;
+  std::expected<void, Error> on_read() override;
+  std::expected<void, Error> on_write() override;
 
   void on_upstream_change(Upstream *upstream) override;
 
@@ -70,35 +72,39 @@ public:
   get_downstream_addr_group() const override;
   DownstreamAddr *get_addr() const override;
 
-  int initiate_connection();
+  std::expected<void, Error> initiate_connection();
 
-  int write_first();
-  int read_clear();
-  int write_clear();
-  int read_tls();
-  int write_tls();
+  std::expected<void, Error> write_first();
+  std::expected<void, Error> read_clear();
+  std::expected<void, Error> write_clear();
+  std::expected<void, Error> read_tls();
+  std::expected<void, Error> write_tls();
 
-  int process_input(std::span<const uint8_t> data);
-  int tls_handshake();
+  std::expected<void, Error> process_input(std::span<const uint8_t> data);
+  std::expected<void, Error> tls_handshake();
 
-  int connected();
+  std::expected<void, Error> connected();
   void signal_write();
-  int actual_signal_write();
+  void actual_signal_write();
 
   // Returns address used to connect to backend.  Could be nullptr.
   const Address *get_raddr() const;
 
-  int noop();
+  std::expected<void, Error> noop() { return {}; }
+  void void_noop() {}
 
-  int process_blocked_request_buf();
+  void process_blocked_request_buf();
   void process_blocked_request_buf_on_response();
   bool should_unblock_request_body_before_response() const;
   bool should_block_request_body() const;
 
 private:
   Connection conn_;
-  std::function<int(HttpDownstreamConnection &)> on_read_, on_write_,
-    signal_write_;
+  std::function<std::expected<void, Error>(HttpDownstreamConnection &)>
+    on_read_{&HttpDownstreamConnection::noop},
+    on_write_{&HttpDownstreamConnection::noop};
+  std::function<void(HttpDownstreamConnection &)> signal_write_{
+    &HttpDownstreamConnection::void_noop};
   Worker *worker_;
   // nullptr if TLS is not used.
   SSL_CTX *ssl_ctx_;
@@ -108,20 +114,20 @@ private:
   // Actual remote address used to contact backend.  This is initially
   // nullptr, and may point to either &addr_->addr, or
   // resolved_addr_.get().
-  const Address *raddr_;
+  const Address *raddr_{};
   // Resolved IP address if dns parameter is used
   std::unique_ptr<Address> resolved_addr_;
   std::unique_ptr<DNSQuery> dns_query_;
-  IOControl ioctrl_;
-  llhttp_t response_htp_;
+  IOControl ioctrl_{&conn_.rlimit};
+  llhttp_t response_htp_{};
   // true if first write succeeded.
-  bool first_write_done_;
+  bool first_write_done_{};
   // true if this object can be reused
-  bool reusable_;
+  bool reusable_{true};
   // true if request header is written to request buffer.
-  bool request_header_written_;
+  bool request_header_written_{};
   // true if blocked request buffer has been processed.
-  bool blocked_request_buf_processed_;
+  bool blocked_request_buf_processed_{};
 };
 
 } // namespace shrpx

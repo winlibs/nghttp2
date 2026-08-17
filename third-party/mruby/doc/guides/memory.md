@@ -1,4 +1,4 @@
-<!-- summary: About Memory Allocator Customization -->
+<!-- summary: About Memory Allocator Customization and Heap Regions -->
 
 # Memory Allocation
 
@@ -50,7 +50,6 @@ Implement mrb_basic_alloc_func() in your code, and mruby will invoke it for ever
 If you are moving from the old API:
 
 1. **Removal of `mrb_open_allocf()`**
-
    - \_Old:
 
      ```c
@@ -65,11 +64,9 @@ If you are moving from the old API:
      ```
 
 2. **`mrb_open_core()` takes no arguments**
-
    - Simply drop any allocf or user-data arguments, and redefine `mrb_basic_alloc_func` as you need.
 
 3. **No more `mrb_allocf` type**
-
    - Definitions using the `mrb_allocf` typedef can be removed; implement `mrb_basic_alloc_func()` with the signature below:
 
      ```c
@@ -77,7 +74,6 @@ If you are moving from the old API:
      ```
 
 4. **`mrb_basic_alloc_func` signature change**
-
    - _Old:_
 
      ```c
@@ -118,3 +114,98 @@ If you are moving from the old API:
 
   mrb_state *mrb = mrb_open_core();
   ```
+
+---
+
+## 3. Heap Regions: Contiguous Memory for GC
+
+By default, mruby allocates GC heap pages individually via `malloc()`.
+On embedded targets with multiple memory banks (e.g., STM32 CCM+SRAM,
+ESP32 PSRAM+IRAM), you may want to place heap pages in a specific
+memory region. `mrb_gc_add_region()` lets you provide a contiguous
+buffer that mruby carves into heap pages.
+
+### API
+
+```c
+#include <mruby/gc.h>
+
+int mrb_gc_add_region(mrb_state *mrb, void *start, size_t size);
+```
+
+- **`start`**: pointer to a contiguous memory buffer.
+- **`size`**: size of the buffer in bytes.
+- **Returns**: number of heap pages carved from the buffer, or 0 if
+  the buffer is too small.
+
+The buffer is aligned internally to pointer size. Each page is
+approximately 40 KB on 64-bit systems (24 KB on 32-bit). The caller
+retains ownership of the buffer and must keep it valid for the
+lifetime of the `mrb_state`.
+
+### Example: Static buffer
+
+```c
+#include <mruby.h>
+#include <mruby/gc.h>
+
+/* 256 KB static buffer -- about 6 pages on 64-bit */
+static char heap_buf[256 * 1024];
+
+int main(void)
+{
+  mrb_state *mrb = mrb_open();
+  int pages = mrb_gc_add_region(mrb, heap_buf, sizeof(heap_buf));
+  /* pages are immediately available for object allocation */
+
+  /* ... use mrb ... */
+
+  mrb_close(mrb);  /* region pages are cleaned up; buffer is not freed */
+  return 0;
+}
+```
+
+### Example: MCU with multiple RAM banks
+
+```c
+/* STM32 with 64 KB CCM and 128 KB SRAM */
+extern char __ccm_start[], __ccm_end[];   /* linker symbols */
+extern char __sram_start[], __sram_end[];
+
+mrb_state *mrb = mrb_open();
+mrb_gc_add_region(mrb, __ccm_start, __ccm_end - __ccm_start);
+mrb_gc_add_region(mrb, __sram_start, __sram_end - __sram_start);
+```
+
+### How it works
+
+When `mrb_gc_add_region()` is called, mruby:
+
+1. Aligns the buffer start to pointer size.
+2. Divides the buffer into `mrb_heap_page`-sized chunks.
+3. Initializes each page's freelist and links it into the GC heap.
+4. Records the region in a descriptor for O(1) pointer-to-page mapping.
+
+Region pages participate in the normal GC cycle (mark-and-sweep) like
+any other heap page. The only differences are:
+
+- **Never freed**: the GC will not call `free()` on region pages, even
+  if all objects on a page are dead. The page stays in the heap with an
+  empty freelist, ready for reuse.
+- **Fallback**: when all region pages are full, mruby falls back to
+  `malloc()` for new pages as usual.
+- **Cleanup**: `mrb_close()` frees the internal region descriptor but
+  does not free the buffer itself.
+
+### Sizing
+
+The page size is controlled by `MRB_HEAP_PAGE_SIZE` (default: 1024 slots).
+Each page occupies:
+
+| Platform | Slot size | Page size (approx) |
+| -------- | --------- | ------------------ |
+| 64-bit   | 40 bytes  | ~41 KB             |
+| 32-bit   | 24 bytes  | ~25 KB             |
+
+To estimate pages for a given buffer: `pages = buffer_size / sizeof(mrb_heap_page)`.
+Each page provides `MRB_HEAP_PAGE_SIZE` object slots.

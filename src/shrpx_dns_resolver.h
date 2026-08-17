@@ -31,12 +31,14 @@
 #include <netinet/in.h>
 
 #include <vector>
+#include <expected>
 
 #include <ev.h>
 #include <ares.h>
 
 #include "template.h"
 #include "network.h"
+#include "errors.h"
 
 using namespace nghttp2;
 
@@ -74,7 +76,7 @@ public:
   ~DNSResolver();
 
   // Starts resolving hostname |name|.
-  int resolve(std::string_view name, int family);
+  std::expected<void, Error> resolve(std::string_view name, int family);
   // Returns status.  If status_ is DNSResolverStatus::SUCCESS &&
   // |result| is not nullptr, |*result| is filled.
   DNSResolverStatus get_status(Address *result) const;
@@ -84,9 +86,9 @@ public:
   CompleteCb get_complete_cb() const;
 
   // Calls these functions when read/write event occurred respectively.
-  int on_read(int fd);
-  int on_write(int fd);
-  int on_timeout();
+  std::expected<void, Error> on_read(int fd);
+  std::expected<void, Error> on_write(int fd);
+  std::expected<void, Error> on_timeout();
   // Calls this function when DNS query finished.
   void on_result(int status, ares_addrinfo *result);
   void reset_timeout();
@@ -97,20 +99,20 @@ public:
   void stop_wev(int fd);
 
 private:
-  int handle_event(int rfd, int wfd);
+  std::expected<void, Error> handle_event(int rfd, int wfd);
 
   std::vector<std::unique_ptr<ev_io>> revs_, wevs_;
-  Address result_;
-  CompleteCb completeCb_;
+  Address result_{};
+  CompleteCb complete_cb_;
   ev_timer timer_;
   std::string_view name_;
   struct ev_loop *loop_;
   // ares_channel is pointer type
-  ares_channel channel_;
+  ares_channel channel_{};
   // AF_INET or AF_INET6.  AF_INET for A record lookup, and AF_INET6
   // for AAAA record lookup.
-  int family_;
-  DNSResolverStatus status_;
+  int family_{AF_UNSPEC};
+  DNSResolverStatus status_{DNSResolverStatus::IDLE};
 };
 
 } // namespace shrpx

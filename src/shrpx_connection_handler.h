@@ -126,10 +126,10 @@ public:
   ConnectionHandler(struct ev_loop *loop, std::mt19937 &gen);
   ~ConnectionHandler();
   // Creates Worker object for single threaded configuration.
-  int create_single_worker();
+  std::expected<void, Error> create_single_worker();
   // Creates |num| Worker objects for multi threaded configuration.
   // The |num| must be strictly more than 1.
-  int create_worker_thread(size_t num);
+  std::expected<void, Error> create_worker_thread(size_t num);
   void
   set_ticket_keys_to_worker(const std::shared_ptr<TicketKeys> &ticket_keys);
   void worker_reopen_log_files();
@@ -161,33 +161,32 @@ public:
 #ifdef ENABLE_HTTP3
   const std::vector<SSL_CTX *> &get_quic_indexed_ssl_ctx(size_t idx) const;
 
-  int forward_quic_packet(const UpstreamAddr *faddr, const Address &remote_addr,
-                          const Address &local_addr, const ngtcp2_pkt_info &pi,
-                          const WorkerID &wid, std::span<const uint8_t> data);
+  std::expected<void, Error>
+  forward_quic_packet(const UpstreamAddr *faddr, const Address &remote_addr,
+                      const Address &local_addr, const ngtcp2_pkt_info &pi,
+                      const WorkerID &wid, std::span<const uint8_t> data);
 
-  void set_quic_keying_materials(std::shared_ptr<QUICKeyingMaterials> qkms);
-  const std::shared_ptr<QUICKeyingMaterials> &get_quic_keying_materials() const;
+  void set_quic_keying_materials(std::unique_ptr<QUICKeyingMaterials> qkms);
 
   void set_worker_ids(std::vector<WorkerID> worker_ids);
-  Worker *find_worker(const WorkerID &wid) const;
+  std::expected<Worker *, Error> find_worker(const WorkerID &wid) const;
 
   void set_quic_lingering_worker_processes(
     const std::vector<QUICLingeringWorkerProcess> &quic_lwps);
 
   // Return matching QUICLingeringWorkerProcess which has a Worker ID
-  // such that |dcid| starts with it.  If no such
-  // QUICLingeringWorkerProcess, it returns nullptr.
-  QUICLingeringWorkerProcess *
+  // such that |dcid| starts with it.
+  std::expected<QUICLingeringWorkerProcess *, Error>
   match_quic_lingering_worker_process_worker_id(const WorkerID &wid);
 
-  int forward_quic_packet_to_lingering_worker_process(
+  std::expected<void, Error> forward_quic_packet_to_lingering_worker_process(
     QUICLingeringWorkerProcess *quic_lwp, const Address &remote_addr,
     const Address &local_addr, const ngtcp2_pkt_info &pi,
     std::span<const uint8_t> data);
 
   void set_quic_ipc_fd(int fd);
 
-  int quic_ipc_read();
+  std::expected<void, Error> quic_ipc_read();
 
 #  ifdef HAVE_LIBBPF
   std::vector<BPFRef> &get_quic_bpf_refs();
@@ -223,12 +222,12 @@ private:
 #ifdef ENABLE_HTTP3
   std::vector<WorkerID> worker_ids_;
   std::vector<WorkerID> lingering_worker_ids_;
-  int quic_ipc_fd_;
+  int quic_ipc_fd_{-1};
   std::vector<QUICLingeringWorkerProcess> quic_lingering_worker_processes_;
 #  ifdef HAVE_LIBBPF
   std::vector<BPFRef> quic_bpf_refs_;
 #  endif // defined(HAVE_LIBBPF)
-  std::shared_ptr<QUICKeyingMaterials> quic_keying_materials_;
+  std::unique_ptr<QUICKeyingMaterials> quic_keying_materials_;
   std::vector<SSL_CTX *> quic_all_ssl_ctx_;
   std::vector<std::vector<SSL_CTX *>> quic_indexed_ssl_ctx_;
 #endif // defined(ENABLE_HTTP3)
@@ -257,17 +256,17 @@ private:
   std::shared_ptr<TicketKeys> ticket_keys_;
   struct ev_loop *loop_;
 #ifdef HAVE_NEVERBLEED
-  neverbleed_t *nb_;
+  neverbleed_t *nb_{};
 #endif // defined(HAVE_NEVERBLEED)
   ev_async thread_join_asyncev_;
   ev_async serial_event_asyncev_;
 #ifndef NOTHREADS
   std::future<void> thread_join_fut_;
 #endif // defined(NOTHREADS)
-  size_t tls_ticket_key_memcached_get_retry_count_;
-  size_t tls_ticket_key_memcached_fail_count_;
+  size_t tls_ticket_key_memcached_get_retry_count_{};
+  size_t tls_ticket_key_memcached_fail_count_{};
   unsigned int worker_round_robin_cnt_;
-  bool graceful_shutdown_;
+  bool graceful_shutdown_{};
 };
 
 } // namespace shrpx

@@ -31,8 +31,8 @@
 #include "util.h"
 #include "template.h"
 
-#include <iostream>
 #include <fstream>
+#include <print>
 
 using namespace nghttp2;
 
@@ -155,12 +155,7 @@ constexpr llhttp_settings_t htp_hooks = {
   .on_message_complete = htp_msg_completecb,
 };
 
-Http1Session::Http1Session(Client *client)
-  : stream_req_counter_(1),
-    stream_resp_counter_(1),
-    client_(client),
-    htp_(),
-    complete_(false) {
+Http1Session::Http1Session(Client *client) : client_(client) {
   llhttp_init(&htp_, HTTP_RESPONSE, &htp_hooks);
   htp_.data = this;
 }
@@ -169,7 +164,7 @@ Http1Session::~Http1Session() {}
 
 void Http1Session::on_connect() { client_->signal_write(); }
 
-int Http1Session::submit_request() {
+std::expected<void, Error> Http1Session::submit_request() {
   auto config = client_->worker->config;
   const auto &req = config->h1reqs[client_->reqidx];
   client_->reqidx++;
@@ -193,7 +188,8 @@ int Http1Session::submit_request() {
   return on_write();
 }
 
-int Http1Session::on_read(std::span<const uint8_t> data) {
+std::expected<void, Error>
+Http1Session::on_read(std::span<const uint8_t> data) {
   auto htperr = llhttp_execute(
     &htp_, reinterpret_cast<const char *>(data.data()), data.size());
   auto nread = htperr == HPE_OK
@@ -203,34 +199,32 @@ int Http1Session::on_read(std::span<const uint8_t> data) {
                                        data.data());
 
   if (client_->worker->config->verbose) {
-    std::cout.write(reinterpret_cast<const char *>(data.data()),
-                    static_cast<std::streamsize>(nread));
+    fwrite(data.data(), 1, nread, stdout);
   }
 
   if (htperr == HPE_PAUSED) {
     // pause is done only when connection: close is requested
-    return -1;
+    return std::unexpected{Error::DONE};
   }
 
   if (htperr != HPE_OK) {
-    std::cerr << "[ERROR] HTTP parse error: "
-              << "(" << llhttp_errno_name(htperr) << ") "
-              << llhttp_get_error_reason(&htp_) << std::endl;
-    return -1;
+    std::println(stderr, "[ERROR] HTTP parse error: ({}) {}",
+                 llhttp_errno_name(htperr), llhttp_get_error_reason(&htp_));
+    return std::unexpected{Error::HTTP1};
   }
 
-  return 0;
+  return {};
 }
 
-int Http1Session::on_write() {
+std::expected<void, Error> Http1Session::on_write() {
   if (complete_) {
-    return -1;
+    return std::unexpected{Error::DONE};
   }
 
   auto config = client_->worker->config;
   auto req_stat = client_->get_req_stat(stream_req_counter_);
   if (!req_stat) {
-    return 0;
+    return {};
   }
 
   if (req_stat->data_offset < config->data_length) {
@@ -248,7 +242,7 @@ int Http1Session::on_write() {
       ;
 
     if (nread == -1) {
-      return -1;
+      return std::unexpected{Error::SYSCALL};
     }
 
     req_stat->data_offset += nread;
@@ -256,7 +250,7 @@ int Http1Session::on_write() {
     wb.append(buf.data(), as_unsigned(nread));
 
     if (client_->worker->config->verbose) {
-      std::cout << "[send " << nread << " byte(s)]" << std::endl;
+      std::println("[send {} byte(s)]", nread);
     }
 
     if (req_stat->data_offset == config->data_length) {
@@ -271,7 +265,7 @@ int Http1Session::on_write() {
     }
   }
 
-  return 0;
+  return {};
 }
 
 void Http1Session::terminate() { complete_ = true; }

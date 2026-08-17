@@ -47,10 +47,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include <iostream>
 #include <string>
 #include <iomanip>
 #include <fstream>
+#include <print>
 
 #include "app_helper.h"
 #include "util.h"
@@ -134,7 +134,7 @@ FILE *outfile = stdout;
 void set_output(FILE *file) { outfile = file; }
 
 namespace {
-void print_frame_attr_indent() { fprintf(outfile, "          "); }
+void print_frame_attr_indent() { std::print(outfile, "          "); }
 } // namespace
 
 namespace {
@@ -147,8 +147,9 @@ const char *ansi_escend() { return color_output ? "\033[0m" : ""; }
 
 namespace {
 void print_nv(nghttp2_nv *nv) {
-  fprintf(outfile, "%s%s%s: %s\n", ansi_esc("\033[1;34m"), nv->name,
-          ansi_escend(), nv->value);
+  std::println(outfile, "{}{}{}: {}", ansi_esc("\033[1;34m"),
+               as_string_view(nv->name, nv->namelen), ansi_escend(),
+               as_string_view(nv->value, nv->valuelen));
 }
 } // namespace
 namespace {
@@ -164,15 +165,14 @@ void print_nv(nghttp2_nv *nva, size_t nvlen) {
 
 void print_timer() {
   auto millis = get_timer();
-  fprintf(outfile, "%s[%3ld.%03ld]%s", ansi_esc("\033[33m"),
-          (long int)(millis.count() / 1000), (long int)(millis.count() % 1000),
-          ansi_escend());
+  std::print(outfile, "{}[{:3}.{:03}]{}", ansi_esc("\033[33m"),
+             millis.count() / 1000, millis.count() % 1000, ansi_escend());
 }
 
 namespace {
 void print_frame_hd(const nghttp2_frame_hd &hd) {
-  fprintf(outfile, "<length=%zu, flags=0x%02x, stream_id=%d>\n", hd.length,
-          hd.flags, hd.stream_id);
+  std::println(outfile, "<length={}, flags=0x{:02x}, stream_id={}>", hd.length,
+               hd.flags, hd.stream_id);
 }
 } // namespace
 
@@ -239,7 +239,7 @@ void print_flags(const nghttp2_frame_hd &hd) {
     }
     break;
   }
-  fprintf(outfile, "; %s\n", s.c_str());
+  std::println(outfile, "; {}", s);
 }
 } // namespace
 
@@ -253,8 +253,8 @@ const char *frame_name_ansi_esc(print_type ptype) {
 
 namespace {
 void print_frame(print_type ptype, const nghttp2_frame *frame) {
-  fprintf(outfile, "%s%s%s frame ", frame_name_ansi_esc(ptype),
-          strframetype(frame->hd.type).c_str(), ansi_escend());
+  std::print(outfile, "{}{}{} frame ", frame_name_ansi_esc(ptype),
+             strframetype(frame->hd.type), ansi_escend());
   print_frame_hd(frame->hd);
   if (frame->hd.flags) {
     print_frame_attr_indent();
@@ -264,30 +264,31 @@ void print_frame(print_type ptype, const nghttp2_frame *frame) {
   case NGHTTP2_DATA:
     if (frame->data.padlen > 0) {
       print_frame_attr_indent();
-      fprintf(outfile, "(padlen=%zu)\n", frame->data.padlen);
+      std::println(outfile, "(padlen={})", frame->data.padlen);
     }
     break;
   case NGHTTP2_HEADERS:
     print_frame_attr_indent();
-    fprintf(outfile, "(padlen=%zu", frame->headers.padlen);
+    std::print(outfile, "(padlen={}", frame->headers.padlen);
     if (frame->hd.flags & NGHTTP2_FLAG_PRIORITY) {
-      fprintf(outfile, ", dep_stream_id=%d, weight=%u, exclusive=%d",
-              frame->headers.pri_spec.stream_id, frame->headers.pri_spec.weight,
-              frame->headers.pri_spec.exclusive);
+      std::print(outfile, ", dep_stream_id={}, weight={}, exclusive={}",
+                 frame->headers.pri_spec.stream_id,
+                 frame->headers.pri_spec.weight,
+                 frame->headers.pri_spec.exclusive);
     }
-    fprintf(outfile, ")\n");
+    std::println(outfile, ")");
     switch (frame->headers.cat) {
     case NGHTTP2_HCAT_REQUEST:
       print_frame_attr_indent();
-      fprintf(outfile, "; Open new stream\n");
+      std::println(outfile, "; Open new stream");
       break;
     case NGHTTP2_HCAT_RESPONSE:
       print_frame_attr_indent();
-      fprintf(outfile, "; First response header\n");
+      std::println(outfile, "; First response header");
       break;
     case NGHTTP2_HCAT_PUSH_RESPONSE:
       print_frame_attr_indent();
-      fprintf(outfile, "; First push response header\n");
+      std::println(outfile, "; First push response header");
       break;
     default:
       break;
@@ -297,63 +298,63 @@ void print_frame(print_type ptype, const nghttp2_frame *frame) {
   case NGHTTP2_PRIORITY:
     print_frame_attr_indent();
 
-    fprintf(outfile, "(dep_stream_id=%d, weight=%u, exclusive=%d)\n",
-            frame->priority.pri_spec.stream_id, frame->priority.pri_spec.weight,
-            frame->priority.pri_spec.exclusive);
+    std::println(outfile, "(dep_stream_id={}, weight={}, exclusive={})",
+                 frame->priority.pri_spec.stream_id,
+                 frame->priority.pri_spec.weight,
+                 frame->priority.pri_spec.exclusive);
 
     break;
   case NGHTTP2_RST_STREAM:
     print_frame_attr_indent();
-    fprintf(outfile, "(error_code=%s(0x%02x))\n",
-            nghttp2_http2_strerror(frame->rst_stream.error_code),
-            frame->rst_stream.error_code);
+    std::println(outfile, "(error_code={}(0x{:02x}))",
+                 nghttp2_http2_strerror(frame->rst_stream.error_code),
+                 frame->rst_stream.error_code);
     break;
   case NGHTTP2_SETTINGS:
     print_frame_attr_indent();
-    fprintf(outfile, "(niv=%lu)\n",
-            static_cast<unsigned long>(frame->settings.niv));
+    std::println(outfile, "(niv={})", frame->settings.niv);
     for (size_t i = 0; i < frame->settings.niv; ++i) {
       print_frame_attr_indent();
-      fprintf(outfile, "[%s(0x%02x):%u]\n",
-              strsettingsid(frame->settings.iv[i].settings_id),
-              frame->settings.iv[i].settings_id, frame->settings.iv[i].value);
+      std::println(outfile, "[{}(0x{:02x}):{}]",
+                   strsettingsid(frame->settings.iv[i].settings_id),
+                   frame->settings.iv[i].settings_id,
+                   frame->settings.iv[i].value);
     }
     break;
   case NGHTTP2_PUSH_PROMISE:
     print_frame_attr_indent();
-    fprintf(outfile, "(padlen=%zu, promised_stream_id=%d)\n",
-            frame->push_promise.padlen, frame->push_promise.promised_stream_id);
+    std::println(outfile, "(padlen={}, promised_stream_id={})",
+                 frame->push_promise.padlen,
+                 frame->push_promise.promised_stream_id);
     print_nv(frame->push_promise.nva, frame->push_promise.nvlen);
     break;
   case NGHTTP2_PING:
     print_frame_attr_indent();
-    fprintf(outfile, "(opaque_data=%s)\n",
-            util::format_hex(std::span{frame->ping.opaque_data}).c_str());
+    std::println(outfile, "(opaque_data={})",
+                 util::format_hex(std::span{frame->ping.opaque_data}));
     break;
   case NGHTTP2_GOAWAY:
     print_frame_attr_indent();
-    fprintf(
+    std::println(
       outfile,
-      "(last_stream_id=%d, error_code=%s(0x%02x), "
-      "opaque_data(%u)=[%s])\n",
+      "(last_stream_id={}, error_code={}(0x{:02x}), opaque_data({})=[{}])",
       frame->goaway.last_stream_id,
       nghttp2_http2_strerror(frame->goaway.error_code),
-      frame->goaway.error_code,
-      static_cast<unsigned int>(frame->goaway.opaque_data_len),
-      util::ascii_dump(frame->goaway.opaque_data, frame->goaway.opaque_data_len)
-        .c_str());
+      frame->goaway.error_code, frame->goaway.opaque_data_len,
+      util::ascii_dump(frame->goaway.opaque_data,
+                       frame->goaway.opaque_data_len));
     break;
   case NGHTTP2_WINDOW_UPDATE:
     print_frame_attr_indent();
-    fprintf(outfile, "(window_size_increment=%d)\n",
-            frame->window_update.window_size_increment);
+    std::println(outfile, "(window_size_increment={})",
+                 frame->window_update.window_size_increment);
     break;
   case NGHTTP2_ALTSVC: {
     auto altsvc = static_cast<nghttp2_ext_altsvc *>(frame->ext.payload);
     print_frame_attr_indent();
-    fprintf(outfile, "(origin=[%.*s], altsvc_field_value=[%.*s])\n",
-            static_cast<int>(altsvc->origin_len), altsvc->origin,
-            static_cast<int>(altsvc->field_value_len), altsvc->field_value);
+    std::println(outfile, "(origin=[{}], altsvc_field_value=[{}])",
+                 as_string_view(altsvc->origin, altsvc->origin_len),
+                 as_string_view(altsvc->field_value, altsvc->field_value_len));
     break;
   }
   case NGHTTP2_ORIGIN: {
@@ -361,7 +362,8 @@ void print_frame(print_type ptype, const nghttp2_frame *frame) {
     for (size_t i = 0; i < origin->nov; ++i) {
       auto ent = &origin->ov[i];
       print_frame_attr_indent();
-      fprintf(outfile, "[%.*s]\n", (int)ent->origin_len, ent->origin);
+      std::println(outfile, "[{}]",
+                   as_string_view(ent->origin, ent->origin_len));
     }
     break;
   }
@@ -369,11 +371,11 @@ void print_frame(print_type ptype, const nghttp2_frame *frame) {
     auto priority_update =
       static_cast<nghttp2_ext_priority_update *>(frame->ext.payload);
     print_frame_attr_indent();
-    fprintf(outfile,
-            "(prioritized_stream_id=%d, priority_field_value=[%.*s])\n",
-            priority_update->stream_id,
-            static_cast<int>(priority_update->field_value_len),
-            priority_update->field_value);
+    std::println(outfile,
+                 "(prioritized_stream_id={}, priority_field_value=[{}])",
+                 priority_update->stream_id,
+                 as_string_view(priority_update->field_value,
+                                priority_update->field_value_len));
     break;
   }
   default:
@@ -391,11 +393,11 @@ int verbose_on_header_callback(nghttp2_session *session,
                    namelen, valuelen};
 
   print_timer();
-  fprintf(outfile, " recv (stream_id=%d", frame->hd.stream_id);
+  std::print(outfile, " recv (stream_id={}", frame->hd.stream_id);
   if (flags & NGHTTP2_NV_FLAG_NO_INDEX) {
-    fprintf(outfile, ", sensitive");
+    std::print(outfile, ", sensitive");
   }
-  fprintf(outfile, ") ");
+  std::print(outfile, ") ");
 
   print_nv(&nv);
   fflush(outfile);
@@ -407,7 +409,7 @@ int verbose_on_frame_recv_callback(nghttp2_session *session,
                                    const nghttp2_frame *frame,
                                    void *user_data) {
   print_timer();
-  fprintf(outfile, " recv ");
+  std::print(outfile, " recv ");
   print_frame(PRINT_RECV, frame);
   fflush(outfile);
   return 0;
@@ -418,8 +420,8 @@ int verbose_on_invalid_frame_recv_callback(nghttp2_session *session,
                                            int lib_error_code,
                                            void *user_data) {
   print_timer();
-  fprintf(outfile, " [INVALID; error=%s] recv ",
-          nghttp2_strerror(lib_error_code));
+  std::print(outfile, " [INVALID; error={}] recv ",
+             nghttp2_strerror(lib_error_code));
   print_frame(PRINT_RECV, frame);
   fflush(outfile);
   return 0;
@@ -429,7 +431,7 @@ int verbose_on_frame_send_callback(nghttp2_session *session,
                                    const nghttp2_frame *frame,
                                    void *user_data) {
   print_timer();
-  fprintf(outfile, " send ");
+  std::print(outfile, " send ");
   print_frame(PRINT_SEND, frame);
   fflush(outfile);
   return 0;
@@ -443,9 +445,9 @@ int verbose_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags,
     nghttp2_session_get_stream_effective_recv_data_length(session, stream_id);
   auto crecv = nghttp2_session_get_effective_recv_data_length(session);
 
-  fprintf(outfile,
-          " recv (stream_id=%d, length=%zu, srecv=%d, crecv=%d) DATA\n",
-          stream_id, len, srecv, crecv);
+  std::println(outfile,
+               " recv (stream_id={}, length={}, srecv={}, crecv={}) DATA",
+               stream_id, len, srecv, crecv);
   fflush(outfile);
 
   return 0;
@@ -454,7 +456,7 @@ int verbose_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags,
 int verbose_error_callback(nghttp2_session *session, int lib_error_code,
                            const char *msg, size_t len, void *user_data) {
   print_timer();
-  fprintf(outfile, " [ERROR] %.*s\n", (int)len, msg);
+  std::println(outfile, " [ERROR] {}", as_string_view(msg, len));
   fflush(outfile);
 
   return 0;

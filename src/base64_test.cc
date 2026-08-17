@@ -25,7 +25,6 @@
 #include "base64_test.h"
 
 #include <cstring>
-#include <iostream>
 
 #include "munitxx.h"
 
@@ -46,7 +45,8 @@ const MunitTest tests[]{
 } // namespace
 
 const MunitSuite base64_suite{
-  "/base64", tests, nullptr, 1, MUNIT_SUITE_OPTION_NONE,
+  .prefix = "/base64",
+  .tests = tests,
 };
 
 void test_base64_encode(void) {
@@ -112,6 +112,11 @@ void test_base64_decode(void) {
   {
     // additional '=' at the end is bad
     auto in = "//79/A======"sv;
+    assert_stdsv_equal(""sv, as_string_view(base64::decode(balloc, in)));
+  }
+  {
+    // Chars with high bit set
+    auto in = "\xCA\xFE\xCA\xCE"sv;
     assert_stdsv_equal(""sv, as_string_view(base64::decode(balloc, in)));
   }
 }

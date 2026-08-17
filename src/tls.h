@@ -29,8 +29,10 @@
 
 #include <cinttypes>
 #include <string_view>
+#include <expected>
 
 #include "ssl_compat.h"
+#include "errors.h"
 
 using namespace std::literals;
 
@@ -107,9 +109,9 @@ bool check_http2_cipher_block_list(SSL *ssl);
 //    described in RFC 7540.
 bool check_http2_requirement(SSL *ssl);
 
-// Sets TLS min and max versions to |ssl_ctx|.  This function returns
-// 0 if it succeeds, or -1.
-int ssl_ctx_set_proto_versions(SSL_CTX *ssl_ctx, int min, int max);
+// Sets TLS min and max versions to |ssl_ctx|.
+std::expected<void, Error> ssl_ctx_set_proto_versions(SSL_CTX *ssl_ctx, int min,
+                                                      int max);
 
 inline constexpr uint16_t CERTIFICATE_COMPRESSION_ALGO_BROTLI = 2;
 
@@ -121,8 +123,8 @@ int cert_decompress(SSL *ssl, CRYPTO_BUFFER **out, size_t uncompressed_len,
 #endif // defined(NGHTTP2_OPENSSL_IS_BORINGSSL) &&
        // defined(HAVE_LIBBROTLI)
 
-// Setup keylog callback.  It returns 0 if it succeeds, or -1.
-int setup_keylog_callback(SSL_CTX *ssl_ctx);
+// Setup keylog callback.
+std::expected<void, Error> setup_keylog_callback(SSL_CTX *ssl_ctx);
 
 const EVP_CIPHER *aes_128_cbc();
 

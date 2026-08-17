@@ -108,7 +108,7 @@ Macros
     
     .. warning::
     
-      Deprecated.  The initial max concurrent streams is 0xffffffffu.
+      Deprecated.  The initial max concurrent streams is 0xFFFFFFFFU.
     
     Default maximum number of incoming concurrent streams.  Use
     `nghttp2_submit_settings()` with

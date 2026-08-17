@@ -57,9 +57,12 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
-#include <iostream>
 #include <fstream>
 #include <iomanip>
+#ifdef _WIN32
+#  include <spanstream>
+#endif // defined(_WIN32)
+#include <print>
 
 #include "ssl_compat.h"
 
@@ -161,25 +164,30 @@ constexpr auto WEEKDAY = std::to_array({
   "Sat"sv,
 });
 
-std::string format_http_date(const std::chrono::system_clock::time_point &tp) {
-  // Sat, 27 Sep 2014 06:31:15 GMT
-  std::string res(29 + /* NUL */ 1, 0);
+std::string format_http_date(std::chrono::system_clock::time_point tp) {
+  std::string res;
 
-  auto s = format_http_date(res.data(), tp);
+  res.resize_and_overwrite("Sat, 27 Sep 2014 06:31:15 GMT"sv.size() +
+                             /* NUL */ 1,
+                           [tp](auto p, auto len) {
+                             auto s = format_http_date(p, tp);
 
-  res.resize(s.size());
+                             return s.size();
+                           });
 
   return res;
 }
 
-std::string format_iso8601(const std::chrono::system_clock::time_point &tp) {
-  // 2014-11-15T12:58:24.741Z
-  // 2014-11-15T12:58:24.741+09:00
-  std::string res(29 + /* NUL */ 1, 0);
+std::string format_iso8601(std::chrono::system_clock::time_point tp) {
+  std::string res;
 
-  auto s = format_iso8601(res.data(), tp);
+  res.resize_and_overwrite("2014-11-15T12:58:24.741+09:00"sv.size() +
+                             /* NUL */ 1,
+                           [tp](auto p, auto len) {
+                             auto s = format_iso8601(p, tp);
 
-  res.resize(s.size());
+                             return s.size();
+                           });
 
   return res;
 }
@@ -192,13 +200,13 @@ const std::chrono::time_zone *get_current_time_zone() {
 }
 } // namespace
 
-std::string_view
-format_iso8601(char *out, const std::chrono::system_clock::time_point &tp) {
+std::string_view format_iso8601(char *out,
+                                std::chrono::system_clock::time_point tp) {
   return format_iso8601(out, tp, get_current_time_zone());
 }
 
 std::string_view format_iso8601(char *out,
-                                const std::chrono::system_clock::time_point &tp,
+                                std::chrono::system_clock::time_point tp,
                                 const std::chrono::time_zone *tz) {
   auto t = std::chrono::floor<std::chrono::milliseconds>(tp);
   auto zt = std::chrono::zoned_time{tz, t};
@@ -248,14 +256,13 @@ std::string_view format_iso8601(char *out,
 }
 
 std::string_view
-format_iso8601_basic(char *out,
-                     const std::chrono::system_clock::time_point &tp) {
+format_iso8601_basic(char *out, std::chrono::system_clock::time_point tp) {
   return format_iso8601_basic(out, tp, get_current_time_zone());
 }
 
-std::string_view
-format_iso8601_basic(char *out, const std::chrono::system_clock::time_point &tp,
-                     const std::chrono::time_zone *tz) {
+std::string_view format_iso8601_basic(char *out,
+                                      std::chrono::system_clock::time_point tp,
+                                      const std::chrono::time_zone *tz) {
   auto t = std::chrono::floor<std::chrono::milliseconds>(tp);
   auto zt = std::chrono::zoned_time{tz, t};
   auto lt = zt.get_local_time();
@@ -298,14 +305,14 @@ format_iso8601_basic(char *out, const std::chrono::system_clock::time_point &tp,
   return {out, p};
 }
 
-std::string_view
-format_common_log(char *out, const std::chrono::system_clock::time_point &tp) {
+std::string_view format_common_log(char *out,
+                                   std::chrono::system_clock::time_point tp) {
   return format_common_log(out, tp, get_current_time_zone());
 }
 
-std::string_view
-format_common_log(char *out, const std::chrono::system_clock::time_point &tp,
-                  const std::chrono::time_zone *tz) {
+std::string_view format_common_log(char *out,
+                                   std::chrono::system_clock::time_point tp,
+                                   const std::chrono::time_zone *tz) {
   auto t = std::chrono::floor<std::chrono::milliseconds>(tp);
   auto zt = std::chrono::zoned_time{tz, t};
   auto lt = zt.get_local_time();
@@ -348,8 +355,8 @@ format_common_log(char *out, const std::chrono::system_clock::time_point &tp,
   return {out, p};
 }
 
-std::string_view
-format_http_date(char *out, const std::chrono::system_clock::time_point &tp) {
+std::string_view format_http_date(char *out,
+                                  std::chrono::system_clock::time_point tp) {
   auto t = std::chrono::floor<std::chrono::seconds>(tp);
   auto days = std::chrono::floor<std::chrono::days>(t);
   auto ymd = std::chrono::year_month_day{days};
@@ -382,7 +389,7 @@ format_http_date(char *out, const std::chrono::system_clock::time_point &tp) {
 }
 #else // !defined(HAVE_STD_CHRONO_TIME_ZONE)
 namespace {
-char *iso8601_date(char *out, const std::chrono::system_clock::time_point &tp) {
+char *iso8601_date(char *out, std::chrono::system_clock::time_point tp) {
   auto ms = std::chrono::floor<std::chrono::milliseconds>(tp.time_since_epoch())
               .count();
   time_t sec = ms / 1000;
@@ -431,16 +438,15 @@ char *iso8601_date(char *out, const std::chrono::system_clock::time_point &tp) {
 }
 } // namespace
 
-std::string_view
-format_iso8601(char *out, const std::chrono::system_clock::time_point &tp) {
+std::string_view format_iso8601(char *out,
+                                std::chrono::system_clock::time_point tp) {
   auto p = iso8601_date(out, tp);
   *p = '\0';
   return std::string_view{out, p};
 }
 
 namespace {
-char *iso8601_basic_date(char *out,
-                         const std::chrono::system_clock::time_point &tp) {
+char *iso8601_basic_date(char *out, std::chrono::system_clock::time_point tp) {
   auto ms = std::chrono::floor<std::chrono::milliseconds>(tp.time_since_epoch())
               .count();
   time_t sec = ms / 1000;
@@ -485,16 +491,14 @@ char *iso8601_basic_date(char *out,
 } // namespace
 
 std::string_view
-format_iso8601_basic(char *out,
-                     const std::chrono::system_clock::time_point &tp) {
+format_iso8601_basic(char *out, std::chrono::system_clock::time_point tp) {
   auto p = iso8601_basic_date(out, tp);
   *p = '\0';
   return {out, p};
 }
 
 namespace {
-char *common_log_date(char *out,
-                      const std::chrono::system_clock::time_point &tp) {
+char *common_log_date(char *out, std::chrono::system_clock::time_point tp) {
   time_t t =
     std::chrono::floor<std::chrono::seconds>(tp.time_since_epoch()).count();
   struct tm tms;
@@ -537,15 +541,15 @@ char *common_log_date(char *out,
 }
 } // namespace
 
-std::string_view
-format_common_log(char *out, const std::chrono::system_clock::time_point &tp) {
+std::string_view format_common_log(char *out,
+                                   std::chrono::system_clock::time_point tp) {
   auto p = common_log_date(out, tp);
   *p = '\0';
   return {out, p};
 }
 
 namespace {
-char *http_date(char *out, const std::chrono::system_clock::time_point &tp) {
+char *http_date(char *out, std::chrono::system_clock::time_point tp) {
   time_t t =
     std::chrono::floor<std::chrono::seconds>(tp.time_since_epoch()).count();
   struct tm tms;
@@ -576,38 +580,29 @@ char *http_date(char *out, const std::chrono::system_clock::time_point &tp) {
 }
 } // namespace
 
-std::string_view
-format_http_date(char *out, const std::chrono::system_clock::time_point &tp) {
+std::string_view format_http_date(char *out,
+                                  std::chrono::system_clock::time_point tp) {
   auto p = http_date(out, tp);
   *p = '\0';
   return {out, p};
 }
 #endif   // !defined(HAVE_STD_CHRONO_TIME_ZONE)
 
-time_t parse_http_date(std::string_view s) {
+std::expected<time_t, Error> parse_http_date(std::string_view s) {
   tm tm{};
 #ifdef _WIN32
   // there is no strptime - use std::get_time
-  std::stringstream sstr(s.data());
+  std::ispanstream sstr{s};
   sstr >> std::get_time(&tm, "%a, %d %b %Y %H:%M:%S GMT");
   if (sstr.fail()) {
-    return 0;
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
 #else  // !defined(_WIN32)
-  char *r = strptime(s.data(), "%a, %d %b %Y %H:%M:%S GMT", &tm);
-  if (r == 0) {
-    return 0;
+  auto r = strptime(s.data(), "%a, %d %b %Y %H:%M:%S GMT", &tm);
+  if (!r) {
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
 #endif // !defined(_WIN32)
-  return nghttp2_timegm_without_yday(&tm);
-}
-
-time_t parse_openssl_asn1_time_print(std::string_view s) {
-  tm tm{};
-  auto r = strptime(s.data(), "%b %d %H:%M:%S %Y GMT", &tm);
-  if (r == nullptr) {
-    return 0;
-  }
   return nghttp2_timegm_without_yday(&tm);
 }
 
@@ -732,12 +727,12 @@ void show_candidates(const char *unkopt, const option *options) {
   if (threshold > 6) {
     return;
   }
-  std::cerr << "\nDid you mean:\n";
+  std::println(stderr, "\nDid you mean:");
   for (auto &item : cands) {
     if (item.first > threshold) {
       break;
     }
-    std::cerr << "\t--" << item.second << "\n";
+    std::println(stderr, "\t--{}", item.second);
   }
 }
 
@@ -747,20 +742,17 @@ bool has_uri_field(const urlparse_url &u, urlparse_url_fields field) {
 
 bool fieldeq(const char *uri1, const urlparse_url &u1, const char *uri2,
              const urlparse_url &u2, urlparse_url_fields field) {
-  if (!has_uri_field(u1, field)) {
-    if (!has_uri_field(u2, field)) {
-      return true;
-    } else {
-      return false;
-    }
-  } else if (!has_uri_field(u2, field)) {
-    return false;
+  auto e1 = has_uri_field(u1, field);
+  auto e2 = has_uri_field(u2, field);
+
+  if (!e1) {
+    return !e2;
   }
-  if (u1.field_data[field].len != u2.field_data[field].len) {
-    return false;
-  }
-  return memcmp(uri1 + u1.field_data[field].off,
-                uri2 + u2.field_data[field].off, u1.field_data[field].len) == 0;
+
+  return e2 && std::string_view{uri1 + u1.field_data[field].off,
+                                u1.field_data[field].len} ==
+                 std::string_view{uri2 + u2.field_data[field].off,
+                                  u2.field_data[field].len};
 }
 
 bool fieldeq(const char *uri, const urlparse_url &u, urlparse_url_fields field,
@@ -788,30 +780,23 @@ std::string_view get_uri_field(const char *uri, const urlparse_url &u,
 }
 
 uint16_t get_default_port(const char *uri, const urlparse_url &u) {
-  if (util::fieldeq(uri, u, URLPARSE_SCHEMA, "https")) {
-    return 443;
-  } else if (util::fieldeq(uri, u, URLPARSE_SCHEMA, "http")) {
+  if (util::fieldeq(uri, u, URLPARSE_SCHEMA, "http")) {
     return 80;
-  } else {
-    return 443;
   }
+
+  return 443;
 }
 
 bool porteq(const char *uri1, const urlparse_url &u1, const char *uri2,
             const urlparse_url &u2) {
-  uint16_t port1, port2;
-  port1 = util::has_uri_field(u1, URLPARSE_PORT) ? u1.port
-                                                 : get_default_port(uri1, u1);
-  port2 = util::has_uri_field(u2, URLPARSE_PORT) ? u2.port
-                                                 : get_default_port(uri2, u2);
-  return port1 == port2;
-}
+  auto port1 = util::has_uri_field(u1, URLPARSE_PORT)
+                 ? u1.port
+                 : get_default_port(uri1, u1);
+  auto port2 = util::has_uri_field(u2, URLPARSE_PORT)
+                 ? u2.port
+                 : get_default_port(uri2, u2);
 
-void write_uri_field(std::ostream &o, const char *uri, const urlparse_url &u,
-                     urlparse_url_fields field) {
-  if (util::has_uri_field(u, field)) {
-    o.write(uri + u.field_data[field].off, u.field_data[field].len);
-  }
+  return port1 == port2;
 }
 
 bool numeric_host(const char *hostname) {
@@ -819,12 +804,9 @@ bool numeric_host(const char *hostname) {
 }
 
 bool numeric_host(const char *hostname, int family) {
-  int rv;
   std::array<uint8_t, sizeof(struct in6_addr)> dst;
 
-  rv = nghttp2_inet_pton(family, hostname, dst.data());
-
-  return rv == 1;
+  return 1 == nghttp2_inet_pton(family, hostname, dst.data());
 }
 
 std::string numeric_name(const struct sockaddr *sa, socklen_t salen) {
@@ -863,22 +845,32 @@ std::string to_numeric_addr(const struct sockaddr *sa, socklen_t salen) {
   auto serv = std::string_view{servbuf.data()};
 
   std::string s;
-  char *p;
 
   if (family == AF_INET6) {
-    s.resize(host.size() + serv.size() + 2 + 1);
-    p = &s[0];
-    *p++ = '[';
-    p = std::ranges::copy(host, p).out;
-    *p++ = ']';
-  } else {
-    s.resize(host.size() + serv.size() + 1);
-    p = &s[0];
-    p = std::ranges::copy(host, p).out;
-  }
+    s.resize_and_overwrite(host.size() + serv.size() + 2 + 1,
+                           [host, serv](auto p, auto len) {
+                             auto first = p;
 
-  *p++ = ':';
-  std::ranges::copy(serv, p);
+                             *p++ = '[';
+                             p = std::ranges::copy(host, p).out;
+                             *p++ = ']';
+                             *p++ = ':';
+                             p = std::ranges::copy(serv, p).out;
+
+                             return std::ranges::distance(first, p);
+                           });
+  } else {
+    s.resize_and_overwrite(host.size() + serv.size() + 1,
+                           [host, serv](auto p, auto len) {
+                             auto first = p;
+
+                             p = std::ranges::copy(host, p).out;
+                             *p++ = ':';
+                             p = std::ranges::copy(serv, p).out;
+
+                             return std::ranges::distance(first, p);
+                           });
+  }
 
   return s;
 }
@@ -902,7 +894,7 @@ std::string ascii_dump(const uint8_t *data, size_t len) {
   for (size_t i = 0; i < len; ++i) {
     auto c = data[i];
 
-    if (c >= 0x20 && c < 0x7f) {
+    if (c >= 0x20 && c < 0x7F) {
       res += static_cast<char>(c);
     } else {
       res += '.';
@@ -992,73 +984,52 @@ bool select_protocol(const unsigned char **out, unsigned char *outlen,
 }
 
 std::vector<std::string_view> split_str(std::string_view s, char delim) {
-  size_t len = 1;
-  auto last = std::ranges::end(s);
-  std::string_view::const_iterator d;
-  for (auto first = std::ranges::begin(s);
-       (d = std::ranges::find(first, last, delim)) != last;
-       ++len, first = d + 1)
-    ;
+  return s | std::ranges::views::split(delim) |
+         std::ranges::views::transform(
+           [](auto &&r) { return std::string_view{r}; }) |
+         std::ranges::to<std::vector>();
+}
 
-  auto list = std::vector<std::string_view>(len);
-
-  len = 0;
-  for (auto first = std::ranges::begin(s);; ++len) {
-    auto stop = std::ranges::find(first, last, delim);
-    list[len] = std::string_view{first, stop};
-    if (stop == last) {
-      break;
-    }
-    first = stop + 1;
-  }
-  return list;
+std::vector<std::string_view> split_str(BlockAllocator &balloc,
+                                        std::string_view s, char delim) {
+  return s | std::ranges::views::split(delim) |
+         std::ranges::views::transform(
+           [&balloc](auto &&r) { return make_string_ref(balloc, r); }) |
+         std::ranges::to<std::vector>();
 }
 
 std::vector<std::string_view> split_str(std::string_view s, char delim,
                                         size_t n) {
-  if (n == 0) {
-    return split_str(s, delim);
+  assert(n);
+
+  if (s.empty()) {
+    return {};
   }
 
   if (n == 1) {
     return {s};
   }
 
-  size_t len = 1;
-  auto last = std::ranges::end(s);
-  std::string_view::const_iterator d;
-  for (auto first = std::ranges::begin(s);
-       len < n && (d = std::ranges::find(first, last, delim)) != last;
-       ++len, first = d + 1)
-    ;
+  auto res = std::vector<std::string_view>{};
+  res.reserve(n);
 
-  auto list = std::vector<std::string_view>(len);
+  auto parts = std::ranges::views::split(s, delim);
+  auto it = std::ranges::begin(parts);
 
-  len = 0;
-  for (auto first = std::ranges::begin(s);; ++len) {
-    if (len == n - 1) {
-      list[len] = std::string_view{first, last};
-      break;
-    }
-
-    auto stop = std::ranges::find(first, last, delim);
-    list[len] = std::string_view{first, stop};
-    if (stop == last) {
-      break;
-    }
-    first = stop + 1;
+  for (; it != std::ranges::end(parts) && n > 1; ++it, --n) {
+    res.emplace_back(*it);
   }
-  return list;
+
+  if (it != std::ranges::end(parts)) {
+    res.emplace_back(it.base(), std::ranges::end(s));
+  }
+
+  return res;
 }
 
 std::vector<std::string> parse_config_str_list(std::string_view s, char delim) {
-  auto sublist = split_str(s, delim);
-  auto res = std::vector<std::string>();
-  res.reserve(sublist.size());
-  for (const auto &s : sublist) {
-    res.emplace_back(std::ranges::begin(s), std::ranges::end(s));
-  }
-  return res;
+  return s | std::ranges::views::split(delim) |
+         std::ranges::to<std::vector<std::string>>();
 }
 
 int make_socket_closeonexec(int fd) {
@@ -1103,18 +1074,18 @@ int make_socket_nodelay(int fd) {
   return 0;
 }
 
-int create_nonblock_socket(int family) {
+std::expected<int, Error> create_nonblock_socket(int family) {
 #ifdef SOCK_NONBLOCK
   auto fd = socket(family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
 
   if (fd == -1) {
-    return -1;
+    return std::unexpected{Error::SYSCALL};
   }
 #else  // !defined(SOCK_NONBLOCK)
   auto fd = socket(family, SOCK_STREAM, 0);
 
   if (fd == -1) {
-    return -1;
+    return std::unexpected{Error::SYSCALL};
   }
 
   make_socket_nonblocking(fd);
@@ -1128,18 +1099,18 @@ int create_nonblock_socket(int family) {
   return fd;
 }
 
-int create_nonblock_udp_socket(int family) {
+std::expected<int, Error> create_nonblock_udp_socket(int family) {
 #ifdef SOCK_NONBLOCK
   auto fd = socket(family, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
 
   if (fd == -1) {
-    return -1;
+    return std::unexpected{Error::SYSCALL};
   }
 #else  // !defined(SOCK_NONBLOCK)
   auto fd = socket(family, SOCK_DGRAM, 0);
 
   if (fd == -1) {
-    return -1;
+    return std::unexpected{Error::SYSCALL};
   }
 
   make_socket_nonblocking(fd);
@@ -1149,7 +1120,7 @@ int create_nonblock_udp_socket(int family) {
   return fd;
 }
 
-int bind_any_addr_udp(int fd, int family) {
+std::expected<void, Error> bind_any_addr_udp(int fd, int family) {
   addrinfo *res, *rp;
   int rv;
 
@@ -1161,7 +1132,7 @@ int bind_any_addr_udp(int fd, int family) {
 
   rv = getaddrinfo(nullptr, "0", &hints, &res);
   if (rv != 0) {
-    return -1;
+    return std::unexpected{Error::LIBC};
   }
 
   for (rp = res; rp; rp = rp->ai_next) {
@@ -1173,10 +1144,10 @@ int bind_any_addr_udp(int fd, int family) {
   freeaddrinfo(res);
 
   if (!rp) {
-    return -1;
+    return std::unexpected{Error::SYSCALL};
   }
 
-  return 0;
+  return {};
 }
 
 bool check_socket_connected(int fd) {
@@ -1193,7 +1164,7 @@ int get_socket_error(int fd) {
   int error;
   socklen_t len = sizeof(error);
   if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&error, &len) != 0) {
-    return -1;
+    return errno;
   }
 
   return error;
@@ -1205,63 +1176,56 @@ bool ipv6_numeric_addr(const char *host) {
 }
 
 namespace {
-std::optional<std::pair<int64_t, std::string_view>>
+std::expected<std::pair<uint64_t, size_t>, Error>
 parse_uint_digits(std::string_view s) {
   if (s.empty()) {
-    return {};
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
 
-  constexpr int64_t max = std::numeric_limits<int64_t>::max();
+  constexpr auto max = std::numeric_limits<int64_t>::max();
 
-  int64_t n = 0;
-  size_t i = 0;
+  uint64_t n = 0;
 
-  for (auto c : s) {
+  for (auto i = 0UZ; i < s.size(); ++i) {
+    auto c = s[i];
     if (!is_digit(c)) {
-      break;
+      if (i == 0) {
+        return std::unexpected{Error::INVALID_ARGUMENT};
+      }
+
+      return {{n, i}};
     }
 
-    if (n > max / 10) {
-      return {};
+    auto d = static_cast<uint64_t>(c - '0');
+    if (n > (max - d) / 10) {
+      return std::unexpected{Error::INTEGER_OVERFLOW};
     }
 
     n *= 10;
-
-    if (n > max - (c - '0')) {
-      return {};
-    }
-
-    n += c - '0';
-
-    ++i;
+    n += d;
   }
 
-  if (i == 0) {
-    return {};
-  }
-
-  return std::pair{n, s.substr(i)};
+  return {{n, s.size()}};
 }
 } // namespace
 
-std::optional<int64_t> parse_uint_with_unit(std::string_view s) {
+std::expected<uint64_t, Error> parse_uint_with_unit(std::string_view s) {
   auto r = parse_uint_digits(s);
   if (!r) {
-    return {};
+    return std::unexpected{r.error()};
   }
 
-  auto [n, rest] = *r;
-
-  if (rest.empty()) {
+  auto [n, last] = *r;
+  if (last == s.size()) {
     return n;
   }
 
-  if (rest.size() != 1) {
-    return {};
+  if (last + 1 != s.size()) {
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
 
-  int mul = 1;
-  switch (rest[0]) {
+  uint64_t mul;
+  switch (s[last]) {
   case 'K':
   case 'k':
     mul = 1 << 10;
@@ -1275,62 +1239,66 @@ std::optional<int64_t> parse_uint_with_unit(std::string_view s) {
     mul = 1 << 30;
     break;
   default:
-    return {};
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
 
-  constexpr int64_t max = std::numeric_limits<int64_t>::max();
+  constexpr auto max = std::numeric_limits<int64_t>::max();
   if (n > max / mul) {
-    return {};
+    return std::unexpected{Error::INTEGER_OVERFLOW};
   }
 
   return n * mul;
 }
 
-std::optional<int64_t> parse_uint(std::string_view s) {
+std::expected<uint64_t, Error> parse_uint(std::string_view s) {
   auto r = parse_uint_digits(s);
-  if (!r || !(*r).second.empty()) {
-    return {};
+  if (!r) {
+    return std::unexpected{r.error()};
   }
 
-  return (*r).first;
+  auto [n, last] = *r;
+  if (last != s.size()) {
+    return std::unexpected{Error::INVALID_ARGUMENT};
+  }
+
+  return n;
 }
 
-std::optional<double> parse_duration_with_unit(std::string_view s) {
+std::expected<double, Error> parse_duration_with_unit(std::string_view s) {
   constexpr auto max = std::numeric_limits<int64_t>::max();
 
   auto r = parse_uint_digits(s);
   if (!r) {
-    return {};
+    return std::unexpected{r.error()};
   }
 
-  auto [n, rest] = *r;
-
-  if (rest.empty()) {
+  auto [n, last] = *r;
+  if (last == s.size()) {
     return static_cast<double>(n);
   }
 
-  switch (rest[0]) {
+  switch (s[last]) {
   case 'S':
   case 's':
     // seconds
-    if (rest.size() != 1) {
-      return {};
+    if (last + 1 != s.size()) {
+      return std::unexpected{Error::INVALID_ARGUMENT};
     }
 
     return static_cast<double>(n);
   case 'M':
   case 'm':
-    if (rest.size() == 1) {
+    if (last + 1 == s.size()) {
       // minutes
       if (n > max / 60) {
-        return {};
+        return std::unexpected{Error::INTEGER_OVERFLOW};
       }
 
       return static_cast<double>(n) * 60;
     }
 
-    if (rest.size() != 2 || (rest[1] != 's' && rest[1] != 'S')) {
-      return {};
+    if (last + 2 != s.size() || (s[last + 1] != 's' && s[last + 1] != 'S')) {
+      return std::unexpected{Error::INVALID_ARGUMENT};
     }
 
     // milliseconds
@@ -1338,17 +1306,17 @@ std::optional<double> parse_duration_with_unit(std::string_view s) {
   case 'H':
   case 'h':
     // hours
-    if (rest.size() != 1) {
-      return {};
+    if (last + 1 != s.size()) {
+      return std::unexpected{Error::INVALID_ARGUMENT};
     }
 
     if (n > max / 3600) {
-      return {};
+      return std::unexpected{Error::INTEGER_OVERFLOW};
     }
 
     return static_cast<double>(n) * 3600;
   default:
-    return {};
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
 }
 
@@ -1372,7 +1340,7 @@ std::string duration_str(double t) {
   return utos(v) + "h";
 }
 
-std::string format_duration(const std::chrono::microseconds &u) {
+std::string format_duration(std::chrono::microseconds u) {
   auto unit = "us"sv;
   int d = 0;
   auto t = as_unsigned(u.count());
@@ -1432,7 +1400,7 @@ uint8_t *hexdump_ascii(uint8_t *dest, const uint8_t *data, size_t datalen) {
   *dest++ = '|';
 
   for (size_t i = 0; i < datalen; ++i) {
-    if (0x20 <= data[i] && data[i] <= 0x7e) {
+    if (0x20 <= data[i] && data[i] <= 0x7E) {
       *dest++ = data[i];
     } else {
       *dest++ = '.';
@@ -1496,22 +1464,24 @@ uint8_t *hexdump_line(uint8_t *dest, const uint8_t *data, size_t datalen,
 } // namespace
 
 namespace {
-int hexdump_write(int fd, const uint8_t *data, size_t datalen) {
+std::expected<void, Error> hexdump_write(int fd, const uint8_t *data,
+                                         size_t datalen) {
   ssize_t nwrite;
 
   for (; (nwrite = write(fd, data, datalen)) == -1 && errno == EINTR;)
     ;
   if (nwrite == -1) {
-    return -1;
+    return std::unexpected{Error::IO};
   }
 
-  return 0;
+  return {};
 }
 } // namespace
 
-int hexdump(FILE *out, const void *data, size_t datalen) {
+std::expected<void, Error> hexdump(FILE *out, const void *data,
+                                   size_t datalen) {
   if (datalen == 0) {
-    return 0;
+    return {};
   }
 
   // min_space is the additional minimum space that the buffer must
@@ -1556,8 +1526,8 @@ int hexdump(FILE *out, const void *data, size_t datalen) {
 
     auto len = static_cast<size_t>(last - buf.data());
     if (len + min_space > buf.size()) {
-      if (hexdump_write(fd, buf.data(), len) != 0) {
-        return -1;
+      if (auto rv = hexdump_write(fd, buf.data(), len); !rv) {
+        return rv;
       }
 
       last = buf.data();
@@ -1572,7 +1542,7 @@ int hexdump(FILE *out, const void *data, size_t datalen) {
     return hexdump_write(fd, buf.data(), len);
   }
 
-  return 0;
+  return {};
 }
 
 void put_uint16be(uint8_t *buf, uint16_t n) {
@@ -1610,14 +1580,16 @@ uint64_t get_uint64(const uint8_t *data) {
   return n;
 }
 
-int read_mime_types(std::unordered_map<std::string, std::string> &res,
-                    const char *filename) {
+std::expected<std::unordered_map<std::string, std::string>, Error>
+read_mime_types(const char *filename) {
   std::ifstream infile(filename);
   if (!infile) {
-    return -1;
+    return std::unexpected{Error::IO};
   }
 
-  auto delim_pred = [](char c) { return c == ' ' || c == '\t'; };
+  std::unordered_map<std::string, std::string> res;
+
+  constexpr auto delim_pred = [](char c) { return c == ' ' || c == '\t'; };
 
   std::string line;
   while (std::getline(infile, line)) {
@@ -1644,7 +1616,11 @@ int read_mime_types(std::unordered_map<std::string, std::string> &res,
     }
   }
 
-  return 0;
+  if (stream_error(infile)) {
+    return std::unexpected{Error::IO};
+  }
+
+  return res;
 }
 
 // Returns x**y
@@ -1669,104 +1645,131 @@ uint32_t hash32(std::string_view s) {
   return h;
 }
 
+#ifdef NGHTTP2_GENUINE_OPENSSL
 namespace {
-int message_digest(uint8_t *res, const EVP_MD *meth, std::string_view s) {
+std::expected<void, Error> message_digest(uint8_t *dest, const EVP_MD *meth,
+                                          std::span<const uint8_t> s) {
   int rv;
 
   auto ctx = EVP_MD_CTX_new();
   if (ctx == nullptr) {
-    return -1;
+    return std::unexpected{Error::CRYPTO};
   }
 
   auto ctx_deleter = defer([ctx] { EVP_MD_CTX_free(ctx); });
 
   rv = EVP_DigestInit_ex(ctx, meth, nullptr);
   if (rv != 1) {
-    return -1;
+    return std::unexpected{Error::CRYPTO};
   }
 
   rv = EVP_DigestUpdate(ctx, s.data(), s.size());
   if (rv != 1) {
-    return -1;
+    return std::unexpected{Error::CRYPTO};
   }
 
   auto mdlen = static_cast<unsigned int>(EVP_MD_size(meth));
 
-  rv = EVP_DigestFinal_ex(ctx, res, &mdlen);
+  rv = EVP_DigestFinal_ex(ctx, dest, &mdlen);
   if (rv != 1) {
-    return -1;
+    return std::unexpected{Error::CRYPTO};
   }
 
-  return 0;
+  return {};
 }
 } // namespace
 
-int sha256(uint8_t *res, std::string_view s) {
-  return message_digest(res, tls::sha256(), s);
+std::expected<void, Error> sha256(std::span<uint8_t, 32> dest,
+                                  std::span<const uint8_t> s) {
+  return message_digest(dest.data(), tls::sha256(), s);
 }
 
-int sha1(uint8_t *res, std::string_view s) {
-  return message_digest(res, tls::sha1(), s);
+std::expected<void, Error> sha1(std::span<uint8_t, 20> dest,
+                                std::span<const uint8_t> s) {
+  return message_digest(dest.data(), tls::sha1(), s);
+}
+#else  // !defined(NGHTTP2_GENUINE_OPENSSL)
+std::expected<void, Error> sha256(std::span<uint8_t, 32> dest,
+                                  std::span<const uint8_t> s) {
+  SHA256_CTX h;
+
+  SHA256_Init(&h);
+  SHA256_Update(&h, s.data(), s.size());
+  SHA256_Final(dest.data(), &h);
+
+  return {};
 }
 
-std::string_view extract_host(std::string_view hostport) {
+std::expected<void, Error> sha1(std::span<uint8_t, 20> dest,
+                                std::span<const uint8_t> s) {
+  SHA_CTX h;
+
+  SHA1_Init(&h);
+  SHA1_Update(&h, s.data(), s.size());
+  SHA1_Final(dest.data(), &h);
+
+  return {};
+}
+#endif // !defined(NGHTTP2_GENUINE_OPENSSL)
+
+std::expected<std::string_view, Error> extract_host(std::string_view hostport) {
   if (hostport.empty()) {
-    return ""sv;
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
 
   if (hostport[0] == '[') {
     // assume this is IPv6 numeric address
     auto p = std::ranges::find(hostport, ']');
     if (p == std::ranges::end(hostport)) {
-      return ""sv;
+      return std::unexpected{Error::INVALID_ARGUMENT};
     }
     if (p + 1 < std::ranges::end(hostport) && *(p + 1) != ':') {
-      return ""sv;
+      return std::unexpected{Error::INVALID_ARGUMENT};
     }
     return std::string_view{std::ranges::begin(hostport), p + 1};
   }
 
   auto p = std::ranges::find(hostport, ':');
   if (p == std::ranges::begin(hostport)) {
-    return ""sv;
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
   return std::string_view{std::ranges::begin(hostport), p};
 }
 
-std::pair<std::string_view, std::string_view>
+std::expected<std::pair<std::string_view, std::string_view>, Error>
 split_hostport(std::string_view hostport) {
   if (hostport.empty()) {
-    return {};
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
   if (hostport[0] == '[') {
     // assume this is IPv6 numeric address
     auto p = std::ranges::find(hostport, ']');
     if (p == std::ranges::end(hostport)) {
-      return {};
+      return std::unexpected{Error::INVALID_ARGUMENT};
     }
     if (p + 1 == std::ranges::end(hostport)) {
-      return {std::string_view{std::ranges::begin(hostport) + 1, p}, {}};
+      return {{std::string_view{std::ranges::begin(hostport) + 1, p}, {}}};
     }
     if (*(p + 1) != ':' || p + 2 == std::ranges::end(hostport)) {
-      return {};
+      return std::unexpected{Error::INVALID_ARGUMENT};
     }
-    return {std::string_view{std::ranges::begin(hostport) + 1, p},
-            std::string_view{p + 2, std::ranges::end(hostport)}};
+    return {{std::string_view{std::ranges::begin(hostport) + 1, p},
+             std::string_view{p + 2, std::ranges::end(hostport)}}};
   }
 
   auto p = std::ranges::find(hostport, ':');
   if (p == std::ranges::begin(hostport)) {
-    return {};
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
   if (p == std::ranges::end(hostport)) {
-    return {std::string_view{std::ranges::begin(hostport), p}, {}};
+    return {{std::string_view{std::ranges::begin(hostport), p}, {}}};
   }
   if (p + 1 == std::ranges::end(hostport)) {
-    return {};
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
 
-  return {std::string_view{std::ranges::begin(hostport), p},
-          std::string_view{p + 1, std::ranges::end(hostport)}};
+  return {{std::string_view{std::ranges::begin(hostport), p},
+           std::string_view{p + 1, std::ranges::end(hostport)}}};
 }
 
 std::mt19937 make_mt19937() {
@@ -1774,48 +1777,56 @@ std::mt19937 make_mt19937() {
   return std::mt19937(rd());
 }
 
-int daemonize(int nochdir, int noclose) {
+std::expected<void, Error> daemonize(int nochdir, int noclose) {
 #ifdef __APPLE__
   pid_t pid;
   pid = fork();
   if (pid == -1) {
-    return -1;
+    return std::unexpected{Error::SYSCALL};
   } else if (pid > 0) {
     _exit(EXIT_SUCCESS);
   }
   if (setsid() == -1) {
-    return -1;
+    return std::unexpected{Error::SYSCALL};
   }
   pid = fork();
   if (pid == -1) {
-    return -1;
+    return std::unexpected{Error::SYSCALL};
   } else if (pid > 0) {
     _exit(EXIT_SUCCESS);
   }
   if (nochdir == 0) {
     if (chdir("/") == -1) {
-      return -1;
+      return std::unexpected{Error::SYSCALL};
     }
   }
   if (noclose == 0) {
     if (freopen("/dev/null", "r", stdin) == nullptr) {
-      return -1;
+      return std::unexpected{Error::LIBC};
     }
     if (freopen("/dev/null", "w", stdout) == nullptr) {
-      return -1;
+      return std::unexpected{Error::LIBC};
     }
     if (freopen("/dev/null", "w", stderr) == nullptr) {
-      return -1;
+      return std::unexpected{Error::LIBC};
     }
   }
-  return 0;
+  return {};
 #elif defined(__sgi)
   // TODO nochdir and noclose are ignored.  _daemonize is called with
   // hard-coded zeros to preserve original behavior due to lack of a
   // test environment.
-  return _daemonize(0, 0, 0, 0);
+  if (_daemonize(0, 0, 0, 0) != 0) {
+    return std::unexpected{Error::LIBC};
+  }
+
+  return {};
 #else  // !defined(__APPLE__) && !defined(__sgi)
-  return daemon(nochdir, noclose);
+  if (daemon(nochdir, noclose) != 0) {
+    return std::unexpected{Error::LIBC};
+  }
+
+  return {};
 #endif // !defined(__APPLE__) && !defined(__sgi)
 }
 
@@ -1841,8 +1852,14 @@ void secure_random(uint8_t *dest, size_t destlen) {
   }
 }
 
+bool stream_error(const std::ifstream &f) {
+  return f.bad() || (!f.eof() && f.fail());
+}
+
 #ifdef ENABLE_HTTP3
-int msghdr_get_local_addr(Address &dest, msghdr *msg, int family) {
+std::expected<Address, Error> msghdr_get_local_addr(msghdr *msg, int family) {
+  Address dest;
+
   switch (family) {
   case AF_INET:
     for (auto cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
@@ -1855,11 +1872,11 @@ int msghdr_get_local_addr(Address &dest, msghdr *msg, int family) {
         sa.sin_family = AF_INET;
         sa.sin_addr = pktinfo.ipi_addr;
 
-        return 0;
+        return dest;
       }
     }
 
-    return -1;
+    return std::unexpected{Error::ENTITY_NOT_FOUND};
   case AF_INET6:
     for (auto cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
       if (cmsg->cmsg_level == IPPROTO_IPV6 && cmsg->cmsg_type == IPV6_PKTINFO) {
@@ -1871,14 +1888,14 @@ int msghdr_get_local_addr(Address &dest, msghdr *msg, int family) {
         sa.sin6_family = AF_INET6;
         sa.sin6_addr = pktinfo.ipi6_addr;
 
-        return 0;
+        return dest;
       }
     }
 
-    return -1;
+    return std::unexpected{Error::ENTITY_NOT_FOUND};
   }
 
-  return -1;
+  return std::unexpected{Error::INVALID_ARGUMENT};
 }
 
 uint8_t msghdr_get_ecn(msghdr *msg, int family) {

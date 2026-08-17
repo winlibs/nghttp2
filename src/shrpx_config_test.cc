@@ -50,39 +50,48 @@ const MunitTest tests[]{
 } // namespace
 
 const MunitSuite config_suite{
-  "/config_suite", tests, nullptr, 1, MUNIT_SUITE_OPTION_NONE,
+  .prefix = "/config_suite",
+  .tests = tests,
 };
 
 void test_shrpx_config_parse_header(void) {
   BlockAllocator balloc(4096, 4096);
 
-  auto p = parse_header(balloc, "a: b"sv);
-  assert_stdsv_equal("a"sv, p.name);
-  assert_stdsv_equal("b"sv, p.value);
+  assert_true(parse_header(balloc, "a: b"sv)
+                .transform([](auto &&p) {
+                  assert_stdsv_equal("a"sv, p.name);
+                  assert_stdsv_equal("b"sv, p.value);
+                })
+                .has_value());
 
-  p = parse_header(balloc, "a:  b"sv);
-  assert_stdsv_equal("a"sv, p.name);
-  assert_stdsv_equal("b"sv, p.value);
+  assert_true(parse_header(balloc, "a:  b"sv)
+                .transform([](auto &&p) {
+                  assert_stdsv_equal("a"sv, p.name);
+                  assert_stdsv_equal("b"sv, p.value);
+                })
+                .has_value());
 
-  p = parse_header(balloc, ":a: b"sv);
-  assert_true(p.name.empty());
+  assert_false(parse_header(balloc, ":a: b"sv).has_value());
 
-  p = parse_header(balloc, "a: :b"sv);
-  assert_stdsv_equal("a"sv, p.name);
-  assert_stdsv_equal(":b"sv, p.value);
+  assert_true(parse_header(balloc, "a: :b"sv)
+                .transform([](auto &&p) {
+                  assert_stdsv_equal("a"sv, p.name);
+                  assert_stdsv_equal(":b"sv, p.value);
+                })
+                .has_value());
 
-  p = parse_header(balloc, ": b"sv);
-  assert_true(p.name.empty());
+  assert_false(parse_header(balloc, ": b"sv).has_value());
 
-  p = parse_header(balloc, "alpha: bravo charlie"sv);
-  assert_stdsv_equal("alpha", p.name);
-  assert_stdsv_equal("bravo charlie", p.value);
+  assert_true(parse_header(balloc, "alpha: bravo charlie"sv)
+                .transform([](auto &&p) {
+                  assert_stdsv_equal("alpha", p.name);
+                  assert_stdsv_equal("bravo charlie", p.value);
+                })
+                .has_value());
 
-  p = parse_header(balloc, "a,: b"sv);
-  assert_true(p.name.empty());
+  assert_false(parse_header(balloc, "a,: b"sv).has_value());
 
-  p = parse_header(balloc, "a: b\x0a"sv);
-  assert_true(p.name.empty());
+  assert_false(parse_header(balloc, "a: b\x0a"sv).has_value());
 }
 
 void test_shrpx_config_parse_log_format(void) {

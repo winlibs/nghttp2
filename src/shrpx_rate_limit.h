@@ -67,7 +67,7 @@ private:
   size_t rate_;
   size_t burst_;
   size_t avail_;
-  bool startw_req_;
+  bool startw_req_{};
 };
 
 } // namespace shrpx

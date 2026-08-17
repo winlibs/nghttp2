@@ -45,18 +45,23 @@ class HttpsUpstream : public Upstream {
 public:
   HttpsUpstream(ClientHandler *handler);
   ~HttpsUpstream() override;
-  int on_read() override;
-  int on_write() override;
-  int on_downstream_abort_request(Downstream *downstream,
-                                  unsigned int status_code) override;
-  int on_downstream_abort_request_with_https_redirect(
+  std::expected<void, Error> on_read() override;
+  std::expected<void, Error> on_write() override;
+  std::expected<void, Error>
+  on_downstream_abort_request(Downstream *downstream,
+                              unsigned int status_code) override;
+  std::expected<void, Error> on_downstream_abort_request_with_https_redirect(
     Downstream *downstream) override;
   ClientHandler *get_client_handler() const override;
 
-  int downstream_read(DownstreamConnection *dconn) override;
-  int downstream_write(DownstreamConnection *dconn) override;
-  int downstream_eof(DownstreamConnection *dconn) override;
-  int downstream_error(DownstreamConnection *dconn, int events) override;
+  std::expected<void, Error>
+  downstream_read(DownstreamConnection *dconn) override;
+  std::expected<void, Error>
+  downstream_write(DownstreamConnection *dconn) override;
+  std::expected<void, Error>
+  downstream_eof(DownstreamConnection *dconn) override;
+  std::expected<void, Error> downstream_error(DownstreamConnection *dconn,
+                                              int events) override;
 
   void attach_downstream(std::unique_ptr<Downstream> downstream);
   void delete_downstream();
@@ -65,19 +70,27 @@ public:
   void error_reply(unsigned int status_code);
 
   void pause_read(IOCtrlReason reason) override;
-  int resume_read(IOCtrlReason reason, Downstream *downstream,
-                  size_t consumed) override;
+  std::expected<void, Error> resume_read(IOCtrlReason reason,
+                                         Downstream *downstream,
+                                         size_t consumed) override;
 
-  int on_downstream_header_complete(Downstream *downstream) override;
-  int on_downstream_body(Downstream *downstream, std::span<const uint8_t> data,
-                         bool flush) override;
-  int on_downstream_body_complete(Downstream *downstream) override;
+  std::expected<void, Error>
+  on_downstream_header_complete(Downstream *downstream) override;
+  std::expected<void, Error> on_downstream_body(Downstream *downstream,
+                                                std::span<const uint8_t> data,
+                                                bool flush) override;
+  std::expected<void, Error>
+  on_downstream_body_complete(Downstream *downstream) override;
 
   void on_handler_delete() override;
-  int on_downstream_reset(Downstream *downstream, bool no_retry) override;
-  int send_reply(Downstream *downstream,
-                 std::span<const uint8_t> body) override;
-  int initiate_push(Downstream *downstream, std::string_view uri) override;
+  std::expected<void, Error> on_downstream_reset(Downstream *downstream,
+                                                 bool no_retry) override;
+  std::expected<void, Error> send_reply(Downstream *downstream,
+                                        std::span<const uint8_t> body) override;
+  std::expected<void, Error> initiate_push(Downstream *downstream,
+                                           std::string_view uri) override {
+    return {};
+  }
   std::span<struct iovec>
   response_riovec(std::span<struct iovec> iov) const override;
   std::span<const uint8_t> response_peek() const override;
@@ -86,14 +99,16 @@ public:
 
   Downstream *on_downstream_push_promise(Downstream *downstream,
                                          int32_t promised_stream_id) override;
-  int on_downstream_push_promise_complete(
-    Downstream *downstream, Downstream *promised_downstream) override;
+  std::expected<void, Error> on_downstream_push_promise_complete(
+    Downstream *downstream, Downstream *promised_downstream) override {
+    return std::unexpected{Error::UNSUPPORTED};
+  }
   bool push_enabled() const override;
   void cancel_premature_downstream(Downstream *promised_downstream) override;
 
   void reset_current_header_length();
   void log_response_headers(DefaultMemchunks *buf) const;
-  int redirect_to_https(Downstream *downstream);
+  std::expected<void, Error> redirect_to_https(Downstream *downstream);
 
   // Called when new request has started.
   void on_start_request();
@@ -101,11 +116,11 @@ public:
 private:
   ClientHandler *handler_;
   llhttp_t htp_;
-  size_t current_header_length_;
+  size_t current_header_length_{};
   std::unique_ptr<Downstream> downstream_;
   IOControl ioctrl_;
   // The number of requests seen so far.
-  size_t num_requests_;
+  size_t num_requests_{};
 };
 
 } // namespace shrpx

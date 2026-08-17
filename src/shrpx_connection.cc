@@ -150,7 +150,7 @@ void Connection::set_ssl(SSL *ssl) {
   SSL_set_app_data(tls.ssl, this);
 }
 
-int Connection::tls_handshake() {
+std::expected<void, Error> Connection::tls_handshake() {
   wlimit.stopw();
   ev_timer_stop(loop, &wt);
 
@@ -291,13 +291,13 @@ int Connection::tls_handshake() {
         Log{INFO} << "tls: handshake libssl error: "
                   << ERR_error_string(ERR_get_error(), nullptr);
       }
-      return SHRPX_ERR_NETWORK;
+      return std::unexpected{Error::NETWORK};
     }
     default:
       if (log_enabled(INFO)) {
         Log{INFO} << "tls: handshake libssl error " << err;
       }
-      return SHRPX_ERR_NETWORK;
+      return std::unexpected{Error::NETWORK};
     }
   }
 
@@ -305,7 +305,7 @@ int Connection::tls_handshake() {
     if (log_enabled(INFO)) {
       Log{INFO} << "tls: handshake is still in progress";
     }
-    return SHRPX_ERR_INPROGRESS;
+    return std::unexpected{Error::TLS_HANDSHAKE_INPROGRESS};
   }
 
 #ifdef NGHTTP2_OPENSSL_IS_BORINGSSL
@@ -319,34 +319,33 @@ int Connection::tls_handshake() {
       case SSL_ERROR_WANT_WRITE:
         break;
       case SSL_ERROR_ZERO_RETURN:
-        return SHRPX_ERR_EOF;
+        return std::unexpected{Error::RECV_EOF};
       case SSL_ERROR_SSL:
         if (log_enabled(INFO)) {
           Log{INFO} << "SSL_read: "
                     << ERR_error_string(ERR_get_error(), nullptr);
         }
-        return SHRPX_ERR_NETWORK;
+        return std::unexpected{Error::NETWORK};
       default:
         if (log_enabled(INFO)) {
           Log{INFO} << "SSL_read: SSL_get_error returned " << err;
         }
-        return SHRPX_ERR_NETWORK;
+        return std::unexpected{Error::NETWORK};
       }
     } else {
       tls.earlybuf.append(buf.data(), static_cast<size_t>(nread));
     }
 
     if (SSL_in_init(tls.ssl)) {
-      return SHRPX_ERR_INPROGRESS;
+      return std::unexpected{Error::TLS_HANDSHAKE_INPROGRESS};
     }
   }
 #endif // defined(NGHTTP2_OPENSSL_IS_BORINGSSL)
 
   // Handshake was done
 
-  rv = check_http2_requirement();
-  if (rv != 0) {
-    return -1;
+  if (auto rv = check_http2_requirement(); !rv) {
+    return rv;
   }
 
   tls.initial_handshake_done = true;
@@ -354,7 +353,7 @@ int Connection::tls_handshake() {
   return write_tls_pending_handshake();
 }
 
-int Connection::write_tls_pending_handshake() {
+std::expected<void, Error> Connection::write_tls_pending_handshake() {
 #ifdef NGHTTP2_OPENSSL_IS_BORINGSSL
   if (!SSL_in_init(tls.ssl)) {
     // This will send a session ticket.
@@ -366,7 +365,7 @@ int Connection::write_tls_pending_handshake() {
         if (log_enabled(INFO)) {
           Log{INFO} << "Close connection due to TLS renegotiation";
         }
-        return SHRPX_ERR_NETWORK;
+        return std::unexpected{Error::NETWORK};
       case SSL_ERROR_WANT_WRITE:
         break;
       case SSL_ERROR_SSL:
@@ -374,12 +373,12 @@ int Connection::write_tls_pending_handshake() {
           Log{INFO} << "SSL_write: "
                     << ERR_error_string(ERR_get_error(), nullptr);
         }
-        return SHRPX_ERR_NETWORK;
+        return std::unexpected{Error::NETWORK};
       default:
         if (log_enabled(INFO)) {
           Log{INFO} << "SSL_write: SSL_get_error returned " << err;
         }
-        return SHRPX_ERR_NETWORK;
+        return std::unexpected{Error::NETWORK};
       }
     }
   }
@@ -407,23 +406,23 @@ int Connection::write_tls_pending_handshake() {
     }
   }
 
-  return 0;
+  return {};
 }
 
-int Connection::check_http2_requirement() {
+std::expected<void, Error> Connection::check_http2_requirement() {
   const unsigned char *next_proto = nullptr;
   unsigned int next_proto_len;
 
   SSL_get0_alpn_selected(tls.ssl, &next_proto, &next_proto_len);
   if (next_proto == nullptr ||
       !util::check_h2_is_selected(as_string_view(next_proto, next_proto_len))) {
-    return 0;
+    return {};
   }
   if (!nghttp2::tls::check_http2_tls_version(tls.ssl)) {
     if (log_enabled(INFO)) {
       Log{INFO} << "TLSv1.2 was not negotiated.  HTTP/2 must not be used.";
     }
-    return -1;
+    return std::unexpected{Error::CRYPTO};
   }
 
   auto check_block_list = false;
@@ -439,10 +438,10 @@ int Connection::check_http2_requirement() {
       Log{INFO} << "The negotiated cipher suite is in HTTP/2 cipher suite "
                    "block list.  HTTP/2 must not be used.";
     }
-    return -1;
+    return std::unexpected{Error::CRYPTO};
   }
 
-  return 0;
+  return {};
 }
 
 constexpr size_t SHRPX_SMALL_WRITE_LIMIT = 1300;
@@ -480,7 +479,8 @@ void Connection::start_tls_write_idle() {
   }
 }
 
-nghttp2_ssize Connection::write_tls(std::span<const uint8_t> data) {
+std::expected<size_t, Error>
+Connection::write_tls(std::span<const uint8_t> data) {
   // SSL_write requires the same arguments (buf pointer and its
   // length) on SSL_ERROR_WANT_READ or SSL_ERROR_WANT_WRITE.
   // get_write_limit() may return smaller length than previously
@@ -525,7 +525,7 @@ nghttp2_ssize Connection::write_tls(std::span<const uint8_t> data) {
       if (log_enabled(INFO)) {
         Log{INFO} << "Close connection due to TLS renegotiation";
       }
-      return SHRPX_ERR_NETWORK;
+      return std::unexpected{Error::NETWORK};
     case SSL_ERROR_WANT_WRITE:
       tls.last_writelen = data.size();
       wlimit.startw();
@@ -537,33 +537,36 @@ nghttp2_ssize Connection::write_tls(std::span<const uint8_t> data) {
         Log{INFO} << "SSL_write: "
                   << ERR_error_string(ERR_get_error(), nullptr);
       }
-      return SHRPX_ERR_NETWORK;
+      return std::unexpected{Error::NETWORK};
     default:
       if (log_enabled(INFO)) {
         Log{INFO} << "SSL_write: SSL_get_error returned " << err;
       }
-      return SHRPX_ERR_NETWORK;
+      return std::unexpected{Error::NETWORK};
     }
   }
 
-  wlimit.drain(static_cast<size_t>(rv));
+  auto nwrite = static_cast<size_t>(rv);
+
+  wlimit.drain(nwrite);
 
   if (ev_is_active(&wt)) {
     ev_timer_again(loop, &wt);
   }
 
-  update_tls_warmup_writelen(static_cast<size_t>(rv));
+  update_tls_warmup_writelen(nwrite);
 
-  return rv;
+  return nwrite;
 }
 
-nghttp2_ssize Connection::read_tls(std::span<uint8_t> data) {
+std::expected<std::span<uint8_t>, Error>
+Connection::read_tls(std::span<uint8_t> data) {
   ERR_clear_error();
 
 #if defined(NGHTTP2_GENUINE_OPENSSL) ||                                        \
   defined(NGHTTP2_OPENSSL_IS_BORINGSSL) || defined(NGHTTP2_OPENSSL_IS_WOLFSSL)
   if (tls.earlybuf.rleft()) {
-    return as_signed(tls.earlybuf.remove(data));
+    return data.first(tls.earlybuf.remove(data));
   }
 #endif // defined(NGHTTP2_GENUINE_OPENSSL) ||
        // defined(NGHTTP2_OPENSSL_IS_BORINGSSL) ||
@@ -579,7 +582,7 @@ nghttp2_ssize Connection::read_tls(std::span<uint8_t> data) {
   if (tls.last_readlen == 0) {
     data = data.first(std::min(data.size(), rlimit.avail()));
     if (data.empty()) {
-      return 0;
+      return {};
     }
   } else {
     data = data.first(tls.last_readlen);
@@ -596,18 +599,18 @@ nghttp2_ssize Connection::read_tls(std::span<uint8_t> data) {
       switch (err) {
       case SSL_ERROR_WANT_READ:
         tls.last_readlen = data.size();
-        return 0;
+        return {};
       case SSL_ERROR_SSL:
         if (log_enabled(INFO)) {
           Log{INFO} << "SSL_read: "
                     << ERR_error_string(ERR_get_error(), nullptr);
         }
-        return SHRPX_ERR_NETWORK;
+        return std::unexpected{Error::NETWORK};
       default:
         if (log_enabled(INFO)) {
           Log{INFO} << "SSL_read: SSL_get_error returned " << err;
         }
-        return SHRPX_ERR_NETWORK;
+        return std::unexpected{Error::NETWORK};
       }
     }
 
@@ -626,7 +629,7 @@ nghttp2_ssize Connection::read_tls(std::span<uint8_t> data) {
 
     rlimit.drain(nread);
 
-    return as_signed(nread);
+    return data.first(nread);
   }
 #endif // defined(NGHTTP2_GENUINE_OPENSSL)
 
@@ -640,18 +643,18 @@ nghttp2_ssize Connection::read_tls(std::span<uint8_t> data) {
       switch (err) {
       case SSL_ERROR_WANT_READ:
         tls.last_readlen = data.size();
-        return 0;
+        return {};
       case SSL_ERROR_SSL:
         if (log_enabled(INFO)) {
           Log{INFO} << "SSL_read: "
                     << ERR_error_string(ERR_get_error(), nullptr);
         }
-        return SHRPX_ERR_NETWORK;
+        return std::unexpected{Error::NETWORK};
       default:
         if (log_enabled(INFO)) {
           Log{INFO} << "SSL_read: SSL_get_error returned " << err;
         }
-        return SHRPX_ERR_NETWORK;
+        return std::unexpected{Error::NETWORK};
       }
     }
 
@@ -670,7 +673,7 @@ nghttp2_ssize Connection::read_tls(std::span<uint8_t> data) {
 
     rlimit.drain(nread);
 
-    return as_signed(nread);
+    return data.first(nread);
   }
 #endif // defined(NGHTTP2_OPENSSL_IS_WOLFSSL) &&
        // defined(WOLFSSL_EARLY_DATA)
@@ -682,33 +685,36 @@ nghttp2_ssize Connection::read_tls(std::span<uint8_t> data) {
     switch (err) {
     case SSL_ERROR_WANT_READ:
       tls.last_readlen = data.size();
-      return 0;
+      return {};
     case SSL_ERROR_WANT_WRITE:
       if (log_enabled(INFO)) {
         Log{INFO} << "Close connection due to TLS renegotiation";
       }
-      return SHRPX_ERR_NETWORK;
+      return std::unexpected{Error::NETWORK};
     case SSL_ERROR_ZERO_RETURN:
-      return SHRPX_ERR_EOF;
+      return std::unexpected{Error::RECV_EOF};
     case SSL_ERROR_SSL:
       if (log_enabled(INFO)) {
         Log{INFO} << "SSL_read: " << ERR_error_string(ERR_get_error(), nullptr);
       }
-      return SHRPX_ERR_NETWORK;
+      return std::unexpected{Error::NETWORK};
     default:
       if (log_enabled(INFO)) {
         Log{INFO} << "SSL_read: SSL_get_error returned " << err;
       }
-      return SHRPX_ERR_NETWORK;
+      return std::unexpected{Error::NETWORK};
     }
   }
 
-  rlimit.drain(static_cast<size_t>(rv));
+  auto nread = static_cast<size_t>(rv);
 
-  return rv;
+  rlimit.drain(nread);
+
+  return data.first(nread);
 }
 
-nghttp2_ssize Connection::write_clear(std::span<const uint8_t> data) {
+std::expected<size_t, Error>
+Connection::write_clear(std::span<const uint8_t> data) {
   data = data.first(std::min(data.size(), wlimit.avail()));
   if (data.empty()) {
     return 0;
@@ -723,7 +729,7 @@ nghttp2_ssize Connection::write_clear(std::span<const uint8_t> data) {
       ev_timer_again(loop, &wt);
       return 0;
     }
-    return SHRPX_ERR_NETWORK;
+    return std::unexpected{Error::NETWORK};
   }
 
   wlimit.drain(as_unsigned(nwrite));
@@ -732,10 +738,11 @@ nghttp2_ssize Connection::write_clear(std::span<const uint8_t> data) {
     ev_timer_again(loop, &wt);
   }
 
-  return nwrite;
+  return as_unsigned(nwrite);
 }
 
-nghttp2_ssize Connection::writev_clear(std::span<struct iovec> iov) {
+std::expected<size_t, Error>
+Connection::writev_clear(std::span<struct iovec> iov) {
   iov = limit_iovec(iov, wlimit.avail());
   if (iov.empty()) {
     return 0;
@@ -752,7 +759,7 @@ nghttp2_ssize Connection::writev_clear(std::span<struct iovec> iov) {
       ev_timer_again(loop, &wt);
       return 0;
     }
-    return SHRPX_ERR_NETWORK;
+    return std::unexpected{Error::NETWORK};
   }
 
   wlimit.drain(as_unsigned(nwrite));
@@ -761,13 +768,14 @@ nghttp2_ssize Connection::writev_clear(std::span<struct iovec> iov) {
     ev_timer_again(loop, &wt);
   }
 
-  return nwrite;
+  return as_unsigned(nwrite);
 }
 
-nghttp2_ssize Connection::read_clear(std::span<uint8_t> data) {
+std::expected<std::span<uint8_t>, Error>
+Connection::read_clear(std::span<uint8_t> data) {
   data = data.first(std::min(data.size(), rlimit.avail()));
   if (data.empty()) {
-    return 0;
+    return {};
   }
 
   ssize_t nread;
@@ -775,55 +783,57 @@ nghttp2_ssize Connection::read_clear(std::span<uint8_t> data) {
     ;
   if (nread == -1) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return 0;
+      return {};
     }
-    return SHRPX_ERR_NETWORK;
+    return std::unexpected{Error::NETWORK};
   }
 
   if (nread == 0) {
-    return SHRPX_ERR_EOF;
+    return std::unexpected{Error::RECV_EOF};
   }
 
   rlimit.drain(as_unsigned(nread));
 
-  return nread;
+  return data.first(as_unsigned(nread));
 }
 
-nghttp2_ssize Connection::read_nolim_clear(std::span<uint8_t> data) {
+std::expected<std::span<uint8_t>, Error>
+Connection::read_nolim_clear(std::span<uint8_t> data) {
   ssize_t nread;
   while ((nread = read(fd, data.data(), data.size())) == -1 && errno == EINTR)
     ;
   if (nread == -1) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return 0;
+      return {};
     }
-    return SHRPX_ERR_NETWORK;
+    return std::unexpected{Error::NETWORK};
   }
 
   if (nread == 0) {
-    return SHRPX_ERR_EOF;
+    return std::unexpected{Error::RECV_EOF};
   }
 
-  return nread;
+  return data.first(as_unsigned(nread));
 }
 
-nghttp2_ssize Connection::peek_clear(std::span<uint8_t> data) {
+std::expected<std::span<uint8_t>, Error>
+Connection::peek_clear(std::span<uint8_t> data) {
   ssize_t nread;
   while ((nread = recv(fd, data.data(), data.size(), MSG_PEEK)) == -1 &&
          errno == EINTR)
     ;
   if (nread == -1) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return 0;
+      return {};
     }
-    return SHRPX_ERR_NETWORK;
+    return std::unexpected{Error::NETWORK};
   }
 
   if (nread == 0) {
-    return SHRPX_ERR_EOF;
+    return std::unexpected{Error::RECV_EOF};
   }
 
-  return nread;
+  return data.first(as_unsigned(nread));
 }
 
 void Connection::handle_tls_pending_read() {
@@ -833,7 +843,7 @@ void Connection::handle_tls_pending_read() {
   rlimit.handle_tls_pending_read();
 }
 
-int Connection::get_tcp_hint(TCPHint *hint) const {
+std::expected<TCPHint, Error> Connection::get_tcp_hint() const {
 #if defined(TCP_INFO) && defined(TCP_NOTSENT_LOWAT)
   struct tcp_info tcp_info;
   socklen_t tcp_info_len = sizeof(tcp_info);
@@ -842,7 +852,7 @@ int Connection::get_tcp_hint(TCPHint *hint) const {
   rv = getsockopt(fd, IPPROTO_TCP, TCP_INFO, &tcp_info, &tcp_info_len);
 
   if (rv != 0) {
-    return -1;
+    return std::unexpected{Error::SYSCALL};
   }
 
   auto avail_packets = tcp_info.tcpi_snd_cwnd > tcp_info.tcpi_unacked
@@ -876,7 +886,7 @@ int Connection::get_tcp_hint(TCPHint *hint) const {
       Log{INFO} << "writable_size is too small: " << writable_size;
     }
     // TODO is this required?
-    writable_size = std::max(writable_size, static_cast<size_t>(536 * 2));
+    writable_size = std::max(writable_size, 536UZ * 2UZ);
   }
 
   // if (log_enabled(INFO)) {
@@ -888,13 +898,13 @@ int Connection::get_tcp_hint(TCPHint *hint) const {
   //             << ", writable=" << writable_size;
   // }
 
-  hint->write_buffer_size = writable_size;
-  // TODO tcpi_rcv_space is considered as rwin, is that correct?
-  hint->rwin = tcp_info.tcpi_rcv_space;
-
-  return 0;
+  return TCPHint{
+    .write_buffer_size = writable_size,
+    // TODO tcpi_rcv_space is considered as rwin, is that correct?
+    .rwin = tcp_info.tcpi_rcv_space,
+  };
 #else  // !defined(TCP_INFO) || !defined(TCP_NOTSENT_LOWAT)
-  return -1;
+  return std::unexpected{Error::NOT_IMPLEMENTED};
 #endif // !defined(TCP_INFO) || !defined(TCP_NOTSENT_LOWAT)
 }
 

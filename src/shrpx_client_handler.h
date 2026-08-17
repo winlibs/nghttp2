@@ -28,6 +28,7 @@
 #include "shrpx.h"
 
 #include <memory>
+#include <expected>
 
 #include <ev.h>
 
@@ -45,6 +46,7 @@
 #include "buffer.h"
 #include "memchunk.h"
 #include "allocator.h"
+#include "errors.h"
 
 using namespace nghttp2;
 
@@ -71,41 +73,41 @@ public:
                 std::string_view port, int family, const UpstreamAddr *faddr);
   ~ClientHandler();
 
-  int noop();
+  std::expected<void, Error> noop() { return {}; }
   // Performs clear text I/O
-  int read_clear();
-  int write_clear();
+  std::expected<void, Error> read_clear();
+  std::expected<void, Error> write_clear();
   // Specialized for PROXY-protocol use; peek data from socket.
-  int proxy_protocol_peek_clear();
+  std::expected<void, Error> proxy_protocol_peek_clear();
   // Performs TLS handshake
-  int tls_handshake();
+  std::expected<void, Error> tls_handshake();
   // Performs TLS I/O
-  int read_tls();
-  int write_tls();
+  std::expected<void, Error> read_tls();
+  std::expected<void, Error> write_tls();
 
-  int upstream_noop();
-  int upstream_read();
-  int upstream_http2_connhd_read();
-  int upstream_http1_connhd_read();
-  int upstream_write();
+  std::expected<void, Error> upstream_noop() { return {}; }
+  std::expected<void, Error> upstream_read();
+  std::expected<void, Error> upstream_http2_connhd_read();
+  std::expected<void, Error> upstream_http1_connhd_read();
+  std::expected<void, Error> upstream_write();
 
-  int proxy_protocol_read();
-  int proxy_protocol_v2_read();
-  int on_proxy_protocol_finish();
+  std::expected<void, Error> proxy_protocol_read();
+  std::expected<void, Error> proxy_protocol_v2_read();
+  std::expected<void, Error> on_proxy_protocol_finish();
 
   // Performs I/O operation.  Internally calls on_read()/on_write().
-  int do_read();
-  int do_write();
+  std::expected<void, Error> do_read();
+  std::expected<void, Error> do_write();
 
   // Processes buffers.  No underlying I/O operation will be done.
-  int on_read();
-  int on_write();
+  std::expected<void, Error> on_read();
+  std::expected<void, Error> on_write();
 
   struct ev_loop *get_loop() const;
   void reset_upstream_read_timeout(ev_tstamp t);
   void reset_upstream_write_timeout(ev_tstamp t);
 
-  int validate_next_proto();
+  std::expected<void, Error> validate_next_proto();
   std::string_view get_ipaddr() const;
   bool get_should_close_after_write() const;
   void set_should_close_after_write(bool f);
@@ -113,23 +115,19 @@ public:
 
   void pool_downstream_connection(std::unique_ptr<DownstreamConnection> dconn);
   void remove_downstream_connection(DownstreamConnection *dconn);
-  DownstreamAddr *get_downstream_addr(int &err, DownstreamAddrGroup *group,
-                                      Downstream *downstream);
-  // Returns DownstreamConnection object based on request path.  This
-  // function returns non-null DownstreamConnection, and assigns 0 to
-  // |err| if it succeeds, or returns nullptr, and assigns negative
-  // error code to |err|.
-  std::unique_ptr<DownstreamConnection>
-  get_downstream_connection(int &err, Downstream *downstream);
+  std::expected<DownstreamAddr *, Error>
+  get_downstream_addr(DownstreamAddrGroup *group, Downstream *downstream);
+  // Returns DownstreamConnection object based on request path.
+  std::expected<std::unique_ptr<DownstreamConnection>, Error>
+  get_downstream_connection(Downstream *downstream);
   MemchunkPool *get_mcpool();
   SSL *get_ssl() const;
   // Call this function when HTTP/2 connection header is received at
   // the start of the connection.
   void direct_http2_upgrade();
-  // Performs HTTP/2 Upgrade from the connection managed by
-  // |http|. If this function fails, the connection must be
-  // terminated. This function returns 0 if it succeeds, or -1.
-  int perform_http2_upgrade(HttpsUpstream *http);
+  // Performs HTTP/2 Upgrade from the connection managed by |http|. If
+  // this function fails, the connection must be terminated.
+  std::expected<void, Error> perform_http2_upgrade(HttpsUpstream *http);
   bool get_http2_upgrade_allowed() const;
   // Returns upstream scheme, either "http" or "https"
   std::string_view get_upstream_scheme() const;
@@ -158,10 +156,12 @@ public:
 
 #ifdef ENABLE_HTTP3
   void setup_http3_upstream(std::unique_ptr<Http3Upstream> &&upstream);
-  int read_quic(const UpstreamAddr *faddr, const Address &remote_addr,
-                const Address &local_addr, const ngtcp2_pkt_info &pi,
-                std::span<const uint8_t> data);
-  int write_quic();
+  std::expected<void, Error> read_quic(const UpstreamAddr *faddr,
+                                       const Address &remote_addr,
+                                       const Address &local_addr,
+                                       const ngtcp2_pkt_info &pi,
+                                       std::span<const uint8_t> data);
+  std::expected<void, Error> write_quic();
 #endif // defined(ENABLE_HTTP3)
 
   // Returns string suitable for use in "by" parameter of Forwarded
@@ -180,8 +180,8 @@ public:
   uint32_t get_affinity_cookie(Downstream *downstream,
                                std::string_view cookie_name);
 
-  DownstreamAddr *get_downstream_addr_strict_affinity(
-    int &err, const std::shared_ptr<SharedDownstreamAddr> &shared_addr,
+  std::expected<DownstreamAddr *, Error> get_downstream_addr_strict_affinity(
+    const std::shared_ptr<SharedDownstreamAddr> &shared_addr,
     Downstream *downstream);
 
   const UpstreamAddr *get_upstream_addr() const;
@@ -206,14 +206,27 @@ public:
 
   void set_local_hostport(const sockaddr *addr, socklen_t addrlen);
 
+  void register_write_rate_timer(Downstream *downstream);
+  void unregister_write_rate_timer(Downstream *downstream);
+  void extend_write_rate_timer(size_t nwrite);
+  std::expected<void, Error> on_write_rate_timeout();
+
 private:
   // Allocator to allocate memory for connection-wide objects.  Make
   // sure that the allocations must be bounded, and not proportional
   // to the number of requests.
-  BlockAllocator balloc_;
+  //
+  // We use balloc_ for TLS session ID (64), ipaddr (IPv6) (39), port
+  // (5), forwarded-for (IPv6) (41), alpn (5), proxyproto ipaddr (15),
+  // proxyproto port (5), sni (32, estimated).  we need terminal NULL
+  // byte for each.  We also require 8 bytes header for each
+  // allocation.  We align at 16 bytes boundary, so the required space
+  // is 64 + 48 + 16 + 48 + 16 + 16 + 16 + 32 + 8 + 8 * 8 = 328.
+  BlockAllocator balloc_{512, 512};
   DefaultMemchunkBuffer rb_;
   Connection conn_;
   ev_timer reneg_shutdown_timer_;
+  ev_timer write_rate_timer_;
   std::unique_ptr<Upstream> upstream_;
   // IP address of client.  If UNIX domain socket is used, this is
   // "localhost".
@@ -231,18 +244,21 @@ private:
   // to client address migration, but this value stays the same for
   // now.
   std::string_view local_hostport_;
-  std::function<int(ClientHandler &)> read_, write_;
-  std::function<int(ClientHandler &)> on_read_, on_write_;
+  std::function<std::expected<void, Error>(ClientHandler &)> read_, write_;
+  std::function<std::expected<void, Error>(ClientHandler &)> on_read_,
+    on_write_;
   // Address of frontend listening socket
   const UpstreamAddr *faddr_;
   Worker *worker_;
   // The number of bytes of HTTP/2 client connection header to read
-  size_t left_connhd_len_;
+  size_t left_connhd_len_{NGHTTP2_CLIENT_MAGIC_LEN};
   // hash for session affinity using client IP
-  uint32_t affinity_hash_;
-  bool should_close_after_write_;
+  uint32_t affinity_hash_{};
+  bool should_close_after_write_{};
   // true if affinity_hash_ is computed
-  bool affinity_hash_computed_;
+  bool affinity_hash_computed_{};
+  // the number of Downstreams participating to the write rate group.
+  size_t write_rate_member_count_{};
 };
 
 } // namespace shrpx

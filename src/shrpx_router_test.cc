@@ -42,7 +42,8 @@ const MunitTest tests[]{
 } // namespace
 
 const MunitSuite router_suite{
-  "/router", tests, nullptr, 1, MUNIT_SUITE_OPTION_NONE,
+  .prefix = "/router",
+  .tests = tests,
 };
 
 struct Pattern {
@@ -71,40 +72,34 @@ void test_shrpx_router_match(void) {
     router.add_route(p.pattern, p.idx);
   }
 
-  ssize_t idx;
+  constexpr auto badval = std::numeric_limits<size_t>::max();
 
-  idx = router.match("nghttp2.org"sv, "/"sv);
+  assert_size(0, ==, router.match("nghttp2.org"sv, "/"sv).value_or(badval));
 
-  assert_ssize(0, ==, idx);
+  assert_size(1, ==,
+              router.match("nghttp2.org"sv, "/alpha"sv).value_or(badval));
 
-  idx = router.match("nghttp2.org"sv, "/alpha"sv);
+  assert_size(2, ==,
+              router.match("nghttp2.org"sv, "/alpha/"sv).value_or(badval));
 
-  assert_ssize(1, ==, idx);
+  assert_size(
+    2, ==, router.match("nghttp2.org"sv, "/alpha/charlie"sv).value_or(badval));
 
-  idx = router.match("nghttp2.org"sv, "/alpha/"sv);
-
-  assert_ssize(2, ==, idx);
-
-  idx = router.match("nghttp2.org"sv, "/alpha/charlie"sv);
-
-  assert_ssize(2, ==, idx);
-
-  idx = router.match("nghttp2.org"sv, "/alpha/bravo/"sv);
-
-  assert_ssize(3, ==, idx);
+  assert_size(
+    3, ==, router.match("nghttp2.org"sv, "/alpha/bravo/"sv).value_or(badval));
 
   // matches pattern when last '/' is missing in path
-  idx = router.match("nghttp2.org"sv, "/alpha/bravo"sv);
+  assert_size(3, ==,
+              router.match("nghttp2.org"sv, "/alpha/bravo"sv).value_or(badval));
 
-  assert_ssize(3, ==, idx);
+  assert_size(8, ==,
+              router.match("www2.nghttp2.org"sv, "/alpha"sv).value_or(badval));
 
-  idx = router.match("www2.nghttp2.org"sv, "/alpha"sv);
+  assert_size(5, ==, router.match(""sv, "/alpha"sv).value_or(badval));
 
-  assert_ssize(8, ==, idx);
+  assert_false(router.match("example.com", "/"sv));
 
-  idx = router.match(""sv, "/alpha"sv);
-
-  assert_ssize(5, ==, idx);
+  assert_false(router.match("www3.nghttp2.org", "/"sv));
 }
 
 void test_shrpx_router_match_wildcard(void) {
@@ -123,23 +118,34 @@ void test_shrpx_router_match_wildcard(void) {
     router.add_route(p.pattern, p.idx, p.wildcard);
   }
 
-  assert_ssize(0, ==, router.match("nghttp2.org"sv, "/"sv));
+  constexpr auto badval = std::numeric_limits<size_t>::max();
 
-  assert_ssize(1, ==, router.match("nghttp2.org"sv, "/a"sv));
+  assert_size(0, ==, router.match("nghttp2.org"sv, "/"sv).value_or(badval));
 
-  assert_ssize(1, ==, router.match("nghttp2.org"sv, "/charlie"sv));
+  assert_size(1, ==, router.match("nghttp2.org"sv, "/a"sv).value_or(badval));
 
-  assert_ssize(2, ==, router.match("nghttp2.org"sv, "/alpha"sv));
+  assert_size(1, ==,
+              router.match("nghttp2.org"sv, "/charlie"sv).value_or(badval));
 
-  assert_ssize(2, ==, router.match("nghttp2.org"sv, "/alpha/"sv));
+  assert_size(2, ==,
+              router.match("nghttp2.org"sv, "/alpha"sv).value_or(badval));
 
-  assert_ssize(3, ==, router.match("nghttp2.org"sv, "/alpha/b"sv));
+  assert_size(2, ==,
+              router.match("nghttp2.org"sv, "/alpha/"sv).value_or(badval));
 
-  assert_ssize(4, ==, router.match("nghttp2.org"sv, "/bravo"sv));
+  assert_size(3, ==,
+              router.match("nghttp2.org"sv, "/alpha/b"sv).value_or(badval));
 
-  assert_ssize(5, ==, router.match("nghttp2.org"sv, "/bravocharlie"sv));
+  assert_size(4, ==,
+              router.match("nghttp2.org"sv, "/bravo"sv).value_or(badval));
 
-  assert_ssize(5, ==, router.match("nghttp2.org"sv, "/bravo/"sv));
+  assert_size(
+    5, ==, router.match("nghttp2.org"sv, "/bravocharlie"sv).value_or(badval));
+
+  assert_size(5, ==,
+              router.match("nghttp2.org"sv, "/bravo/"sv).value_or(badval));
+
+  assert_false(router.match("www.nghttp2.org"sv, "/"sv).has_value());
 }
 
 void test_shrpx_router_match_prefix(void) {
@@ -156,26 +162,30 @@ void test_shrpx_router_match_prefix(void) {
     router.add_route(p.pattern, p.idx);
   }
 
-  ssize_t idx;
   const RNode *node;
   size_t nread;
 
+  constexpr auto badval = std::numeric_limits<size_t>::max();
+
   node = nullptr;
 
-  idx = router.match_prefix(&nread, &node, "gro.2ptthgn.gmi.ahpla.ovarb"sv);
-
-  assert_ssize(0, ==, idx);
+  assert_size(
+    0, ==,
+    router.match_prefix(&nread, &node, "gro.2ptthgn.gmi.ahpla.ovarb"sv)
+      .value_or(badval));
   assert_size(12, ==, nread);
 
-  idx = router.match_prefix(&nread, &node, "gmi.ahpla.ovarb"sv);
-
-  assert_ssize(2, ==, idx);
+  assert_size(
+    2, ==,
+    router.match_prefix(&nread, &node, "gmi.ahpla.ovarb"sv).value_or(badval));
   assert_size(4, ==, nread);
 
-  idx = router.match_prefix(&nread, &node, "ahpla.ovarb"sv);
-
-  assert_ssize(3, ==, idx);
+  assert_size(
+    3, ==,
+    router.match_prefix(&nread, &node, "ahpla.ovarb"sv).value_or(badval));
   assert_size(6, ==, nread);
+
+  assert_false(router.match_prefix(&nread, &node, "c.b.c"sv).has_value());
 }
 
 } // namespace shrpx

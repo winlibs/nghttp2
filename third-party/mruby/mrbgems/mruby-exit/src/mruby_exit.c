@@ -2,7 +2,6 @@
 #include <mruby.h>
 #include <mruby/error.h>
 #include <mruby/variable.h>
-#include <mruby/presym.h>
 
 #ifndef EXIT_SUCCESS
 # define EXIT_SUCCESS 0
@@ -32,7 +31,7 @@ get_status(mrb_state *mrb)
  *  optional parameter is used to return a status code to the invoking
  *  environment.
  *
- *  +true+ and +false+ of _status_ means success and failure
+ *  `true` and `false` of _status_ means success and failure
  *  respectively.  The interpretation of other integer values are
  *  system dependent.
  *

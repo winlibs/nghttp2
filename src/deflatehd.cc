@@ -37,7 +37,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <vector>
-#include <iostream>
+#include <print>
 
 #include <jansson.h>
 
@@ -73,7 +73,7 @@ static void to_hex(char *dest, const uint8_t *src, size_t len) {
   size_t i;
   for (i = 0; i < len; ++i) {
     *dest++ = to_hex_digit(src[i] >> 4);
-    *dest++ = to_hex_digit(src[i] & 0xf);
+    *dest++ = to_hex_digit(src[i] & 0xF);
   }
 }
 
@@ -112,7 +112,7 @@ static void output_to_json(nghttp2_hd_deflater *deflater, const uint8_t *buf,
                         dump_deflate_header_table(deflater));
   }
   json_dumpf(obj, stdout, JSON_PRESERVE_ORDER | JSON_INDENT(2));
-  printf("\n");
+  std::println("");
   json_decref(obj);
 }
 
@@ -124,7 +124,7 @@ static void deflate_hd(nghttp2_hd_deflater *deflater,
   auto rv = nghttp2_hd_deflate_hd2(deflater, buf.data(), buf.size(),
                                    (nghttp2_nv *)nva.data(), nva.size());
   if (rv < 0) {
-    fprintf(stderr, "deflate failed with error code %zd at %d\n", rv, seq);
+    std::println(stderr, "deflate failed with error code {} at {}", rv, seq);
     exit(EXIT_FAILURE);
   }
 
@@ -140,11 +140,12 @@ static int deflate_hd_json(json_t *obj, nghttp2_hd_deflater *deflater,
 
   auto js = json_object_get(obj, "headers");
   if (js == nullptr) {
-    fprintf(stderr, "'headers' key is missing at %d\n", seq);
+    std::println(stderr, "'headers' key is missing at {}", seq);
     return -1;
   }
   if (!json_is_array(js)) {
-    fprintf(stderr, "The value of 'headers' key must be an array at %d\n", seq);
+    std::println(stderr, "The value of 'headers' key must be an array at {}",
+                 seq);
     return -1;
   }
 
@@ -157,7 +158,7 @@ static int deflate_hd_json(json_t *obj, nghttp2_hd_deflater *deflater,
     json_t *value;
 
     if (!json_is_object(nv_pair) || json_object_size(nv_pair) != 1) {
-      fprintf(stderr, "bad formatted name/value pair object at %d\n", seq);
+      std::println(stderr, "bad formatted name/value pair object at {}", seq);
       return -1;
     }
 
@@ -166,7 +167,7 @@ static int deflate_hd_json(json_t *obj, nghttp2_hd_deflater *deflater,
       nva[i].namelen = strlen(name);
 
       if (!json_is_string(value)) {
-        fprintf(stderr, "value is not string at %d\n", seq);
+        std::println(stderr, "value is not string at {}", seq);
         return -1;
       }
 
@@ -203,19 +204,19 @@ static int perform(void) {
   auto json = json_loadf(stdin, 0, &error);
 
   if (json == nullptr) {
-    fprintf(stderr, "JSON loading failed\n");
+    std::println(stderr, "JSON loading failed");
     exit(EXIT_FAILURE);
   }
 
   auto cases = json_object_get(json, "cases");
 
   if (cases == nullptr) {
-    fprintf(stderr, "Missing 'cases' key in root object\n");
+    std::println(stderr, "Missing 'cases' key in root object");
     exit(EXIT_FAILURE);
   }
 
   if (!json_is_array(cases)) {
-    fprintf(stderr, "'cases' must be JSON array\n");
+    std::println(stderr, "'cases' must be JSON array");
     exit(EXIT_FAILURE);
   }
 
@@ -226,14 +227,15 @@ static int perform(void) {
   for (size_t i = 0; i < len; ++i) {
     auto obj = json_array_get(cases, i);
     if (!json_is_object(obj)) {
-      fprintf(stderr, "Unexpected JSON type at %zu. It should be object.\n", i);
+      std::println(stderr, "Unexpected JSON type at {}. It should be object.",
+                   i);
       continue;
     }
     if (deflate_hd_json(obj, deflater, static_cast<int>(i)) != 0) {
       continue;
     }
     if (i + 1 < len) {
-      printf(",\n");
+      std::println(",");
     }
   }
   output_json_footer();
@@ -268,7 +270,7 @@ static int perform_from_http1text(void) {
 
       val = strchr(line + 1, ':');
       if (val == nullptr) {
-        fprintf(stderr, "Bad HTTP/1 header field format at %d.\n", seq);
+        std::println(stderr, "Bad HTTP/1 header field format at {}.", seq);
         exit(EXIT_FAILURE);
       }
       *val = '\0';
@@ -291,7 +293,7 @@ static int perform_from_http1text(void) {
 
     if (!end) {
       if (seq > 0) {
-        printf(",\n");
+        std::println(",");
       }
       deflate_hd(deflater, nva, inputlen, seq);
     }
@@ -311,7 +313,7 @@ static int perform_from_http1text(void) {
 }
 
 static void print_help(void) {
-  std::cout << R"(HPACK HTTP/2 header encoder
+  std::println(R"(HPACK HTTP/2 header encoder
 Usage: deflatehd [OPTIONS] < INPUT
 
 Reads JSON data  or HTTP/1-style header fields from  stdin and outputs
@@ -327,24 +329,24 @@ is a JSON object  and it must have at least  "headers" key.  Its value
 is an array of a JSON object containing exactly one name/value pair.
 
 Example:
-{
+{{
   "context": "request",
   "cases":
   [
-    {
+    {{
       "headers": [
-        { ":method": "GET" },
-        { ":path": "/" }
+        {{ ":method": "GET" }},
+        {{ ":path": "/" }}
       ]
-    },
-    {
+    }},
+    {{
       "headers": [
-        { ":method": "POST" },
-        { ":path": "/" }
+        {{ ":method": "POST" }},
+        {{ ":path": "/" }}
       ]
-    }
+    }}
   ]
-}
+}}
 
 With  -t option,  the program  can accept  more familiar  HTTP/1 style
 header field  block.  Each header  set must  be followed by  one empty
@@ -375,8 +377,7 @@ OPTIONS:
                       buffer.
                       Default: 4096
     -d, --dump-header-table
-                      Output dynamic header table.)"
-            << std::endl;
+                      Output dynamic header table.)");
 }
 
 constexpr static struct option long_options[] = {
@@ -409,7 +410,7 @@ int main(int argc, char **argv) {
       // --table-size
       auto n = util::parse_uint(optarg);
       if (!n) {
-        fprintf(stderr, "-s: Bad option value\n");
+        std::println(stderr, "-s: Bad option value");
         exit(EXIT_FAILURE);
       }
       config.table_size = static_cast<size_t>(*n);
@@ -419,7 +420,7 @@ int main(int argc, char **argv) {
       // --deflate-table-size
       auto n = util::parse_uint(optarg);
       if (!n) {
-        fprintf(stderr, "-S: Bad option value\n");
+        std::println(stderr, "-S: Bad option value");
         exit(EXIT_FAILURE);
       }
       config.deflate_table_size = static_cast<size_t>(*n);
@@ -445,8 +446,8 @@ int main(int argc, char **argv) {
                                    : static_cast<double>(output_sum) /
                                        static_cast<double>(input_sum);
 
-  fprintf(stderr, "Overall: input=%zu output=%zu ratio=%.02f\n", input_sum,
-          output_sum, comp_ratio);
+  std::println(stderr, "Overall: input={} output={} ratio={:.2f}", input_sum,
+               output_sum, comp_ratio);
   return 0;
 }
 

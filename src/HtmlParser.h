@@ -31,10 +31,13 @@
 #include <vector>
 #include <string>
 #include <span>
+#include <expected>
 
 #ifdef HAVE_LIBXML2
 #  include <libxml/HTMLparser.h>
 #endif // defined(HAVE_LIBXML2)
+
+#include "errors.h"
 
 namespace nghttp2 {
 
@@ -50,7 +53,7 @@ struct ParserData {
   std::string base_uri;
   std::vector<std::pair<std::string, ResourceType>> links;
   // > 0 if we are inside "head" element.
-  int inside_head;
+  int inside_head{};
   ParserData(const std::string &base_uri);
 };
 
@@ -60,15 +63,17 @@ class HtmlParser {
 public:
   HtmlParser(const std::string &base_uri);
   ~HtmlParser();
-  int parse_chunk(std::span<const uint8_t> chunk, int fin);
+  std::expected<void, Error> parse_chunk(std::span<const uint8_t> chunk,
+                                         int fin);
   const std::vector<std::pair<std::string, ResourceType>> &get_links() const;
   void clear_links();
 
 private:
-  int parse_chunk_internal(std::span<const uint8_t> chunk, int fin);
+  std::expected<void, Error>
+  parse_chunk_internal(std::span<const uint8_t> chunk, int fin);
 
   std::string base_uri_;
-  htmlParserCtxtPtr parser_ctx_;
+  htmlParserCtxtPtr parser_ctx_{};
   ParserData parser_data_;
 };
 
@@ -77,7 +82,10 @@ private:
 class HtmlParser {
 public:
   HtmlParser(const std::string &base_uri) {}
-  int parse_chunk(std::span<const uint8_t> chunk, int fin) { return 0; }
+  std::expected<void, Error> parse_chunk(std::span<const uint8_t> chunk,
+                                         int fin) {
+    return {};
+  }
   const std::vector<std::pair<std::string, ResourceType>> &get_links() const {
     return links_;
   }

@@ -36,7 +36,8 @@ static const MunitTest tests[] = {
 };
 
 const MunitSuite pq_suite = {
-  "/pq", tests, NULL, 1, MUNIT_SUITE_OPTION_NONE,
+  .prefix = "/pq",
+  .tests = tests,
 };
 
 typedef struct {
@@ -155,13 +156,15 @@ void test_nghttp2_pq_update(void) {
   node nodes[10];
   int i;
   node *nd;
-  int ans[] = {-8, -6, -4, -2, 0, 1, 3, 5, 7, 9};
+  static const int ans[] = {-8, -6, -4, -2, 0, 1, 3, 5, 7, 9};
 
   nghttp2_pq_init(&pq, node_less, nghttp2_mem_default());
 
   for (i = 0; i < (int)(sizeof(nodes) / sizeof(nodes[0])); ++i) {
-    nodes[i].key = i;
-    nodes[i].val = i;
+    nodes[i] = (node){
+      .key = i,
+      .val = i,
+    };
     nghttp2_pq_push(&pq, &nodes[i].ent);
   }
 
@@ -179,13 +182,16 @@ void test_nghttp2_pq_update(void) {
 static void push_nodes(nghttp2_pq *pq, node *dest, size_t n) {
   size_t i;
   for (i = 0; i < n; ++i) {
-    dest[i].key = (int)i;
-    dest[i].val = (int)i;
+    dest[i] = (node){
+      .key = (int)i,
+      .val = (int)i,
+    };
     nghttp2_pq_push(pq, &dest[i].ent);
   }
 }
 
-static void check_nodes(nghttp2_pq *pq, size_t n, int *ans_key, int *ans_val) {
+static void check_nodes(nghttp2_pq *pq, size_t n, const int *ans_key,
+                        const int *ans_val) {
   size_t i;
   for (i = 0; i < n; ++i) {
     node *nd = (node *)nghttp2_pq_top(pq);
@@ -198,12 +204,12 @@ static void check_nodes(nghttp2_pq *pq, size_t n, int *ans_key, int *ans_val) {
 void test_nghttp2_pq_remove(void) {
   nghttp2_pq pq;
   node nodes[10];
-  int ans_key1[] = {1, 2, 3, 4, 5};
-  int ans_val1[] = {1, 2, 3, 4, 5};
-  int ans_key2[] = {0, 1, 2, 4, 5};
-  int ans_val2[] = {0, 1, 2, 4, 5};
-  int ans_key3[] = {0, 1, 2, 3, 4};
-  int ans_val3[] = {0, 1, 2, 3, 4};
+  static const int ans_key1[] = {1, 2, 3, 4, 5};
+  static const int ans_val1[] = {1, 2, 3, 4, 5};
+  static const int ans_key2[] = {0, 1, 2, 4, 5};
+  static const int ans_val2[] = {0, 1, 2, 4, 5};
+  static const int ans_key3[] = {0, 1, 2, 3, 4};
+  static const int ans_val3[] = {0, 1, 2, 3, 4};
 
   nghttp2_pq_init(&pq, node_less, nghttp2_mem_default());
 

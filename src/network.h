@@ -90,6 +90,15 @@ void sockaddr_set(Sockaddr &skaddr, const sockaddr *sa);
 [[nodiscard]] bool sockaddr_empty(const Sockaddr &skaddr);
 
 struct Address {
+  explicit Address(const sockaddr *sa) noexcept;
+
+  constexpr Address() noexcept = default;
+  constexpr Address(const Address &) noexcept = default;
+  constexpr Address(Address &&) noexcept = default;
+
+  constexpr Address &operator=(const Address &) noexcept = default;
+  constexpr Address &operator=(Address &&) noexcept = default;
+
   // as_sockaddr returns the pointer to the stored address casted to
   // const sockaddr *.
   [[nodiscard]] const sockaddr *as_sockaddr() const;

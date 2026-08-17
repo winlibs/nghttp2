@@ -35,11 +35,13 @@ static const MunitTest tests[] = {
   munit_void_test(test_nghttp2_check_header_name),
   munit_void_test(test_nghttp2_check_header_value),
   munit_void_test(test_nghttp2_check_header_value_rfc9113),
+  munit_void_test(test_nghttp2_downcase_byte),
   munit_test_end(),
 };
 
 const MunitSuite helper_suite = {
-  "/helper", tests, NULL, 1, MUNIT_SUITE_OPTION_NONE,
+  .prefix = "/helper",
+  .tests = tests,
 };
 
 void test_nghttp2_adjust_local_window_size(void) {
@@ -170,9 +172,10 @@ void test_nghttp2_check_header_name(void) {
   nghttp2_check_header_value((const uint8_t *)S, nghttp2_strlen_lit(S))
 
 void test_nghttp2_check_header_value(void) {
-  uint8_t goodval[] = {'a', 'b', 0x80u, 'c', 0xffu, 'd', '\t', ' '};
-  uint8_t badval1[] = {'a', 0x1fu, 'b'};
-  uint8_t badval2[] = {'a', 0x7fu, 'b'};
+  static const uint8_t goodval[] = {'a', 'b',  0x80U, 'c',  0xFFU,
+                                    'd', '\t', ' ',   0x00U};
+  static const uint8_t badval1[] = {'a', 0x1FU, 'b', 0x00U};
+  static const uint8_t badval2[] = {'a', 0x7FU, 'b', 0x00U};
 
   assert_true(check_header_value(" !|}~"));
   assert_true(check_header_value(goodval));
@@ -187,9 +190,9 @@ void test_nghttp2_check_header_value(void) {
   nghttp2_check_header_value_rfc9113((const uint8_t *)S, nghttp2_strlen_lit(S))
 
 void test_nghttp2_check_header_value_rfc9113(void) {
-  uint8_t goodval[] = {'a', 'b', 0x80u, 'c', 0xffu, 'd'};
-  uint8_t badval1[] = {'a', 0x1fu, 'b'};
-  uint8_t badval2[] = {'a', 0x7fu, 'b'};
+  static const uint8_t goodval[] = {'a', 'b', 0x80U, 'c', 0xFFU, 'd', 0x00U};
+  static const uint8_t badval1[] = {'a', 0x1FU, 'b', 0x00U};
+  static const uint8_t badval2[] = {'a', 0x7FU, 'b', 0x00U};
 
   assert_true(check_header_value_rfc9113("!|}~"));
   assert_false(check_header_value_rfc9113(" !|}~"));
@@ -202,4 +205,17 @@ void test_nghttp2_check_header_value_rfc9113(void) {
   assert_true(check_header_value_rfc9113(""));
   assert_false(check_header_value_rfc9113(" "));
   assert_false(check_header_value_rfc9113("\t"));
+}
+
+void test_nghttp2_downcase_byte(void) {
+  size_t i;
+
+  for (i = 0; i < 256; ++i) {
+    if ('A' <= i && i <= 'Z') {
+      assert_uint8((uint8_t)(i - 'A' + 'a'), ==,
+                   nghttp2_downcase_byte((uint8_t)i));
+    } else {
+      assert_uint8((uint8_t)i, ==, nghttp2_downcase_byte((uint8_t)i));
+    }
+  }
 }

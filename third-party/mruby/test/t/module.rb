@@ -163,6 +163,9 @@ assert('Module#attr_reader', '15.2.2.4.13') do
 
   AttrTestReader.cattr_val = 'test'
   assert_equal 'test', AttrTestReader.cattr
+
+  assert_raise(ArgumentError) { attr_instance.iattr(1) }
+  assert_raise(ArgumentError) { attr_instance.iattr(1, 2, 3) }
 end
 
 assert('Module#attr_writer', '15.2.2.4.14') do
@@ -837,6 +840,16 @@ assert('method visibility with meta programming') do
       }
     }
     f.call
+    c.new.bad!
+  end
+
+  assert_raise NoMethodError do
+    c = Class.new {
+      -> { private }.call
+      def bad!
+        "BAD!"
+      end
+    }
     c.new.bad!
   end
 end

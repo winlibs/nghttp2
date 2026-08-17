@@ -155,6 +155,7 @@ typedef uint8_t mrb_code;
 typedef uint32_t mrb_aspec;
 
 typedef struct mrb_irep mrb_irep;
+
 struct mrb_state;
 
 #ifndef MRB_FIXED_STATE_ATEXIT_STACK_SIZE
@@ -187,6 +188,10 @@ enum mrb_fiber_state {
   MRB_FIBER_TRANSFERRED,
   MRB_FIBER_TERMINATED,
 };
+
+/* Task context status aliases */
+#define MRB_TASK_CREATED MRB_FIBER_CREATED
+#define MRB_TASK_STOPPED MRB_FIBER_TERMINATED
 
 struct mrb_context {
   struct mrb_context *prev;
@@ -222,7 +227,7 @@ mrb_static_assert_powerof2(MRB_METHOD_CACHE_SIZE);
 typedef mrb_value (*mrb_func_t)(struct mrb_state *mrb, mrb_value self);
 
 typedef struct {
-  uint32_t flags;                       /* compatible with mt keys in class.c */
+  uint32_t flags;                       /* method flags (no symbol packed) */
 
   union {
     const struct RProc *proc;
@@ -233,7 +238,7 @@ typedef struct {
 #ifndef MRB_NO_METHOD_CACHE
 struct mrb_cache_entry {
   struct RClass *c, *c0;
-  /* mrb_sym mid; // mid is stored in mrb_method_t::flags */
+  mrb_sym mid;
   mrb_method_t m;
 };
 #endif
@@ -241,6 +246,19 @@ struct mrb_cache_entry {
 struct mrb_jmpbuf;
 
 typedef void (*mrb_atexit_func)(struct mrb_state*);
+
+#ifdef MRB_USE_TASK_SCHEDULER
+struct mrb_task;
+
+typedef struct mrb_task_state {
+  struct mrb_task *queues[4];      /* Task queues (dormant, ready, waiting, suspended) */
+  volatile uint32_t tick;           /* Current tick count */
+  volatile uint32_t wakeup_tick;    /* Next wakeup tick */
+  volatile mrb_bool switching;      /* Context switch pending flag */
+  struct mrb_task *main_task;       /* Main task wrapper for root context */
+  uint8_t scheduler_lock;           /* Lock counter for synchronous execution */
+} mrb_task_state;
+#endif
 
 typedef struct mrb_state {
   struct mrb_jmpbuf *jmp;
@@ -273,16 +291,17 @@ typedef struct mrb_state {
 
   mrb_gc gc;
 
+  mrb_bool bootstrapping;
+
 #ifndef MRB_NO_METHOD_CACHE
   struct mrb_cache_entry cache[MRB_METHOD_CACHE_SIZE];
 #endif
 
   mrb_sym symidx;
   const char **symtbl;
-  uint8_t *symlink;
-  uint8_t *symflags;
-  mrb_sym symhash[256];
   size_t symcapa;
+  struct mrb_sym_hash_table *symhash;
+  void *sym_pool;
 #ifndef MRB_USE_ALL_SYMBOLS
   char symbuf[8];                         /* buffer for small symbol names */
 #endif
@@ -304,6 +323,10 @@ typedef struct mrb_state {
   struct RObject *arena_err;              /* pre-allocated arena overflow error */
 #endif
 
+  struct mrb_mt_rom_list *rom_mt;  /* heap-allocated ROM wrappers (freed at close) */
+
+  struct mrb_iv_shape *root_shape; /* root of IV shape tree */
+
   void *ud; /* auxiliary data */
 
 #ifdef MRB_FIXED_STATE_ATEXIT_STACK
@@ -312,6 +335,10 @@ typedef struct mrb_state {
   mrb_atexit_func *atexit_stack;
 #endif
   uint16_t atexit_stack_len;
+
+#ifdef MRB_USE_TASK_SCHEDULER
+  mrb_task_state task;                    /* Task scheduler state */
+#endif
 } mrb_state;
 
 /**
@@ -389,7 +416,7 @@ MRB_API void mrb_include_module(mrb_state *mrb, struct RClass *cla, struct RClas
 MRB_API void mrb_prepend_module(mrb_state *mrb, struct RClass *cla, struct RClass *prepended);
 
 /**
- * Defines a global function in ruby.
+ * Defines a global function in Ruby.
  *
  * If you're creating a gem it may look something like this
  *
@@ -900,6 +927,11 @@ MRB_API struct RClass* mrb_define_module_under_id(mrb_state *mrb, struct RClass 
 #define MRB_ARGS_BLOCK()    ((mrb_aspec)1)
 
 /**
+ * Function does not accept a block (&nil)
+ */
+#define MRB_ARGS_NOBLOCK()  ((mrb_aspec)(1 << 23))
+
+/**
  * Function accepts any number of arguments
  */
 #define MRB_ARGS_ANY()      MRB_ARGS_REST()
@@ -933,7 +965,7 @@ MRB_API struct RClass* mrb_define_module_under_id(mrb_state *mrb, struct RClass 
  * | `I`  | inline struct  | void *, struct RClass | `I!` gives `NULL` for `nil`                    |
  * | `&`  | block          | {mrb_value}       | &! raises exception if no block given.             |
  * | `*`  | rest arguments | const {mrb_value} *, {mrb_int} | Receive the rest of arguments as an array; `*!` avoid copy of the stack.  |
- * | <code>\|</code> | optional     |                   | After this spec following specs would be optional. |
+ * | `\|` | optional     |                   | After this spec following specs would be optional. |
  * | `?`  | optional given | {mrb_bool}        | `TRUE` if preceding argument is given. Used to check optional argument is given. |
  * | `:`  | keyword args   | {mrb_kwargs} const | Get keyword arguments. @see mrb_kwargs |
  *
@@ -983,7 +1015,7 @@ typedef const char *mrb_args_format;
  *      mrb_value str, kw_rest;
  *      uint32_t kw_num = 3;
  *      uint32_t kw_required = 1;
- *      // Note that `#include <mruby/presym.h>` is required beforehand because `MRB_SYM()` is used.
+ *      // `MRB_SYM()` is available via `mruby.h` (which includes `mruby/presym.h`).
  *      // If the usage of `MRB_SYM()` is not desired, replace it with `mrb_intern_lit()`.
  *      mrb_sym kw_names[] = { MRB_SYM(x), MRB_SYM(y), MRB_SYM(z) };
  *      mrb_value kw_values[kw_num];
@@ -1066,7 +1098,7 @@ MRB_API mrb_bool mrb_block_given_p(mrb_state *mrb);
 #define mrb_strlen_lit(lit) (sizeof(lit "") - 1)
 
 /**
- * Call existing ruby functions.
+ * Call existing Ruby functions.
  *
  * Example:
  *
@@ -1099,7 +1131,7 @@ MRB_API mrb_bool mrb_block_given_p(mrb_state *mrb);
 MRB_API mrb_value mrb_funcall(mrb_state *mrb, mrb_value val, const char *name, mrb_int argc, ...);
 MRB_API mrb_value mrb_funcall_id(mrb_state *mrb, mrb_value val, mrb_sym mid, mrb_int argc, ...);
 /**
- * Call existing ruby functions. This is basically the type safe version of mrb_funcall.
+ * Call existing Ruby functions. This is basically the type safe version of mrb_funcall.
  *
  *      #include <stdio.h>
  *      #include <mruby.h>
@@ -1114,7 +1146,7 @@ MRB_API mrb_value mrb_funcall_id(mrb_state *mrb, mrb_value val, mrb_sym mid, mrb
  *
  *        FILE *fp = fopen("test.rb","r");
  *        mrb_value obj = mrb_load_file(mrb,fp);
- *        mrb_funcall_argv(mrb, obj, MRB_SYM(method_name), 1, &obj); // Calling ruby function from test.rb.
+ *        mrb_funcall_argv(mrb, obj, MRB_SYM(method_name), 1, &obj); // Calling Ruby function from test.rb.
  *        fclose(fp);
  *        mrb_close(mrb);
  *       }
@@ -1128,7 +1160,7 @@ MRB_API mrb_value mrb_funcall_id(mrb_state *mrb, mrb_value val, mrb_sym mid, mrb
  */
 MRB_API mrb_value mrb_funcall_argv(mrb_state *mrb, mrb_value val, mrb_sym name, mrb_int argc, const mrb_value *argv);
 /**
- * Call existing ruby functions with a block.
+ * Call existing Ruby functions with a block.
  */
 MRB_API mrb_value mrb_funcall_with_block(mrb_state *mrb, mrb_value val, mrb_sym name, mrb_int argc, const mrb_value *argv, mrb_value block);
 /**
@@ -1247,6 +1279,44 @@ MRB_API mrb_state* mrb_open_core(void);
  *      Pointer to the mrb_state to be closed.
  */
 MRB_API void mrb_close(mrb_state *mrb);
+#ifndef MRB_NO_METHOD_CACHE
+MRB_API void mrb_method_cache_clear(mrb_state *mrb);
+#else
+#define mrb_method_cache_clear(mrb) ((void)0)
+#endif
+
+/**
+ * Check if mrb_open() failed
+ *
+ * @param mrb
+ *      Pointer returned from mrb_open() or mrb_open_core().
+ * @return
+ *      Non-zero if initialization failed, 0 if succeeded.
+ * @note
+ *      mrb_open() may return non-NULL even on failure (with mrb->exc set).
+ *      Use this macro to check for failure:
+ *      @code
+ *      mrb_state *mrb = mrb_open();
+ *      if (MRB_OPEN_FAILURE(mrb)) {
+ *        if (mrb) {
+ *          // Inspect mrb->exc for error details
+ *          mrb_close(mrb);
+ *        }
+ *        return EXIT_FAILURE;
+ *      }
+ *      @endcode
+ */
+#define MRB_OPEN_FAILURE(mrb) (!(mrb) || (mrb)->exc)
+
+/**
+ * Check if mrb_open() succeeded
+ *
+ * @param mrb
+ *      Pointer returned from mrb_open() or mrb_open_core().
+ * @return
+ *      Non-zero if initialization succeeded, 0 if failed.
+ */
+#define MRB_OPEN_SUCCESS(mrb) (!MRB_OPEN_FAILURE(mrb))
 
 /**
  * The memory allocation function. You can redefine this function for your own allocator.
@@ -1302,6 +1372,25 @@ MRB_API mrb_value mrb_inspect(mrb_state *mrb, mrb_value obj);
 MRB_API mrb_bool mrb_eql(mrb_state *mrb, mrb_value obj1, mrb_value obj2);
 /* mrb_cmp(mrb, obj1, obj2): 1:0:-1; -2 for error */
 MRB_API mrb_int mrb_cmp(mrb_state *mrb, mrb_value obj1, mrb_value obj2);
+
+/* recursion detection */
+MRB_API mrb_bool mrb_recursive_method_p(mrb_state *mrb, mrb_sym mid, mrb_value obj1, mrb_value obj2);
+MRB_API mrb_bool mrb_recursive_func_p(mrb_state *mrb, mrb_sym mid, mrb_value obj1, mrb_value obj2);
+
+#define MRB_RECURSIVE_P(mrb, mid, obj1, obj2) \
+  mrb_recursive_method_p(mrb, mid, obj1, obj2)
+
+#define MRB_RECURSIVE_UNARY_P(mrb, mid, obj) \
+  mrb_recursive_method_p(mrb, mid, obj, mrb_nil_value())
+
+#define MRB_RECURSIVE_BINARY_P(mrb, mid, obj1, obj2) \
+  mrb_recursive_method_p(mrb, mid, obj1, obj2)
+
+#define MRB_RECURSIVE_FUNC_P(mrb, mid, obj) \
+  mrb_recursive_func_p(mrb, mid, obj, mrb_nil_value())
+
+#define MRB_RECURSIVE_BINARY_FUNC_P(mrb, mid, obj1, obj2) \
+  mrb_recursive_func_p(mrb, mid, obj1, obj2)
 
 #define mrb_gc_arena_save(mrb) ((mrb)->gc.arena_idx)
 #define mrb_gc_arena_restore(mrb, idx) ((mrb)->gc.arena_idx = (idx))
@@ -1493,7 +1582,8 @@ MRB_API mrb_value mrb_fiber_alive_p(mrb_state *mrb, mrb_value fib);
 MRB_API void mrb_stack_extend(mrb_state*, mrb_int);
 
 /* temporary memory allocation, only effective while GC arena is kept */
-MRB_API void* mrb_alloca(mrb_state *mrb, size_t);
+MRB_API void* mrb_temp_alloc(mrb_state *mrb, size_t);
+#define mrb_alloca(mrb, size) mrb_temp_alloc(mrb, size) /* for compatibility */
 
 MRB_API void mrb_state_atexit(mrb_state *mrb, mrb_atexit_func func);
 
@@ -1504,6 +1594,8 @@ MRB_API mrb_value mrb_format(mrb_state *mrb, const char *format, ...);
 
 #ifdef MRB_PRESYM_SCANNING
 # include <mruby/presym/scanning.h>
+#else
+# include <mruby/presym.h>
 #endif
 
 #if 0
@@ -1534,6 +1626,10 @@ mrbmemset(void *s, int c, size_t n)
 #endif
 
 #define mrb_int_hash_func(mrb,key) (uint32_t)((key)^((key)<<2)^((key)>>2))
+
+#define MRB_UNIQNAME(name)         MRB_UNIQNAME_1(name, __LINE__)
+#define MRB_UNIQNAME_1(name, line) MRB_UNIQNAME_2(name, line)
+#define MRB_UNIQNAME_2(name, line) name##line
 
 MRB_END_DECL
 

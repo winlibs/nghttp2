@@ -44,6 +44,8 @@ DualDNSResolver::DualDNSResolver(struct ev_loop *loop, int family)
     cb(status, &result);
   };
 
+  assert(family_ == AF_UNSPEC || family_ == AF_INET || family_ == AF_INET6);
+
   if (family_ == AF_UNSPEC || family_ == AF_INET) {
     resolv4_.set_complete_cb(cb);
   }
@@ -52,20 +54,26 @@ DualDNSResolver::DualDNSResolver(struct ev_loop *loop, int family)
   }
 }
 
-int DualDNSResolver::resolve(std::string_view host) {
-  int rv4 = 0, rv6 = 0;
-  if (family_ == AF_UNSPEC || family_ == AF_INET) {
-    rv4 = resolv4_.resolve(host, AF_INET);
-  }
-  if (family_ == AF_UNSPEC || family_ == AF_INET6) {
-    rv6 = resolv6_.resolve(host, AF_INET6);
-  }
+std::expected<void, Error> DualDNSResolver::resolve(std::string_view host) {
+  switch (family_) {
+  case AF_UNSPEC: {
+    auto rv4 = resolv4_.resolve(host, AF_INET);
+    auto rv6 = resolv6_.resolve(host, AF_INET6);
 
-  if (rv4 != 0 && rv6 != 0) {
-    return -1;
-  }
+    if (!rv4 && !rv6) {
+      return rv4;
+    }
 
-  return 0;
+    return {};
+  }
+  case AF_INET:
+    return resolv4_.resolve(host, AF_INET);
+  case AF_INET6:
+    return resolv6_.resolve(host, AF_INET6);
+  default:
+    assert(0);
+    abort();
+  }
 }
 
 CompleteCb DualDNSResolver::get_complete_cb() const { return complete_cb_; }

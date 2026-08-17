@@ -24,6 +24,8 @@
  */
 #include "http2.h"
 
+#include <print>
+
 #include "llhttp.h"
 
 #include "util.h"
@@ -564,17 +566,18 @@ int32_t determine_window_update_transmission(nghttp2_session *session,
 void dump_nv(FILE *out, const nghttp2_nv *nva, size_t nvlen) {
   auto end = nva + nvlen;
   for (; nva != end; ++nva) {
-    fprintf(out, "%s: %s\n", nva->name, nva->value);
+    std::println(out, "{}: {}", as_string_view(nva->name, nva->namelen),
+                 as_string_view(nva->value, nva->valuelen));
   }
-  fputc('\n', out);
+  std::println(out, "");
   fflush(out);
 }
 
 void dump_nv(FILE *out, const HeaderRefs &nva) {
   for (auto &nv : nva) {
-    fprintf(out, "%s: %s\n", nv.name.data(), nv.value.data());
+    std::println(out, "{}: {}", nv.name, nv.value);
   }
-  fputc('\n', out);
+  std::println(out, "");
   fflush(out);
 }
 
@@ -648,22 +651,22 @@ std::string_view rewrite_location_uri(BlockAllocator &balloc,
   return as_string_view(std::ranges::begin(iov), p);
 }
 
-int parse_http_status_code(std::string_view src) {
+std::expected<int, Error> parse_http_status_code(std::string_view src) {
   if (src.size() != 3) {
-    return -1;
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
 
   int status = 0;
   for (auto c : src) {
     if (!isdigit(c)) {
-      return -1;
+      return std::unexpected{Error::INVALID_ARGUMENT};
     }
     status *= 10;
     status += c - '0';
   }
 
   if (status < 100) {
-    return -1;
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
 
   return status;
@@ -992,7 +995,7 @@ InputIt skip_to_right_dquote(InputIt first, InputIt last) {
       case ' ':
         break;
       default:
-        if ((0x21 <= *first && *first <= 0x7e) /* VCHAR */ ||
+        if ((0x21 <= *first && *first <= 0x7E) /* VCHAR */ ||
             0x80 <= *first /* obs-text */) {
           break;
         }
@@ -1007,8 +1010,8 @@ InputIt skip_to_right_dquote(InputIt first, InputIt last) {
     case '!':
       break;
     default:
-      if ((0x23 <= *first && *first <= 0x5b) ||
-          (0x5d <= *first && *first <= 0x7e)) {
+      if ((0x23 <= *first && *first <= 0x5B) ||
+          (0x5D <= *first && *first <= 0x7E)) {
         break;
       }
 
@@ -1535,16 +1538,17 @@ std::string_view get_pure_path_component(std::string_view uri) {
   return "/"sv;
 }
 
-int construct_push_component(BlockAllocator &balloc, std::string_view &scheme,
-                             std::string_view &authority,
-                             std::string_view &path, std::string_view base,
-                             std::string_view uri) {
+std::expected<PushComponent, Error>
+construct_push_component(BlockAllocator &balloc, std::string_view base,
+                         std::string_view uri) {
   int rv;
   std::string_view rel, relq;
 
   if (uri.size() == 0) {
-    return -1;
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
+
+  std::string_view scheme, authority;
 
   urlparse_url u;
 
@@ -1552,7 +1556,7 @@ int construct_push_component(BlockAllocator &balloc, std::string_view &scheme,
 
   if (rv != 0) {
     if (uri[0] == '/') {
-      return -1;
+      return std::unexpected{Error::INVALID_ARGUMENT};
     }
 
     // treat link_url as relative URI.
@@ -1600,9 +1604,13 @@ int construct_push_component(BlockAllocator &balloc, std::string_view &scheme,
     }
   }
 
-  path = path_join(balloc, base, ""sv, rel, relq);
+  auto path = path_join(balloc, base, ""sv, rel, relq);
 
-  return 0;
+  return PushComponent{
+    .scheme = scheme,
+    .authority = authority,
+    .path = path,
+  };
 }
 
 namespace {
@@ -1646,10 +1654,9 @@ std::string_view path_join(BlockAllocator &balloc, std::string_view base_path,
                            std::string_view base_query,
                            std::string_view rel_path,
                            std::string_view rel_query) {
-  auto res =
-    make_byte_ref(balloc, std::max(static_cast<size_t>(1), base_path.size()) +
-                            rel_path.size() + 1 +
-                            std::max(base_query.size(), rel_query.size()) + 1);
+  auto res = make_byte_ref(
+    balloc, std::max(1UZ, base_path.size()) + rel_path.size() + 1 +
+              std::max(base_query.size(), rel_query.size()) + 1);
   auto p = std::ranges::begin(res);
 
   if (rel_path.empty()) {
@@ -1878,19 +1885,23 @@ bool contains_trailers(std::string_view s) {
   }
 }
 
-std::string_view make_websocket_accept_token(uint8_t *dest,
-                                             std::string_view key) {
+std::expected<std::string_view, Error>
+make_websocket_accept_token(std::span<uint8_t, base64::encode_length(20)> dest,
+                            std::string_view key) {
+  assert(key.size() == base64::encode_length(16));
+
   static constexpr auto magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"sv;
-  std::array<char, base64::encode_length(16) + magic.size()> s;
+  std::array<uint8_t, base64::encode_length(16) + magic.size()> s;
   auto p = std::ranges::copy(key, std::ranges::begin(s)).out;
   std::ranges::copy(magic, p);
 
   std::array<uint8_t, 20> h;
-  if (util::sha1(h.data(), as_string_view(s)) != 0) {
-    return ""sv;
+  if (auto rv = util::sha1(h, s); !rv) {
+    return std::unexpected{rv.error()};
   }
 
-  return as_string_view(dest, base64::encode(h, dest));
+  return as_string_view(std::ranges::begin(dest),
+                        base64::encode(h, std::ranges::begin(dest)));
 }
 
 bool legacy_http1(int major, int minor) {

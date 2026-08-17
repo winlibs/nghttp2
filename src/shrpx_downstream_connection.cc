@@ -30,9 +30,6 @@
 
 namespace shrpx {
 
-DownstreamConnection::DownstreamConnection()
-  : client_handler_(nullptr), downstream_(nullptr) {}
-
 DownstreamConnection::~DownstreamConnection() {}
 
 void DownstreamConnection::set_client_handler(ClientHandler *handler) {

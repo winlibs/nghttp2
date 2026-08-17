@@ -29,6 +29,7 @@
 
 #include <memory>
 #include <random>
+#include <expected>
 
 #include <ev.h>
 
@@ -43,6 +44,7 @@
 
 #include "memchunk.h"
 #include "network.h"
+#include "errors.h"
 
 using namespace nghttp2;
 
@@ -58,7 +60,7 @@ public:
                       MemchunkPool *mcpool, std::mt19937 &gen);
   ~MemcachedDispatcher();
 
-  int add_request(std::unique_ptr<MemcachedRequest> req);
+  std::expected<void, Error> add_request(std::unique_ptr<MemcachedRequest> req);
 
 private:
   struct ev_loop *loop_;

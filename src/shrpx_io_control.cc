@@ -33,7 +33,7 @@ using namespace nghttp2;
 
 namespace shrpx {
 
-IOControl::IOControl(RateLimit *lim) : lim_(lim), rdbits_(0) {}
+IOControl::IOControl(RateLimit *lim) : lim_(lim) {}
 
 IOControl::~IOControl() {}
 

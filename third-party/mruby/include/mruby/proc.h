@@ -72,6 +72,7 @@ struct RProc {
 #define MRB_ASPEC_KEY(a)          (((a) >> 2) & 0x1f)
 #define MRB_ASPEC_KDICT(a)        (((a) >> 1) & 0x1)
 #define MRB_ASPEC_BLOCK(a)        ((a) & 1)
+#define MRB_ASPEC_NOBLOCK(a)      (((a) >> 23) & 0x1)
 
 #define MRB_PROC_CFUNC_FL 128
 #define MRB_PROC_CFUNC_P(p) (((p)->flags & MRB_PROC_CFUNC_FL) != 0)
@@ -96,7 +97,7 @@ struct RProc {
 } while (0)
 #define MRB_PROC_SCOPE 2048
 #define MRB_PROC_SCOPE_P(p) (((p)->flags & MRB_PROC_SCOPE) != 0)
-#define MRB_PROC_NOARG 4096 /* for MRB_PROC_CFUNC_FL, it would be something like MRB_ARGS_NONE() or MRB_METHOD_NOARG_FL */
+#define MRB_PROC_NOARG 4096 /* for MRB_PROC_CFUNC_FL, aspec == MRB_ARGS_NONE() */
 #define MRB_PROC_NOARG_P(p) (((p)->flags & MRB_PROC_NOARG) != 0)
 #define MRB_PROC_ALIAS 8192
 #define MRB_PROC_ALIAS_P(p) (((p)->flags & MRB_PROC_ALIAS) != 0)
@@ -113,18 +114,15 @@ MRB_API mrb_value mrb_proc_cfunc_env_get(mrb_state *mrb, mrb_int idx);
 /* old name */
 #define mrb_cfunc_env_get(mrb, idx) mrb_proc_cfunc_env_get(mrb, idx)
 
-#define MRB_METHOD_FUNC_FL 8
-#define MRB_METHOD_NOARG_FL 4
-#define MRB_METHOD_PUBLIC_FL 0
-#define MRB_METHOD_PRIVATE_FL 1
-#define MRB_METHOD_PROTECTED_FL 2
-#define MRB_METHOD_VDEFAULT_FL 3
-#define MRB_METHOD_VISIBILITY_MASK 3
+#define MRB_METHOD_FUNC_FL    (1 << 24)
+#define MRB_METHOD_PUBLIC_FL  0
+#define MRB_METHOD_PRIVATE_FL (1 << 25)
+#define MRB_METHOD_PROTECTED_FL (1 << 26)
+#define MRB_METHOD_VDEFAULT_FL ((1 << 25) | (1 << 26))
+#define MRB_METHOD_VISIBILITY_MASK ((1 << 25) | (1 << 26))
 
 #define MRB_METHOD_FUNC_P(m) ((m).flags&MRB_METHOD_FUNC_FL)
-#define MRB_METHOD_NOARG_P(m) (((m).flags&MRB_METHOD_NOARG_FL)?1:0)
 #define MRB_METHOD_FUNC(m) ((m).as.func)
-#define MRB_METHOD_NOARG_SET(m) do{(m).flags|=MRB_METHOD_NOARG_FL;}while(0)
 #define MRB_METHOD_FROM_FUNC(m,fn) do{(m).flags=MRB_METHOD_FUNC_FL;(m).as.func=(fn);}while(0)
 #define MRB_METHOD_FROM_PROC(m,pr) do{(m).flags=0;(m).as.proc=(pr);}while(0)
 #define MRB_METHOD_PROC_P(m) (!MRB_METHOD_FUNC_P(m))

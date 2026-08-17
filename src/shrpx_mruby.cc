@@ -46,16 +46,12 @@ MRubyContext::~MRubyContext() {
   }
 }
 
-int MRubyContext::run_app(Downstream *downstream, int phase) {
+std::expected<void, Error> MRubyContext::run_app(Downstream *downstream,
+                                                 int phase) {
   if (!mrb_) {
-    return 0;
+    return {};
   }
 
-  MRubyAssocData data{downstream, phase};
-
-  mrb_->ud = &data;
-
-  int rv = 0;
   auto ai = mrb_gc_arena_save(mrb_);
   auto ai_d = defer([mrb = mrb_, ai] { mrb_gc_arena_restore(mrb, ai); });
 
@@ -63,13 +59,13 @@ int MRubyContext::run_app(Downstream *downstream, int phase) {
   switch (phase) {
   case PHASE_REQUEST:
     if (!mrb_respond_to(mrb_, app_, mrb_intern_lit(mrb_, "on_req"))) {
-      return 0;
+      return {};
     }
     method = "on_req";
     break;
   case PHASE_RESPONSE:
     if (!mrb_respond_to(mrb_, app_, mrb_intern_lit(mrb_, "on_resp"))) {
-      return 0;
+      return {};
     }
     method = "on_resp";
     break;
@@ -78,32 +74,41 @@ int MRubyContext::run_app(Downstream *downstream, int phase) {
     abort();
   }
 
+  MRubyAssocData data{
+    .downstream = downstream,
+    .phase = phase,
+  };
+
+  mrb_->ud = &data;
+
+  auto ud_d = defer([mrb = mrb_] { mrb->ud = nullptr; });
+
   auto res = mrb_funcall(mrb_, app_, method, 1, env_);
   (void)res;
 
   if (mrb_->exc) {
-    // If response has been committed, ignore error
-    if (downstream->get_response_state() != DownstreamState::MSG_COMPLETE) {
-      rv = -1;
-    }
-
     auto exc = mrb_obj_value(mrb_->exc);
     auto inspect = mrb_inspect(mrb_, exc);
 
     Log{ERROR} << "Exception caught while executing mruby code: "
                << mrb_str_to_cstr(mrb_, inspect);
+
+    // If response has been committed, ignore error
+    if (downstream->get_response_state() != DownstreamState::MSG_COMPLETE) {
+      return std::unexpected{Error::MRUBY};
+    }
   }
 
-  mrb_->ud = nullptr;
-
-  return rv;
+  return {};
 }
 
-int MRubyContext::run_on_request_proc(Downstream *downstream) {
+std::expected<void, Error>
+MRubyContext::run_on_request_proc(Downstream *downstream) {
   return run_app(downstream, PHASE_REQUEST);
 }
 
-int MRubyContext::run_on_response_proc(Downstream *downstream) {
+std::expected<void, Error>
+MRubyContext::run_on_response_proc(Downstream *downstream) {
   return run_app(downstream, PHASE_RESPONSE);
 }
 
@@ -115,7 +120,7 @@ void MRubyContext::delete_downstream(Downstream *downstream) {
 }
 
 namespace {
-mrb_value instantiate_app(mrb_state *mrb, RProc *proc) {
+std::expected<mrb_value, Error> instantiate_app(mrb_state *mrb, RProc *proc) {
   mrb->ud = nullptr;
 
   auto res = mrb_top_run(mrb, proc, mrb_top_self(mrb), 0);
@@ -127,7 +132,13 @@ mrb_value instantiate_app(mrb_state *mrb, RProc *proc) {
     Log{ERROR} << "Exception caught while executing mruby code: "
                << mrb_str_to_cstr(mrb, inspect);
 
-    return mrb_nil_value();
+    return std::unexpected{Error::MRUBY};
+  }
+
+  if (mrb_nil_p(res)) {
+    Log{ERROR} << "mruby object is nil";
+
+    return std::unexpected{Error::MRUBY};
   }
 
   return res;
@@ -139,47 +150,49 @@ mrb_value instantiate_app(mrb_state *mrb, RProc *proc) {
 // very hard to write these kind of code because mruby has almost no
 // documentation about compiling or generating code, at least at the
 // time of this writing.
-RProc *compile(mrb_state *mrb, std::string_view filename) {
+std::expected<RProc *, Error> compile(mrb_state *mrb,
+                                      std::string_view filename) {
   if (filename.empty()) {
-    return nullptr;
+    return std::unexpected{Error::INVALID_ARGUMENT};
   }
 
   auto infile = fopen(filename.data(), "rb");
   if (infile == nullptr) {
     Log{ERROR} << "Could not open mruby file " << filename;
-    return nullptr;
+    return std::unexpected{Error::IO};
   }
   auto infile_d = defer([infile] { fclose(infile); });
 
   auto mrbc = mrb_ccontext_new(mrb);
   if (mrbc == nullptr) {
     Log{ERROR} << "mrb_context_new failed";
-    return nullptr;
+    return std::unexpected{Error::MRUBY};
   }
   auto mrbc_d = defer([mrb, mrbc] { mrb_ccontext_free(mrb, mrbc); });
 
   auto parser = mrb_parse_file(mrb, infile, nullptr);
   if (parser == nullptr) {
     Log{ERROR} << "mrb_parse_nstring failed";
-    return nullptr;
+    return std::unexpected{Error::MRUBY};
   }
   auto parser_d = defer([parser] { mrb_parser_free(parser); });
 
   if (parser->nerr != 0) {
     Log{ERROR} << "mruby parser detected parse error";
-    return nullptr;
+    return std::unexpected{Error::MRUBY};
   }
 
   auto proc = mrb_generate_code(mrb, parser);
   if (proc == nullptr) {
     Log{ERROR} << "mrb_generate_code failed";
-    return nullptr;
+    return std::unexpected{Error::MRUBY};
   }
 
   return proc;
 }
 
-std::unique_ptr<MRubyContext> create_mruby_context(std::string_view filename) {
+std::expected<std::unique_ptr<MRubyContext>, Error>
+create_mruby_context(std::string_view filename) {
   if (filename.empty()) {
     return std::make_unique<MRubyContext>(nullptr, mrb_nil_value(),
                                           mrb_nil_value());
@@ -188,29 +201,32 @@ std::unique_ptr<MRubyContext> create_mruby_context(std::string_view filename) {
   auto mrb = mrb_open();
   if (mrb == nullptr) {
     Log{ERROR} << "mrb_open failed";
-    return nullptr;
+    return std::unexpected{Error::MRUBY};
   }
 
   auto ai = mrb_gc_arena_save(mrb);
 
-  auto req_proc = compile(mrb, filename);
+  auto maybe_proc = compile(mrb, filename);
 
-  if (!req_proc) {
+  if (!maybe_proc) {
     mrb_gc_arena_restore(mrb, ai);
     Log{ERROR} << "Could not compile mruby code " << filename;
     mrb_close(mrb);
-    return nullptr;
+    return std::unexpected{maybe_proc.error()};
   }
 
+  auto proc = *maybe_proc;
   auto env = init_module(mrb);
 
-  auto app = instantiate_app(mrb, req_proc);
-  if (mrb_nil_p(app)) {
+  auto maybe_app = instantiate_app(mrb, proc);
+  if (!maybe_app) {
     mrb_gc_arena_restore(mrb, ai);
     Log{ERROR} << "Could not instantiate mruby app from " << filename;
     mrb_close(mrb);
-    return nullptr;
+    return std::unexpected{maybe_app.error()};
   }
+
+  auto app = std::move(*maybe_app);
 
   mrb_gc_arena_restore(mrb, ai);
 

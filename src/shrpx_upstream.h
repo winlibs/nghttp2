@@ -26,8 +26,12 @@
 #define SHRPX_UPSTREAM_H
 
 #include "shrpx.h"
+
+#include <expected>
+
 #include "shrpx_io_control.h"
 #include "memchunk.h"
+#include "errors.h"
 
 using namespace nghttp2;
 
@@ -40,43 +44,54 @@ class DownstreamConnection;
 class Upstream {
 public:
   virtual ~Upstream() {}
-  virtual int on_read() = 0;
-  virtual int on_write() = 0;
-  virtual int on_timeout(Downstream *downstream) { return 0; }
-  virtual int on_downstream_abort_request(Downstream *downstream,
-                                          unsigned int status_code) = 0;
+  virtual std::expected<void, Error> on_read() = 0;
+  virtual std::expected<void, Error> on_write() = 0;
+  virtual std::expected<void, Error> on_timeout(Downstream *downstream) {
+    return {};
+  }
+  virtual std::expected<void, Error>
+  on_downstream_abort_request(Downstream *downstream,
+                              unsigned int status_code) = 0;
   // Called when the current request is aborted without forwarding it
   // to backend, and it should be redirected to https URI.
-  virtual int
+  virtual std::expected<void, Error>
   on_downstream_abort_request_with_https_redirect(Downstream *downstream) = 0;
-  virtual int downstream_read(DownstreamConnection *dconn) = 0;
-  virtual int downstream_write(DownstreamConnection *dconn) = 0;
-  virtual int downstream_eof(DownstreamConnection *dconn) = 0;
-  virtual int downstream_error(DownstreamConnection *dconn, int events) = 0;
+  virtual std::expected<void, Error>
+  downstream_read(DownstreamConnection *dconn) = 0;
+  virtual std::expected<void, Error>
+  downstream_write(DownstreamConnection *dconn) = 0;
+  virtual std::expected<void, Error>
+  downstream_eof(DownstreamConnection *dconn) = 0;
+  virtual std::expected<void, Error>
+  downstream_error(DownstreamConnection *dconn, int events) = 0;
   virtual ClientHandler *get_client_handler() const = 0;
 
-  virtual int on_downstream_header_complete(Downstream *downstream) = 0;
-  virtual int on_downstream_body(Downstream *downstream,
-                                 std::span<const uint8_t> data, bool flush) = 0;
-  virtual int on_downstream_body_complete(Downstream *downstream) = 0;
+  virtual std::expected<void, Error>
+  on_downstream_header_complete(Downstream *downstream) = 0;
+  virtual std::expected<void, Error>
+  on_downstream_body(Downstream *downstream, std::span<const uint8_t> data,
+                     bool flush) = 0;
+  virtual std::expected<void, Error>
+  on_downstream_body_complete(Downstream *downstream) = 0;
 
   virtual void on_handler_delete() = 0;
   // Called when downstream connection for |downstream| is reset.
   // Currently this is only used by Http2Session.  If |no_retry| is
   // true, another connection attempt using new DownstreamConnection
   // is not allowed.
-  virtual int on_downstream_reset(Downstream *downstream, bool no_retry) = 0;
+  virtual std::expected<void, Error> on_downstream_reset(Downstream *downstream,
+                                                         bool no_retry) = 0;
 
   virtual void pause_read(IOCtrlReason reason) = 0;
-  virtual int resume_read(IOCtrlReason reason, Downstream *downstream,
-                          size_t consumed) = 0;
-  virtual int send_reply(Downstream *downstream,
-                         std::span<const uint8_t> body) = 0;
+  virtual std::expected<void, Error>
+  resume_read(IOCtrlReason reason, Downstream *downstream, size_t consumed) = 0;
+  virtual std::expected<void, Error>
+  send_reply(Downstream *downstream, std::span<const uint8_t> body) = 0;
 
   // Starts server push.  The |downstream| is an associated stream for
-  // the pushed resource.  This function returns 0 if it succeeds,
-  // otherwise -1.
-  virtual int initiate_push(Downstream *downstream, std::string_view uri) = 0;
+  // the pushed resource.
+  virtual std::expected<void, Error> initiate_push(Downstream *downstream,
+                                                   std::string_view uri) = 0;
 
   // Fills response data in |iov| whose capacity is |iovcnt|.  Returns
   // the number of iovs filled.
@@ -97,8 +112,7 @@ public:
                              int32_t promised_stream_id) = 0;
   // Called when PUSH_PROMISE frame was completely received in
   // downstream.  The associated downstream is given as |downstream|.
-  // This function returns 0 if it succeeds, or -1.
-  virtual int
+  virtual std::expected<void, Error>
   on_downstream_push_promise_complete(Downstream *downstream,
                                       Downstream *promised_downstream) = 0;
   // Returns true if server push is enabled in upstream connection.

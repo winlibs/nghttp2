@@ -106,8 +106,6 @@ void DNSTracker::update_entry(ResolverEntry &ent,
 }
 
 DNSResolverStatus DNSTracker::resolve(Address *result, DNSQuery *dnsq) {
-  int rv;
-
   auto it = ents_.find(dnsq->host);
 
   if (it == std::ranges::end(ents_)) {
@@ -119,8 +117,7 @@ DNSResolverStatus DNSTracker::resolve(Address *result, DNSQuery *dnsq) {
     auto host_copy = ImmutableString{dnsq->host};
     auto host = as_string_view(host_copy);
 
-    rv = resolv->resolve(host);
-    if (rv != 0) {
+    if (!resolv->resolve(host)) {
       if (log_enabled(INFO)) {
         Log{INFO} << "Name lookup failed for " << host;
       }
@@ -187,8 +184,7 @@ DNSResolverStatus DNSTracker::resolve(Address *result, DNSQuery *dnsq) {
     auto resolv = std::make_unique<DualDNSResolver>(loop_, family_);
     auto host = as_string_view(ent.host);
 
-    rv = resolv->resolve(host);
-    if (rv != 0) {
+    if (!resolv->resolve(host)) {
       if (log_enabled(INFO)) {
         Log{INFO} << "Name lookup failed for " << host;
       }

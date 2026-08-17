@@ -44,14 +44,13 @@
 #include <vector>
 #include <string>
 #include <algorithm>
-#include <sstream>
 #include <memory>
 #include <chrono>
 #include <unordered_map>
 #include <random>
-#include <optional>
 #include <ranges>
 #include <bit>
+#include <expected>
 
 #ifdef HAVE_LIBEV
 #  include <ev.h>
@@ -62,6 +61,7 @@
 #include "template.h"
 #include "network.h"
 #include "allocator.h"
+#include "errors.h"
 
 using namespace std::literals;
 
@@ -282,13 +282,13 @@ template <std::forward_iterator I>
 constexpr std::string percent_decode(I first, I last) {
   std::string result;
 
-  result.resize(as_unsigned(std::ranges::distance(first, last)));
-
-  auto p = percent_decode(std::move(first), std::move(last),
-                          std::ranges::begin(result));
-
-  result.resize(
-    as_unsigned(std::ranges::distance(std::ranges::begin(result), p)));
+  result.resize_and_overwrite(
+    as_unsigned(std::ranges::distance(first, last)),
+    [first = std::move(first), last = std::move(last)](auto p,
+                                                       auto len) mutable {
+      return std::ranges::distance(
+        p, percent_decode(std::move(first), std::move(last), p));
+    });
 
   return result;
 }
@@ -386,7 +386,7 @@ constexpr O format_hex_uint8(uint8_t b, O result) {
 #  pragma GCC diagnostic ignored "-Wsign-conversion"
 #endif // __GNUC__
   *result++ = LOWER_XDIGITS[b >> 4];
-  *result++ = LOWER_XDIGITS[b & 0xf];
+  *result++ = LOWER_XDIGITS[b & 0xF];
 #ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif // __GNUC__
@@ -442,9 +442,10 @@ requires(!std::is_array_v<std::remove_cvref_t<R>> &&
 constexpr std::string format_hex(R &&r) {
   std::string res;
 
-  res.resize(as_unsigned(std::ranges::distance(r) * 2));
-
-  format_hex(std::forward<R>(r), std::ranges::begin(res));
+  res.resize_and_overwrite(as_unsigned(std::ranges::distance(r) * 2),
+                           [&r](auto p, auto len) {
+                             return std::ranges::distance(p, format_hex(r, p));
+                           });
 
   return res;
 }
@@ -485,7 +486,7 @@ constexpr O format_upper_hex_uint8(uint8_t b, O result) {
 #  pragma GCC diagnostic ignored "-Wsign-conversion"
 #endif // __GNUC__
   *result++ = UPPER_XDIGITS[b >> 4];
-  *result++ = UPPER_XDIGITS[b & 0xf];
+  *result++ = UPPER_XDIGITS[b & 0xF];
 #ifdef __GNUC__
 #  pragma GCC diagnostic pop
 #endif // __GNUC__
@@ -595,12 +596,7 @@ constexpr size_t percent_encode_tokenlen(R &&r) noexcept {
   return n;
 }
 
-time_t parse_http_date(std::string_view s);
-
-// Parses time formatted as "MMM DD HH:MM:SS YYYY [GMT]" (e.g., Feb 3
-// 00:55:52 2015 GMT), which is specifically used by OpenSSL
-// ASN1_TIME_print().
-time_t parse_openssl_asn1_time_print(std::string_view s);
+std::expected<time_t, Error> parse_http_date(std::string_view s);
 
 inline constexpr auto upcase_tbl = [] {
   std::array<char, 256> tbl;
@@ -807,9 +803,9 @@ template <std::unsigned_integral T> constexpr std::string utos(T n) {
 
   std::string res;
 
-  res.resize(count_digit(n));
-
-  utos(n, std::ranges::begin(res));
+  res.resize_and_overwrite(count_digit(n), [n](auto p, auto len) {
+    return std::ranges::distance(p, utos(n, p));
+  });
 
   return res;
 }
@@ -888,7 +884,7 @@ struct CompactHexFormatter {
       assert(p != end);
 
       if (*(p - 1) < 16) {
-        *result++ = static_cast<result_type>(UPPER_XDIGITS[(*--p) & 0xf]);
+        *result++ = static_cast<result_type>(UPPER_XDIGITS[(*--p) & 0xF]);
       }
 
       for (; p != end; --p) {
@@ -902,7 +898,7 @@ struct CompactHexFormatter {
         ;
 
       if (*p < 16) {
-        *result++ = static_cast<result_type>(UPPER_XDIGITS[(*p++) & 0xf]);
+        *result++ = static_cast<result_type>(UPPER_XDIGITS[(*p++) & 0xF]);
       }
 
       for (; p != end; ++p) {
@@ -944,9 +940,6 @@ uint16_t get_default_port(const char *uri, const urlparse_url &u);
 
 bool porteq(const char *uri1, const urlparse_url &u1, const char *uri2,
             const urlparse_url &u2);
-
-void write_uri_field(std::ostream &o, const char *uri, const urlparse_url &u,
-                     urlparse_url_fields field);
 
 bool numeric_host(const char *hostname);
 
@@ -1014,12 +1007,20 @@ std::vector<std::string> parse_config_str_list(std::string_view s,
 
 // Parses delimited strings in |s| and returns Substrings in |s|
 // delimited by |delim|.  The any white spaces around substring are
-// treated as a part of substring.
+// treated as a part of substring if |delim| is not a white space.  If
+// |s| is an empty string, this function returns an empty vector.
 std::vector<std::string_view> split_str(std::string_view s, char delim);
 
+// Behaves like split_str, but this variant allocates new string using
+// |balloc|.  The each element of the returned container is a view
+// over the allocated string.
+std::vector<std::string_view> split_str(BlockAllocator &balloc,
+                                        std::string_view s, char delim);
+
 // Behaves like split_str, but this variant splits at most |n| - 1
-// times and returns at most |n| sub-strings.  If |n| is zero, it
-// falls back to split_str.
+// times and returns at most |n| sub-strings.  |n| must be greater
+// than zero.  If |s| is an empty string, this function returns an
+// empty vector.
 std::vector<std::string_view> split_str(std::string_view s, char delim,
                                         size_t n);
 
@@ -1028,19 +1029,19 @@ std::vector<std::string_view> split_str(std::string_view s, char delim,
 // must be at least 27 bytes, including terminal NULL byte.  This
 // function returns std::string_view wrapping the buffer pointed by |out|,
 // and this string is terminated by NULL.
-std::string_view
-format_common_log(char *out, const std::chrono::system_clock::time_point &tp);
+std::string_view format_common_log(char *out,
+                                   std::chrono::system_clock::time_point tp);
 
 #ifdef HAVE_STD_CHRONO_TIME_ZONE
 // Works like above but with a given time zone.
-std::string_view
-format_common_log(char *out, const std::chrono::system_clock::time_point &tp,
-                  const std::chrono::time_zone *tz);
+std::string_view format_common_log(char *out,
+                                   std::chrono::system_clock::time_point tp,
+                                   const std::chrono::time_zone *tz);
 #endif // defined(HAVE_STD_CHRONO_TIME_ZONE)
 
 // Returns given time |tp| in ISO 8601 format (e.g.,
 // 2014-11-15T12:58:24.741Z or 2014-11-15T12:58:24.741+09:00).
-std::string format_iso8601(const std::chrono::system_clock::time_point &tp);
+std::string format_iso8601(std::chrono::system_clock::time_point tp);
 
 // Writes given time |tp| in ISO 8601 format (e.g.,
 // 2014-11-15T12:58:24.741Z or 2014-11-15T12:58:24.741+09:00) in
@@ -1048,13 +1049,13 @@ std::string format_iso8601(const std::chrono::system_clock::time_point &tp);
 // including terminal NULL byte.  This function returns std::string_view
 // wrapping the buffer pointed by |out|, and this string is terminated
 // by NULL.
-std::string_view
-format_iso8601(char *out, const std::chrono::system_clock::time_point &tp);
+std::string_view format_iso8601(char *out,
+                                std::chrono::system_clock::time_point tp);
 
 #ifdef HAVE_STD_CHRONO_TIME_ZONE
 // Works like above but with a given time zone.
 std::string_view format_iso8601(char *out,
-                                const std::chrono::system_clock::time_point &tp,
+                                std::chrono::system_clock::time_point tp,
                                 const std::chrono::time_zone *tz);
 #endif // defined(HAVE_STD_CHRONO_TIME_ZONE)
 
@@ -1063,28 +1064,27 @@ std::string_view format_iso8601(char *out,
 // by |out|.  The buffer must be at least 25 bytes, including terminal
 // NULL byte.  This function returns std::string_view wrapping the buffer
 // pointed by |out|, and this string is terminated by NULL.
-std::string_view
-format_iso8601_basic(char *out,
-                     const std::chrono::system_clock::time_point &tp);
+std::string_view format_iso8601_basic(char *out,
+                                      std::chrono::system_clock::time_point tp);
 
 #ifdef HAVE_STD_CHRONO_TIME_ZONE
 // Works like above but with a given time zone.
-std::string_view
-format_iso8601_basic(char *out, const std::chrono::system_clock::time_point &tp,
-                     const std::chrono::time_zone *tz);
+std::string_view format_iso8601_basic(char *out,
+                                      std::chrono::system_clock::time_point tp,
+                                      const std::chrono::time_zone *tz);
 #endif // defined(HAVE_STD_CHRONO_TIME_ZONE)
 
 // Returns given time |tp| in HTTP Date format (e.g., Mon, 10 Oct 2016
 // 10:25:58 GMT)
-std::string format_http_date(const std::chrono::system_clock::time_point &tp);
+std::string format_http_date(std::chrono::system_clock::time_point tp);
 
 // Writes given time |tp| in HTTP Date format (e.g., Mon, 10 Oct 2016
 // 10:25:58 GMT) in buffer pointed by |out|.  The buffer must be at
 // least 30 bytes, including terminal NULL byte.  This function
 // returns std::string_view wrapping the buffer pointed by |out|, and this
 // string is terminated by NULL.
-std::string_view
-format_http_date(char *out, const std::chrono::system_clock::time_point &tp);
+std::string_view format_http_date(char *out,
+                                  std::chrono::system_clock::time_point tp);
 
 // Return the system precision of the template parameter |Clock| as
 // a nanosecond value of type |Rep|
@@ -1109,16 +1109,17 @@ int make_socket_closeonexec(int fd);
 int make_socket_nonblocking(int fd);
 int make_socket_nodelay(int fd);
 
-int create_nonblock_socket(int family);
-int create_nonblock_udp_socket(int family);
+std::expected<int, Error> create_nonblock_socket(int family);
+std::expected<int, Error> create_nonblock_udp_socket(int family);
 
-int bind_any_addr_udp(int fd, int family);
+std::expected<void, Error> bind_any_addr_udp(int fd, int family);
 
 bool check_socket_connected(int fd);
 
 // Returns the error code (errno) by inspecting SO_ERROR of given
-// |fd|.  This function returns the error code if it succeeds, or -1.
-// Returning 0 means no error.
+// |fd|.  This function returns the error code if it succeeds.
+// Returning 0 means no error.  If getsockopt fails, this function
+// returns errno of its call.
 int get_socket_error(int fd);
 
 // Returns true if |host| is IPv6 numeric address (e.g., ::1)
@@ -1127,19 +1128,21 @@ bool ipv6_numeric_addr(const char *host);
 // Parses |s| as unsigned integer and returns the parsed integer.
 // Additionally, if |s| ends with 'k', 'm', 'g' and its upper case
 // characters, multiply the integer by 1024, 1024 * 1024 and 1024 *
-// 1024 respectively.  If there is an error, returns no value.
-std::optional<int64_t> parse_uint_with_unit(std::string_view s);
+// 1024 respectively.  The maximum value that this function can
+// recognize is std::numeric_limits<int64_t>::max().
+std::expected<uint64_t, Error> parse_uint_with_unit(std::string_view s);
 
-// Parses |s| as unsigned integer and returns the parsed integer..
-std::optional<int64_t> parse_uint(std::string_view s);
+// Parses |s| as unsigned integer and returns the parsed integer.  The
+// maximum value that this function can recognize is
+// std::numeric_limits<int64_t>::max().
+std::expected<uint64_t, Error> parse_uint(std::string_view s);
 
 // Parses |s| as unsigned integer and returns the parsed integer
 // casted to double.  If |s| ends with "s", the parsed value's unit is
 // a second.  If |s| ends with "ms", the unit is millisecond.
 // Similarly, it also supports 'm' and 'h' for minutes and hours
-// respectively.  If none of them are given, the unit is second.  This
-// function returns no value if error occurs.
-std::optional<double> parse_duration_with_unit(std::string_view s);
+// respectively.  If none of them are given, the unit is second.
+std::expected<double, Error> parse_duration_with_unit(std::string_view s);
 
 // Returns string representation of time duration |t|.  If t has
 // fractional part (at least more than or equal to 1e-3), |t| is
@@ -1151,7 +1154,7 @@ std::string duration_str(double t);
 // unit after the formatting.  The available units are s, ms and us.
 // The unit which is equal to or less than |t| is used and 2
 // fractional digits follow.
-std::string format_duration(const std::chrono::microseconds &u);
+std::string format_duration(std::chrono::microseconds u);
 
 // Just like above, but this takes |t| as seconds.
 std::string format_duration(double t);
@@ -1225,9 +1228,8 @@ std::string_view make_http_hostport(std::string_view host, uint16_t port,
 }
 
 // hexdump dumps |data| of length |datalen| in the format similar to
-// hexdump(1) with -C option.  This function returns 0 if it succeeds,
-// or -1.
-int hexdump(FILE *out, const void *data, size_t datalen);
+// hexdump(1) with -C option.
+std::expected<void, Error> hexdump(FILE *out, const void *data, size_t datalen);
 
 // Copies 2 byte unsigned integer |n| in host byte order to |buf| in
 // network byte order.
@@ -1250,10 +1252,9 @@ uint32_t get_uint32(const uint8_t *data);
 uint64_t get_uint64(const uint8_t *data);
 
 // Reads mime types file (see /etc/mime.types), and stores extension
-// -> MIME type map in |res|.  This function returns 0 if it succeeds,
-// or -1.
-int read_mime_types(std::unordered_map<std::string, std::string> &res,
-                    const char *filename);
+// -> MIME type map in |res|.
+std::expected<std::unordered_map<std::string, std::string>, Error>
+read_mime_types(const char *filename);
 
 // Fills random alpha and digit byte to the range [|first|, |last|).
 // Returns the one beyond the |last|.
@@ -1314,25 +1315,37 @@ double int_pow(double x, size_t y);
 
 uint32_t hash32(std::string_view s);
 
-// Computes SHA-256 of |s|, and stores it in |buf|.  This function
-// returns 0 if it succeeds, or -1.
-int sha256(uint8_t *buf, std::string_view s);
+// Computes SHA-256 of |s|, and stores it in |buf|.
+std::expected<void, Error> sha256(std::span<uint8_t, 32> dest,
+                                  std::span<const uint8_t> s);
 
-// Computes SHA-1 of |s|, and stores it in |buf|.  This function
-// returns 0 if it succeeds, or -1.
-int sha1(uint8_t *buf, std::string_view s);
+template <std::ranges::contiguous_range R>
+requires(std::ranges::sized_range<R> &&
+         !std::is_convertible_v<R, std::span<const uint8_t>>)
+std::expected<void, Error> sha256(std::span<uint8_t, 32> dest, R &&r) {
+  return sha256(dest, as_uint8_span(std::span{r}));
+}
 
-// Returns host from |hostport|.  If host cannot be found in
-// |hostport|, returns empty string.  The returned string might not be
+// Computes SHA-1 of |s|, and stores it in |buf|.
+std::expected<void, Error> sha1(std::span<uint8_t, 20> dest,
+                                std::span<const uint8_t> s);
+
+template <std::ranges::contiguous_range R>
+requires(std::ranges::sized_range<R> &&
+         !std::is_convertible_v<R, std::span<const uint8_t>>)
+std::expected<void, Error> sha1(std::span<uint8_t, 20> dest, R &&r) {
+  return sha1(dest, as_uint8_span(std::span{r}));
+}
+
+// Returns host from |hostport|.  The returned string might not be
 // NULL-terminated.
-std::string_view extract_host(std::string_view hostport);
+std::expected<std::string_view, Error> extract_host(std::string_view hostport);
 
 // split_hostport splits host and port in |hostport|.  Unlike
 // extract_host, square brackets enclosing host name is stripped.  If
 // port is not available, it returns empty string in the second
-// string.  The returned string might not be NULL-terminated.  On any
-// error, it returns a pair which has empty strings.
-std::pair<std::string_view, std::string_view>
+// string.  The returned string might not be NULL-terminated.
+std::expected<std::pair<std::string_view, std::string_view>, Error>
 split_hostport(std::string_view hostport);
 
 // Returns new std::mt19937 object.
@@ -1340,7 +1353,7 @@ std::mt19937 make_mt19937();
 
 // daemonize calls daemon(3).  If __APPLE__ is defined, it implements
 // daemon() using fork().
-int daemonize(int nochdir, int noclose);
+std::expected<void, Error> daemonize(int nochdir, int noclose);
 
 // Returns |s| from which trailing white spaces (SPC or HTAB) are
 // removed.  If any white spaces are removed, new string is allocated
@@ -1362,8 +1375,12 @@ constexpr bool contains(I first, I last, const T &value) {
   return std::ranges::find(std::move(first), last, value) != last;
 }
 
+// stream_error returns true if |f| is in error state.  EOF is not
+// considered as an error.
+bool stream_error(const std::ifstream &f);
+
 #ifdef ENABLE_HTTP3
-int msghdr_get_local_addr(Address &dest, msghdr *msg, int family);
+std::expected<Address, Error> msghdr_get_local_addr(msghdr *msg, int family);
 
 uint8_t msghdr_get_ecn(msghdr *msg, int family);
 

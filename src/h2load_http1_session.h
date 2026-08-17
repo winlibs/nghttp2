@@ -40,19 +40,19 @@ public:
   Http1Session(Client *client);
   ~Http1Session() override;
   void on_connect() override;
-  int submit_request() override;
-  int on_read(std::span<const uint8_t> data) override;
-  int on_write() override;
+  std::expected<void, Error> submit_request() override;
+  std::expected<void, Error> on_read(std::span<const uint8_t> data) override;
+  std::expected<void, Error> on_write() override;
   void terminate() override;
   size_t max_concurrent_streams() override;
   Client *get_client();
-  int32_t stream_req_counter_;
-  int32_t stream_resp_counter_;
+  int32_t stream_req_counter_{1};
+  int32_t stream_resp_counter_{1};
 
 private:
   Client *client_;
-  llhttp_t htp_;
-  bool complete_;
+  llhttp_t htp_{};
+  bool complete_{};
 };
 
 } // namespace h2load

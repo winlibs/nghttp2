@@ -35,19 +35,25 @@ class HealthMonitorDownstreamConnection : public DownstreamConnection {
 public:
   HealthMonitorDownstreamConnection();
   ~HealthMonitorDownstreamConnection() override;
-  int attach_downstream(Downstream *downstream) override;
-  void detach_downstream(Downstream *downstream) override;
+  std::expected<void, Error> attach_downstream(Downstream *downstream) override;
+  std::expected<void, Error> detach_downstream(Downstream *downstream) override;
 
-  int push_request_headers() override;
-  int push_upload_data_chunk(std::span<const uint8_t> data) override;
-  int end_upload_data() override;
+  std::expected<void, Error> push_request_headers() override;
+  std::expected<void, Error>
+  push_upload_data_chunk(std::span<const uint8_t> data) override {
+    return {};
+  }
+  std::expected<void, Error> end_upload_data() override;
 
   void pause_read(IOCtrlReason reason) override;
-  int resume_read(IOCtrlReason reason, size_t consumed) override;
+  std::expected<void, Error> resume_read(IOCtrlReason reason,
+                                         size_t consumed) override {
+    return {};
+  }
   void force_resume_read() override;
 
-  int on_read() override;
-  int on_write() override;
+  std::expected<void, Error> on_read() override { return {}; }
+  std::expected<void, Error> on_write() override { return {}; }
 
   void on_upstream_change(Upstream *upstream) override;
 

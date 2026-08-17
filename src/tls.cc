@@ -28,7 +28,6 @@
 #include <cstring>
 #include <vector>
 #include <mutex>
-#include <iostream>
 #include <fstream>
 
 #ifdef HAVE_LIBBROTLI
@@ -125,14 +124,15 @@ bool check_http2_requirement(SSL *ssl) {
   return check_http2_tls_version(ssl) && !check_http2_cipher_block_list(ssl);
 }
 
-int ssl_ctx_set_proto_versions(SSL_CTX *ssl_ctx, int min, int max) {
+std::expected<void, Error> ssl_ctx_set_proto_versions(SSL_CTX *ssl_ctx, int min,
+                                                      int max) {
   if (SSL_CTX_set_min_proto_version(
         ssl_ctx, static_cast<nghttp2_ssl_proto_version_type>(min)) != 1 ||
       SSL_CTX_set_max_proto_version(
         ssl_ctx, static_cast<nghttp2_ssl_proto_version_type>(max)) != 1) {
-    return -1;
+    return std::unexpected{Error::CRYPTO};
   }
-  return 0;
+  return {};
 }
 
 #if defined(NGHTTP2_OPENSSL_IS_BORINGSSL) && defined(HAVE_LIBBROTLI)
@@ -201,27 +201,29 @@ void keylog_callback(const SSL *ssl, const char *line) {
 }
 } // namespace
 
-int setup_keylog_callback(SSL_CTX *ssl_ctx) {
+std::expected<void, Error> setup_keylog_callback(SSL_CTX *ssl_ctx) {
   auto keylog_filename = getenv("SSLKEYLOGFILE");
   if (!keylog_filename) {
-    return 0;
+    return {};
   }
 
   keylog_file.open(keylog_filename, std::ios_base::app);
   if (!keylog_file) {
-    return -1;
+    return std::unexpected{Error::IO};
   }
 
   SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
 
-  return 0;
+  return {};
 }
 #else  // !defined(NGHTTP2_GENUINE_OPENSSL) &&
        // !defined(NGHTTP2_OPENSSL_IS_BORINGSSL) &&
        // !defined(NGHTTP2_OPENSSL_IS_LIBRESSL) &&
        // (!defined(NGHTTP2_OPENSSL_IS_WOLFSSL) ||
        // !defined(HAVE_SECRET_CALLBACK))
-int setup_keylog_callback(SSL_CTX *ssl_ctx) { return 0; }
+std::expected<void, Error> setup_keylog_callback(SSL_CTX *ssl_ctx) {
+  return {};
+}
 #endif // !defined(NGHTTP2_GENUINE_OPENSSL) &&
        // !defined(NGHTTP2_OPENSSL_IS_BORINGSSL) &&
        // !defined(NGHTTP2_OPENSSL_IS_LIBRESSL) &&

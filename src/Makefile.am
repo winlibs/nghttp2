@@ -95,7 +95,7 @@ HELPER_OBJECTS = util.cc \
 	http2.cc timegm.c app_helper.cc nghttp2_gzip.c network.cc
 HELPER_HFILES = util.h \
 	http2.h timegm.h app_helper.h nghttp2_config.h \
-	nghttp2_gzip.h network.h
+	nghttp2_gzip.h network.h errors.h
 
 HTML_PARSER_OBJECTS =
 HTML_PARSER_HFILES = HtmlParser.h
@@ -121,7 +121,8 @@ h2load_SOURCES = util.cc util.h \
 	h2load_session.h \
 	h2load_http2_session.cc h2load_http2_session.h \
 	h2load_http1_session.cc h2load_http1_session.h \
-	network.cc network.h
+	network.cc network.h \
+	errors.h
 
 if ENABLE_HTTP3
 h2load_SOURCES += \
@@ -175,6 +176,7 @@ NGHTTPX_SRCS = \
 	shrpx_dual_dns_resolver.cc shrpx_dual_dns_resolver.h \
 	shrpx_dns_tracker.cc shrpx_dns_tracker.h \
 	buffer.h memchunk.h template.h allocator.h \
+	errors.h \
 	xsi_strerror.c xsi_strerror.h
 
 if HAVE_MRUBY
@@ -206,7 +208,9 @@ nghttpx_LDADD = libnghttpx.a ${LDADD}
 
 if HAVE_MRUBY
 libnghttpx_a_CPPFLAGS += \
-	-I${top_srcdir}/third-party/mruby/include @LIBMRUBY_CFLAGS@
+	-I${top_srcdir}/third-party/mruby/include \
+	-I${top_builddir}/third-party/mruby/build/include \
+	@LIBMRUBY_CFLAGS@
 nghttpx_LDADD += -L${top_builddir}/third-party/mruby/build/lib @LIBMRUBY_LIBS@
 endif # HAVE_MRUBY
 
@@ -245,7 +249,9 @@ nghttpx_unittest_LDADD = libnghttpx.a ${LDADD} @TESTLDADD@
 
 if HAVE_MRUBY
 nghttpx_unittest_CPPFLAGS += \
-	-I${top_srcdir}/third-party/mruby/include @LIBMRUBY_CFLAGS@
+	-I${top_srcdir}/third-party/mruby/include \
+	-I${top_builddir}/third-party/mruby/build/include \
+	@LIBMRUBY_CFLAGS@
 nghttpx_unittest_LDADD += \
 	-L${top_builddir}/third-party/mruby/build/lib @LIBMRUBY_LIBS@
 endif # HAVE_MRUBY

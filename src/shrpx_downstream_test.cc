@@ -24,8 +24,6 @@
  */
 #include "shrpx_downstream_test.h"
 
-#include <iostream>
-
 #include "munitxx.h"
 
 #include "shrpx_downstream.h"
@@ -48,7 +46,8 @@ const MunitTest tests[]{
 } // namespace
 
 const MunitSuite downstream_suite{
-  "/downstream", tests, nullptr, 1, MUNIT_SUITE_OPTION_NONE,
+  .prefix = "/downstream",
+  .tests = tests,
 };
 
 void test_downstream_field_store_append_last_header(void) {
@@ -206,11 +205,11 @@ void test_downstream_find_affinity_cookie(void) {
 
   aff = d.find_affinity_cookie("lb"sv);
 
-  assert_uint32(0xdeadbeef, ==, aff);
+  assert_uint32(0xDEADBEEF, ==, aff);
 
   aff = d.find_affinity_cookie("LB"sv);
 
-  assert_uint32(0xf1f2f3f4, ==, aff);
+  assert_uint32(0xF1F2F3F4, ==, aff);
 
   aff = d.find_affinity_cookie("short"sv);
 

@@ -90,11 +90,21 @@ void shutdowncb(struct ev_loop *loop, ev_timer *w, int revents) {
 } // namespace
 
 namespace {
+void write_ratecb(struct ev_loop *loop, ev_timer *w, int revents) {
+  auto handler = static_cast<ClientHandler *>(w->data);
+
+  if (!handler->on_write_rate_timeout()) {
+    delete handler;
+  }
+}
+} // namespace
+
+namespace {
 void readcb(struct ev_loop *loop, ev_io *w, int revents) {
   auto conn = static_cast<Connection *>(w->data);
   auto handler = static_cast<ClientHandler *>(conn->data);
 
-  if (handler->do_read() != 0) {
+  if (!handler->do_read()) {
     delete handler;
     return;
   }
@@ -106,57 +116,57 @@ void writecb(struct ev_loop *loop, ev_io *w, int revents) {
   auto conn = static_cast<Connection *>(w->data);
   auto handler = static_cast<ClientHandler *>(conn->data);
 
-  if (handler->do_write() != 0) {
+  if (!handler->do_write()) {
     delete handler;
     return;
   }
 }
 } // namespace
 
-int ClientHandler::noop() { return 0; }
-
-int ClientHandler::read_clear() {
+std::expected<void, Error> ClientHandler::read_clear() {
   auto should_break = false;
   rb_.ensure_chunk();
   for (;;) {
-    if (rb_.rleft() && on_read() != 0) {
-      return -1;
+    if (rb_.rleft()) {
+      if (auto rv = on_read(); !rv) {
+        return rv;
+      }
     }
     if (rb_.rleft() == 0) {
       rb_.reset();
     } else if (rb_.wleft() == 0) {
       conn_.rlimit.stopw();
-      return 0;
+      return {};
     }
 
     if (!ev_is_active(&conn_.rev) || should_break) {
-      return 0;
+      return {};
     }
 
-    auto nread = conn_.read_clear(rb_.wbuffer());
+    auto maybe_data = conn_.read_clear(rb_.wbuffer());
+    if (!maybe_data) {
+      return std::unexpected{maybe_data.error()};
+    }
 
-    if (nread == 0) {
+    auto data = *maybe_data;
+    if (data.empty()) {
       if (rb_.rleft() == 0) {
         rb_.release_chunk();
       }
-      return 0;
+      return {};
     }
 
-    if (nread < 0) {
-      return -1;
-    }
-
-    rb_.write(as_unsigned(nread));
+    rb_.write(data.size());
     should_break = true;
   }
 }
 
-int ClientHandler::write_clear() {
+std::expected<void, Error> ClientHandler::write_clear() {
   std::array<iovec, 2> iovbuf;
 
   for (;;) {
-    if (on_write() != 0) {
-      return -1;
+    if (auto rv = on_write(); !rv) {
+      return rv;
     }
 
     auto iov = upstream_->response_riovec(iovbuf);
@@ -164,82 +174,85 @@ int ClientHandler::write_clear() {
       break;
     }
 
-    auto nwrite = conn_.writev_clear(iov);
-    if (nwrite < 0) {
-      return -1;
+    auto maybe_nwrite = conn_.writev_clear(iov);
+    if (!maybe_nwrite) {
+      return std::unexpected{maybe_nwrite.error()};
     }
 
+    auto nwrite = *maybe_nwrite;
     if (nwrite == 0) {
-      return 0;
+      return {};
     }
 
-    upstream_->response_drain(as_unsigned(nwrite));
+    upstream_->response_drain(nwrite);
   }
 
   conn_.wlimit.stopw();
   ev_timer_stop(conn_.loop, &conn_.wt);
 
-  return 0;
+  return {};
 }
 
-int ClientHandler::proxy_protocol_peek_clear() {
+std::expected<void, Error> ClientHandler::proxy_protocol_peek_clear() {
   rb_.ensure_chunk();
 
   assert(rb_.rleft() == 0);
 
-  auto nread = conn_.peek_clear(rb_.wbuffer());
-  if (nread < 0) {
-    return -1;
+  auto maybe_data = conn_.peek_clear(rb_.wbuffer());
+  if (!maybe_data) {
+    return std::unexpected{maybe_data.error()};
   }
-  if (nread == 0) {
-    return 0;
+
+  auto data = *maybe_data;
+  if (data.empty()) {
+    return {};
   }
 
   if (log_enabled(INFO)) {
-    Log{INFO, this} << "PROXY-protocol: Peek " << nread << " bytes from socket";
+    Log{INFO, this} << "PROXY-protocol: Peek " << data.size()
+                    << " bytes from socket";
   }
 
-  rb_.write(as_unsigned(nread));
+  rb_.write(data.size());
 
-  if (on_read() != 0) {
-    return -1;
+  if (auto rv = on_read(); !rv) {
+    return rv;
   }
 
   rb_.reset();
 
-  return 0;
+  return {};
 }
 
-int ClientHandler::tls_handshake() {
+std::expected<void, Error> ClientHandler::tls_handshake() {
   ev_timer_again(conn_.loop, &conn_.rt);
 
   ERR_clear_error();
 
   auto rv = conn_.tls_handshake();
+  if (!rv) {
+    if (rv.error() == Error::TLS_HANDSHAKE_INPROGRESS) {
+      return {};
+    }
 
-  if (rv == SHRPX_ERR_INPROGRESS) {
-    return 0;
-  }
-
-  if (rv < 0) {
-    return -1;
+    return rv;
   }
 
   if (log_enabled(INFO)) {
     Log{INFO, this} << "SSL/TLS handshake completed";
   }
 
-  if (validate_next_proto() != 0) {
-    return -1;
+  if (auto rv = validate_next_proto(); !rv) {
+    return rv;
   }
 
   read_ = &ClientHandler::read_tls;
   write_ = &ClientHandler::write_tls;
 
-  return 0;
+  return {};
 }
 
-int ClientHandler::read_tls() {
+std::expected<void, Error> ClientHandler::read_tls() {
   auto should_break = false;
 
   ERR_clear_error();
@@ -248,44 +261,46 @@ int ClientHandler::read_tls() {
 
   for (;;) {
     // we should process buffered data first before we read EOF.
-    if (rb_.rleft() && on_read() != 0) {
-      return -1;
+    if (rb_.rleft()) {
+      if (auto rv = on_read(); !rv) {
+        return rv;
+      }
     }
     if (rb_.rleft() == 0) {
       rb_.reset();
     } else if (rb_.wleft() == 0) {
       conn_.rlimit.stopw();
-      return 0;
+      return {};
     }
 
     if (!ev_is_active(&conn_.rev) || should_break) {
-      return 0;
+      return {};
     }
 
-    auto nread = conn_.read_tls(rb_.wbuffer());
+    auto maybe_data = conn_.read_tls(rb_.wbuffer());
+    if (!maybe_data) {
+      return std::unexpected{maybe_data.error()};
+    }
 
-    if (nread == 0) {
+    auto data = *maybe_data;
+    if (data.empty()) {
       if (rb_.rleft() == 0) {
         rb_.release_chunk();
       }
-      return 0;
+      return {};
     }
 
-    if (nread < 0) {
-      return -1;
-    }
-
-    rb_.write(as_unsigned(nread));
+    rb_.write(data.size());
     should_break = true;
   }
 }
 
-int ClientHandler::write_tls() {
+std::expected<void, Error> ClientHandler::write_tls() {
   ERR_clear_error();
 
   for (;;) {
-    if (on_write() != 0) {
-      return -1;
+    if (auto rv = on_write(); !rv) {
+      return rv;
     }
 
     auto data = upstream_->response_peek();
@@ -293,16 +308,17 @@ int ClientHandler::write_tls() {
       break;
     }
 
-    auto nwrite = conn_.write_tls(data);
-    if (nwrite < 0) {
-      return -1;
+    auto maybe_nwrite = conn_.write_tls(data);
+    if (!maybe_nwrite) {
+      return std::unexpected{maybe_nwrite.error()};
     }
 
+    auto nwrite = *maybe_nwrite;
     if (nwrite == 0) {
-      return 0;
+      return {};
     }
 
-    upstream_->response_drain(as_unsigned(nwrite));
+    upstream_->response_drain(nwrite);
   }
 
   conn_.start_tls_write_idle();
@@ -310,15 +326,14 @@ int ClientHandler::write_tls() {
   conn_.wlimit.stopw();
   ev_timer_stop(conn_.loop, &conn_.wt);
 
-  return 0;
+  return {};
 }
 
 #ifdef ENABLE_HTTP3
-int ClientHandler::read_quic(const UpstreamAddr *faddr,
-                             const Address &remote_addr,
-                             const Address &local_addr,
-                             const ngtcp2_pkt_info &pi,
-                             std::span<const uint8_t> data) {
+std::expected<void, Error>
+ClientHandler::read_quic(const UpstreamAddr *faddr, const Address &remote_addr,
+                         const Address &local_addr, const ngtcp2_pkt_info &pi,
+                         std::span<const uint8_t> data) {
   // Rate limiting is implemented by dropping an incoming packet.
   auto &rlimit = conn_.rlimit;
 
@@ -328,7 +343,7 @@ int ClientHandler::read_quic(const UpstreamAddr *faddr,
                       << " bytes due to rate limiting";
     }
 
-    return 0;
+    return {};
   }
 
   rlimit.drain(data.size());
@@ -338,33 +353,30 @@ int ClientHandler::read_quic(const UpstreamAddr *faddr,
   return upstream->on_read(faddr, remote_addr, local_addr, pi, data);
 }
 
-int ClientHandler::write_quic() { return upstream_->on_write(); }
+std::expected<void, Error> ClientHandler::write_quic() {
+  return upstream_->on_write();
+}
 #endif // defined(ENABLE_HTTP3)
 
-int ClientHandler::upstream_noop() { return 0; }
-
-int ClientHandler::upstream_read() {
+std::expected<void, Error> ClientHandler::upstream_read() {
   assert(upstream_);
-  if (upstream_->on_read() != 0) {
-    return -1;
-  }
-  return 0;
+  return upstream_->on_read();
 }
 
-int ClientHandler::upstream_write() {
+std::expected<void, Error> ClientHandler::upstream_write() {
   assert(upstream_);
-  if (upstream_->on_write() != 0) {
-    return -1;
+  if (auto rv = upstream_->on_write(); !rv) {
+    return rv;
   }
 
   if (get_should_close_after_write() && upstream_->response_empty()) {
-    return -1;
+    return std::unexpected{Error::DONE};
   }
 
-  return 0;
+  return {};
 }
 
-int ClientHandler::upstream_http2_connhd_read() {
+std::expected<void, Error> ClientHandler::upstream_http2_connhd_read() {
   auto nread = std::min(left_connhd_len_, rb_.rleft());
   if (memcmp(&NGHTTP2_CLIENT_MAGIC[NGHTTP2_CLIENT_MAGIC_LEN - left_connhd_len_],
              rb_.pos(), nread) != 0) {
@@ -373,7 +385,7 @@ int ClientHandler::upstream_http2_connhd_read() {
       Log{INFO, this} << "invalid client connection header";
     }
 
-    return -1;
+    return std::unexpected{Error::INTERNAL};
   }
 
   left_connhd_len_ -= nread;
@@ -384,16 +396,13 @@ int ClientHandler::upstream_http2_connhd_read() {
     on_read_ = &ClientHandler::upstream_read;
     // Run on_read to process data left in buffer since they are not
     // notified further
-    if (on_read() != 0) {
-      return -1;
-    }
-    return 0;
+    return on_read();
   }
 
-  return 0;
+  return {};
 }
 
-int ClientHandler::upstream_http1_connhd_read() {
+std::expected<void, Error> ClientHandler::upstream_http1_connhd_read() {
   auto nread = std::min(left_connhd_len_, rb_.rleft());
   if (memcmp(&NGHTTP2_CLIENT_MAGIC[NGHTTP2_CLIENT_MAGIC_LEN - left_connhd_len_],
              rb_.pos(), nread) != 0) {
@@ -407,11 +416,7 @@ int ClientHandler::upstream_http1_connhd_read() {
     on_read_ = &ClientHandler::upstream_read;
     on_write_ = &ClientHandler::upstream_write;
 
-    if (on_read() != 0) {
-      return -1;
-    }
-
-    return 0;
+    return on_read();
   }
 
   left_connhd_len_ -= nread;
@@ -429,29 +434,16 @@ int ClientHandler::upstream_http1_connhd_read() {
 
     // Run on_read to process data left in buffer since they are not
     // notified further
-    if (on_read() != 0) {
-      return -1;
-    }
-
-    return 0;
+    return on_read();
   }
 
-  return 0;
+  return {};
 }
 
 ClientHandler::ClientHandler(Worker *worker, int fd, SSL *ssl,
                              std::string_view ipaddr, std::string_view port,
-                             int family,
-                             const UpstreamAddr *faddr)
-  : // We use balloc_ for TLS session ID (64), ipaddr (IPv6) (39),
-    // port (5), forwarded-for (IPv6) (41), alpn (5), proxyproto
-    // ipaddr (15), proxyproto port (5), sni (32, estimated).  we
-    // need terminal NULL byte for each.  We also require 8 bytes
-    // header for each allocation.  We align at 16 bytes boundary,
-    // so the required space is 64 + 48 + 16 + 48 + 16 + 16 + 16 +
-    // 32 + 8 + 8 * 8 = 328.
-    balloc_(512, 512),
-    rb_(worker->get_mcpool()),
+                             int family, const UpstreamAddr *faddr)
+  : rb_(worker->get_mcpool()),
     conn_(worker->get_loop(), fd, ssl, worker->get_mcpool(),
           get_config()->conn.upstream.timeout.write,
           get_config()->conn.upstream.timeout.idle,
@@ -463,16 +455,16 @@ ClientHandler::ClientHandler(Worker *worker, int fd, SSL *ssl,
     ipaddr_(make_string_ref(balloc_, ipaddr)),
     port_(make_string_ref(balloc_, port)),
     faddr_(faddr),
-    worker_(worker),
-    left_connhd_len_(NGHTTP2_CLIENT_MAGIC_LEN),
-    affinity_hash_(0),
-    should_close_after_write_(false),
-    affinity_hash_computed_(false) {
+    worker_(worker) {
   ++worker_->get_worker_stat()->num_connections;
 
   ev_timer_init(&reneg_shutdown_timer_, shutdowncb, 0., 0.);
 
   reneg_shutdown_timer_.data = this;
+
+  ev_timer_init(&write_rate_timer_, write_ratecb, 0., 0.);
+
+  write_rate_timer_.data = this;
 
   if (!faddr->quic) {
     conn_.rlimit.startw();
@@ -580,6 +572,7 @@ ClientHandler::~ClientHandler() {
     worker_->schedule_clear_mcpool();
   }
 
+  ev_timer_stop(conn_.loop, &write_rate_timer_);
   ev_timer_stop(conn_.loop, &reneg_shutdown_timer_);
 
   // TODO If backend is http/2, and it is in CONNECTED state, signal
@@ -616,7 +609,7 @@ void ClientHandler::repeat_read_timer() {
 
 void ClientHandler::stop_read_timer() { ev_timer_stop(conn_.loop, &conn_.rt); }
 
-int ClientHandler::validate_next_proto() {
+std::expected<void, Error> ClientHandler::validate_next_proto() {
   const unsigned char *next_proto = nullptr;
   unsigned int next_proto_len = 0;
 
@@ -645,7 +638,7 @@ int ClientHandler::validate_next_proto() {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "The negotiated protocol is not supported: " << proto;
     }
-    return -1;
+    return std::unexpected{Error::ALPN};
   }
 
   if (util::check_h2_is_selected(proto)) {
@@ -659,11 +652,7 @@ int ClientHandler::validate_next_proto() {
     // At this point, input buffer is already filled with some bytes.
     // The read callback is not called until new data come. So consume
     // input buffer here.
-    if (on_read() != 0) {
-      return -1;
-    }
-
-    return 0;
+    return on_read();
   }
 
   if (proto == "http/1.1"sv) {
@@ -673,32 +662,30 @@ int ClientHandler::validate_next_proto() {
     // At this point, input buffer is already filled with some bytes.
     // The read callback is not called until new data come. So consume
     // input buffer here.
-    if (on_read() != 0) {
-      return -1;
-    }
-
-    return 0;
+    return on_read();
   }
   if (log_enabled(INFO)) {
     Log{INFO, this} << "The negotiated protocol is not supported";
   }
-  return -1;
+  return std::unexpected{Error::ALPN};
 }
 
-int ClientHandler::do_read() { return read_(*this); }
-int ClientHandler::do_write() { return write_(*this); }
+std::expected<void, Error> ClientHandler::do_read() { return read_(*this); }
+std::expected<void, Error> ClientHandler::do_write() { return write_(*this); }
 
-int ClientHandler::on_read() {
+std::expected<void, Error> ClientHandler::on_read() {
   if (rb_.chunk_avail()) {
-    auto rv = on_read_(*this);
-    if (rv != 0) {
+    if (auto rv = on_read_(*this); !rv) {
       return rv;
     }
   }
   conn_.handle_tls_pending_read();
-  return 0;
+  return {};
 }
-int ClientHandler::on_write() { return on_write_(*this); }
+
+std::expected<void, Error> ClientHandler::on_write() {
+  return on_write_(*this);
+}
 
 std::string_view ClientHandler::get_ipaddr() const { return ipaddr_; }
 
@@ -733,11 +720,9 @@ void ClientHandler::pool_downstream_connection(
 namespace {
 // Computes 32bits hash for session affinity for IP address |ip|.
 uint32_t compute_affinity_from_ip(std::string_view ip) {
-  int rv;
   std::array<uint8_t, 32> buf;
 
-  rv = util::sha256(buf.data(), ip);
-  if (rv != 0) {
+  if (!util::sha256(buf, ip)) {
     // Not sure when sha256 failed.  Just fall back to another
     // function.
     return util::hash32(ip);
@@ -845,11 +830,9 @@ void reschedule_wg(
 }
 } // namespace
 
-DownstreamAddr *ClientHandler::get_downstream_addr(int &err,
-                                                   DownstreamAddrGroup *group,
-                                                   Downstream *downstream) {
-  err = 0;
-
+std::expected<DownstreamAddr *, Error>
+ClientHandler::get_downstream_addr(DownstreamAddrGroup *group,
+                                   Downstream *downstream) {
   switch (faddr_->alt_mode) {
   case UpstreamAltMode::API:
   case UpstreamAltMode::HEALTHMON:
@@ -873,8 +856,7 @@ DownstreamAddr *ClientHandler::get_downstream_addr(int &err,
     case SessionAffinity::COOKIE:
       if (shared_addr->affinity.cookie.stickiness ==
           SessionAffinityCookieStickiness::STRICT) {
-        return get_downstream_addr_strict_affinity(err, shared_addr,
-                                                   downstream);
+        return get_downstream_addr_strict_affinity(shared_addr, downstream);
       }
 
       hash = get_affinity_cookie(downstream, shared_addr->affinity.cookie.name);
@@ -909,8 +891,7 @@ DownstreamAddr *ClientHandler::get_downstream_addr(int &err,
         break;
       }
       if (i == aff_idx) {
-        err = -1;
-        return nullptr;
+        return std::unexpected{Error::NO_AVAIL_DOWNSTREAM};
       }
     }
 
@@ -922,8 +903,7 @@ DownstreamAddr *ClientHandler::get_downstream_addr(int &err,
   for (;;) {
     if (wgpq.empty()) {
       Log{INFO, this} << "No working downstream address found";
-      err = -1;
-      return nullptr;
+      return std::unexpected{Error::NO_AVAIL_DOWNSTREAM};
     }
 
     auto wg = wgpq.top().wg;
@@ -951,8 +931,9 @@ DownstreamAddr *ClientHandler::get_downstream_addr(int &err,
   }
 }
 
-DownstreamAddr *ClientHandler::get_downstream_addr_strict_affinity(
-  int &err, const std::shared_ptr<SharedDownstreamAddr> &shared_addr,
+std::expected<DownstreamAddr *, Error>
+ClientHandler::get_downstream_addr_strict_affinity(
+  const std::shared_ptr<SharedDownstreamAddr> &shared_addr,
   Downstream *downstream) {
   const auto &affinity_hash = shared_addr->affinity_hash;
 
@@ -1000,8 +981,7 @@ DownstreamAddr *ClientHandler::get_downstream_addr_strict_affinity(
       break;
     }
     if (i == aff_idx) {
-      err = -1;
-      return nullptr;
+      return std::unexpected{Error::NO_AVAIL_DOWNSTREAM};
     }
   }
 
@@ -1010,8 +990,8 @@ DownstreamAddr *ClientHandler::get_downstream_addr_strict_affinity(
   return addr;
 }
 
-std::unique_ptr<DownstreamConnection>
-ClientHandler::get_downstream_connection(int &err, Downstream *downstream) {
+std::expected<std::unique_ptr<DownstreamConnection>, Error>
+ClientHandler::get_downstream_connection(Downstream *downstream) {
   size_t group_idx;
   auto &downstreamconf = *worker_->get_downstream_config();
   auto &routerconf = downstreamconf.router;
@@ -1020,8 +1000,6 @@ ClientHandler::get_downstream_connection(int &err, Downstream *downstream) {
   auto &groups = worker_->get_downstream_addr_groups();
 
   auto &req = downstream->request();
-
-  err = 0;
 
   switch (faddr_->alt_mode) {
   case UpstreamAltMode::API: {
@@ -1090,8 +1068,7 @@ ClientHandler::get_downstream_connection(int &err, Downstream *downstream) {
       Log{INFO, this} << "Downstream address group " << group_idx
                       << " requires frontend TLS connection.";
     }
-    err = SHRPX_ERR_TLS_REQUIRED;
-    return nullptr;
+    return std::unexpected{Error::TLS_REQUIRED};
   }
 
   auto &group = groups[group_idx];
@@ -1102,10 +1079,12 @@ ClientHandler::get_downstream_connection(int &err, Downstream *downstream) {
     return dconn;
   }
 
-  auto addr = get_downstream_addr(err, group.get(), downstream);
-  if (addr == nullptr) {
-    return nullptr;
+  auto maybe_addr = get_downstream_addr(group.get(), downstream);
+  if (!maybe_addr) {
+    return std::unexpected{maybe_addr.error()};
   }
+
+  auto addr = *maybe_addr;
 
   if (addr->proto == Proto::HTTP1) {
     auto dconn = addr->dconn_pool->pop_downstream_connection();
@@ -1119,7 +1098,7 @@ ClientHandler::get_downstream_connection(int &err, Downstream *downstream) {
         Log{INFO, this}
           << "Worker wide backend connection was blocked temporarily";
       }
-      return nullptr;
+      return std::unexpected{Error::NO_AVAIL_DOWNSTREAM};
     }
 
     if (log_enabled(INFO)) {
@@ -1155,7 +1134,8 @@ void ClientHandler::direct_http2_upgrade() {
   write_ = &ClientHandler::write_clear;
 }
 
-int ClientHandler::perform_http2_upgrade(HttpsUpstream *http) {
+std::expected<void, Error>
+ClientHandler::perform_http2_upgrade(HttpsUpstream *http) {
   auto upstream = std::make_unique<Http2Upstream>(this);
 
   auto output = upstream->get_response_buf();
@@ -1168,8 +1148,8 @@ int ClientHandler::perform_http2_upgrade(HttpsUpstream *http) {
   auto downstream = http->get_downstream();
   auto input = downstream->get_response_buf();
 
-  if (upstream->upgrade_upstream(http) != 0) {
-    return -1;
+  if (auto rv = upstream->upgrade_upstream(http); !rv) {
+    return rv;
   }
   // http pointer is now owned by upstream.
   upstream_.release();
@@ -1191,7 +1171,7 @@ int ClientHandler::perform_http2_upgrade(HttpsUpstream *http) {
   upstream_ = std::move(upstream);
 
   signal_write();
-  return 0;
+  return {};
 }
 
 bool ClientHandler::get_http2_upgrade_allowed() const { return !conn_.tls.ssl; }
@@ -1219,19 +1199,18 @@ void ClientHandler::write_accesslog(Downstream *downstream) {
     req.tstamp = lgconf->tstamp;
   }
 
-  upstream_accesslog(
-    config->logging.access.format,
-    LogSpec{
-      downstream,
-      ipaddr_,
-      alpn_,
-      sni_,
-      conn_.tls.ssl,
-      std::chrono::high_resolution_clock::now(), // request_end_time
-      port_,
-      faddr_->port,
-      config->pid,
-    });
+  upstream_accesslog(config->logging.access.format,
+                     LogSpec{
+                       downstream,
+                       ipaddr_,
+                       alpn_,
+                       sni_,
+                       conn_.tls.ssl,
+                       std::chrono::steady_clock::now(), // request_end_time
+                       port_,
+                       faddr_->port,
+                       config->pid,
+                     });
 }
 
 ClientHandler::ReadBuf *ClientHandler::get_rb() { return &rb_; }
@@ -1274,7 +1253,7 @@ ssize_t parse_proxy_line_port(const uint8_t *first, const uint8_t *last) {
 }
 } // namespace
 
-int ClientHandler::on_proxy_protocol_finish() {
+std::expected<void, Error> ClientHandler::on_proxy_protocol_finish() {
   auto len = as_unsigned(rb_.pos() - rb_.begin());
 
   assert(len);
@@ -1286,15 +1265,15 @@ int ClientHandler::on_proxy_protocol_finish() {
 
   rb_.reset();
 
-  if (conn_.read_nolim_clear({rb_.pos(), len}) < 0) {
-    return -1;
+  if (auto maybe_data = conn_.read_nolim_clear({rb_.pos(), len}); !maybe_data) {
+    return std::unexpected{maybe_data.error()};
   }
 
   rb_.reset();
 
   setup_upstream_io_callback();
 
-  return 0;
+  return {};
 }
 
 // PROXY-protocol v2 header signature
@@ -1306,7 +1285,7 @@ constexpr size_t PROXY_PROTO_V2_HDLEN =
   str_size(PROXY_PROTO_V2_SIG) + /* ver_cmd(1) + fam(1) + len(2) = */ 4;
 
 // http://www.haproxy.org/download/1.5/doc/proxy-protocol.txt
-int ClientHandler::proxy_protocol_read() {
+std::expected<void, Error> ClientHandler::proxy_protocol_read() {
   if (log_enabled(INFO)) {
     Log{INFO, this} << "PROXY-protocol: Started";
   }
@@ -1314,7 +1293,7 @@ int ClientHandler::proxy_protocol_read() {
   auto first = rb_.pos();
 
   if (rb_.rleft() >= PROXY_PROTO_V2_HDLEN &&
-      (*(first + str_size(PROXY_PROTO_V2_SIG)) & 0xf0) == 0x20) {
+      (*(first + str_size(PROXY_PROTO_V2_SIG)) & 0xF0) == 0x20) {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "PROXY-protocol: Detected v2 header signature";
     }
@@ -1337,7 +1316,7 @@ int ClientHandler::proxy_protocol_read() {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "PROXY-protocol-v1: No ending CR LF sequence found";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   --end;
@@ -1348,14 +1327,14 @@ int ClientHandler::proxy_protocol_read() {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "PROXY-protocol-v1: PROXY version 1 ID not found";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   if (HEADER != as_string_view(rb_.pos(), HEADER.size())) {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "PROXY-protocol-v1: Bad PROXY protocol version 1 ID";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   rb_.drain(HEADER.size());
@@ -1367,14 +1346,14 @@ int ClientHandler::proxy_protocol_read() {
       if (log_enabled(INFO)) {
         Log{INFO, this} << "PROXY-protocol-v1: INET protocol family not found";
       }
-      return -1;
+      return std::unexpected{Error::PROXY_PROTO};
     }
 
     if (rb_.pos()[1] != 'C' || rb_.pos()[2] != 'P') {
       if (log_enabled(INFO)) {
         Log{INFO, this} << "PROXY-protocol-v1: Unknown INET protocol family";
       }
-      return -1;
+      return std::unexpected{Error::PROXY_PROTO};
     }
 
     switch (rb_.pos()[3]) {
@@ -1388,7 +1367,7 @@ int ClientHandler::proxy_protocol_read() {
       if (log_enabled(INFO)) {
         Log{INFO, this} << "PROXY-protocol-v1: Unknown INET protocol family";
       }
-      return -1;
+      return std::unexpected{Error::PROXY_PROTO};
     }
 
     rb_.drain(5);
@@ -1397,13 +1376,13 @@ int ClientHandler::proxy_protocol_read() {
       if (log_enabled(INFO)) {
         Log{INFO, this} << "PROXY-protocol-v1: INET protocol family not found";
       }
-      return -1;
+      return std::unexpected{Error::PROXY_PROTO};
     }
     if ("UNKNOWN"sv != as_string_view(rb_.pos(), 7)) {
       if (log_enabled(INFO)) {
         Log{INFO, this} << "PROXY-protocol-v1: Unknown INET protocol family";
       }
-      return -1;
+      return std::unexpected{Error::PROXY_PROTO};
     }
 
     rb_.drain(as_unsigned(end + 2 - rb_.pos()));
@@ -1417,7 +1396,7 @@ int ClientHandler::proxy_protocol_read() {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "PROXY-protocol-v1: Source address not found";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   *token_end = '\0';
@@ -1425,7 +1404,7 @@ int ClientHandler::proxy_protocol_read() {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "PROXY-protocol-v1: Invalid source address";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   auto src_addr = rb_.pos();
@@ -1439,7 +1418,7 @@ int ClientHandler::proxy_protocol_read() {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "PROXY-protocol-v1: Destination address not found";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   *token_end = '\0';
@@ -1447,7 +1426,7 @@ int ClientHandler::proxy_protocol_read() {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "PROXY-protocol-v1: Invalid destination address";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   // Currently we don't use destination address
@@ -1460,7 +1439,7 @@ int ClientHandler::proxy_protocol_read() {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "PROXY-protocol-v1: Invalid source port";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   rb_.pos()[n] = '\0';
@@ -1475,7 +1454,7 @@ int ClientHandler::proxy_protocol_read() {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "PROXY-protocol-v1: Invalid destination port";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   // Currently we don't use destination port
@@ -1503,18 +1482,18 @@ int ClientHandler::proxy_protocol_read() {
   return on_proxy_protocol_finish();
 }
 
-int ClientHandler::proxy_protocol_v2_read() {
+std::expected<void, Error> ClientHandler::proxy_protocol_v2_read() {
   // Assume that first str_size(PROXY_PROTO_V2_SIG) octets match v2
   // protocol signature and followed by the bytes which indicates v2.
   assert(rb_.rleft() >= PROXY_PROTO_V2_HDLEN);
 
   auto p = rb_.pos() + str_size(PROXY_PROTO_V2_SIG);
 
-  assert(((*p) & 0xf0) == 0x20);
+  assert(((*p) & 0xF0) == 0x20);
 
   enum { LOCAL, PROXY } cmd;
 
-  auto cmd_bits = (*p++) & 0xf;
+  auto cmd_bits = (*p++) & 0xF;
   switch (cmd_bits) {
   case 0x0:
     cmd = LOCAL;
@@ -1527,7 +1506,7 @@ int ClientHandler::proxy_protocol_v2_read() {
       Log{INFO, this} << "PROXY-protocol-v2: Unknown command " << log::hex
                       << cmd_bits;
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   auto fam = *p++;
@@ -1548,7 +1527,7 @@ int ClientHandler::proxy_protocol_v2_read() {
         << "PROXY-protocol-v2: Prematurely truncated header block; require "
         << len << " bytes, " << rb_.last() - p << " bytes left";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   int family;
@@ -1563,7 +1542,7 @@ int ClientHandler::proxy_protocol_v2_read() {
       if (log_enabled(INFO)) {
         Log{INFO, this} << "PROXY-protocol-v2: Too short AF_INET addresses";
       }
-      return -1;
+      return std::unexpected{Error::PROXY_PROTO};
     }
     family = AF_INET;
     addrlen = 4;
@@ -1574,7 +1553,7 @@ int ClientHandler::proxy_protocol_v2_read() {
       if (log_enabled(INFO)) {
         Log{INFO, this} << "PROXY-protocol-v2: Too short AF_INET6 addresses";
       }
-      return -1;
+      return std::unexpected{Error::PROXY_PROTO};
     }
     family = AF_INET6;
     addrlen = 16;
@@ -1585,7 +1564,7 @@ int ClientHandler::proxy_protocol_v2_read() {
       if (log_enabled(INFO)) {
         Log{INFO, this} << "PROXY-protocol-v2: Too short AF_UNIX addresses";
       }
-      return -1;
+      return std::unexpected{Error::PROXY_PROTO};
     }
     // fall through
   case 0x00: {
@@ -1604,7 +1583,7 @@ int ClientHandler::proxy_protocol_v2_read() {
                          "family and protocol "
                       << log::hex << fam;
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   if (cmd != PROXY) {
@@ -1619,7 +1598,7 @@ int ClientHandler::proxy_protocol_v2_read() {
     if (log_enabled(INFO)) {
       Log{INFO, this} << "PROXY-protocol-v2: Unable to parse source address";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   p += addrlen;
@@ -1629,7 +1608,7 @@ int ClientHandler::proxy_protocol_v2_read() {
       Log{INFO, this}
         << "PROXY-protocol-v2: Unable to parse destination address";
     }
-    return -1;
+    return std::unexpected{Error::PROXY_PROTO};
   }
 
   p += addrlen;
@@ -1711,6 +1690,82 @@ void ClientHandler::set_local_hostport(const sockaddr *addr,
   }
 
   local_hostport_ = util::make_hostport(balloc_, host.data(), faddr_->port);
+}
+
+void ClientHandler::register_write_rate_timer(Downstream *downstream) {
+  if (get_config()->http.upstream.min_write_rate == 0 ||
+      downstream->is_upstream_write_rate_member()) {
+    return;
+  }
+
+  ++write_rate_member_count_;
+  downstream->set_upstream_write_rate_member(true);
+
+  auto config = get_config();
+  const auto &timeoutconf = config->http.upstream.timeout;
+
+  if (write_rate_member_count_ > 1 ||
+      (ev_is_active(&write_rate_timer_) &&
+       std::max(ev_timer_remaining(conn_.loop, &write_rate_timer_), 0.) >=
+         static_cast<double>(timeoutconf.initial_write_rate))) {
+    return;
+  }
+
+  write_rate_timer_.repeat = timeoutconf.initial_write_rate;
+  ev_timer_again(conn_.loop, &write_rate_timer_);
+}
+
+void ClientHandler::unregister_write_rate_timer(Downstream *downstream) {
+  if (!downstream->is_upstream_write_rate_member()) {
+    return;
+  }
+
+  downstream->set_upstream_write_rate_member(false);
+
+  assert(write_rate_member_count_);
+
+  if (--write_rate_member_count_) {
+    return;
+  }
+
+  // Keep timer running.  When it fires and there is no member, stop
+  // timer.  Frequently starting and stopping timer could bring
+  // performance penalty.
+}
+
+void ClientHandler::extend_write_rate_timer(size_t datalen) {
+  auto config = get_config();
+  const auto &httpconf = config->http;
+
+  if (httpconf.upstream.min_write_rate == 0) {
+    return;
+  }
+
+  auto repeat =
+    ev_is_active(&write_rate_timer_)
+      ? std::max(ev_timer_remaining(conn_.loop, &write_rate_timer_), 0.)
+      : httpconf.upstream.timeout.initial_write_rate;
+
+  repeat += static_cast<double>(datalen) /
+            static_cast<double>(httpconf.upstream.min_write_rate);
+
+  write_rate_timer_.repeat =
+    std::min(httpconf.upstream.timeout.max_write_rate, repeat);
+
+  ev_timer_again(conn_.loop, &write_rate_timer_);
+}
+
+std::expected<void, Error> ClientHandler::on_write_rate_timeout() {
+  if (write_rate_member_count_ == 0) {
+    ev_timer_stop(conn_.loop, &write_rate_timer_);
+    return {};
+  }
+
+  if (log_enabled(INFO)) {
+    Log{INFO, this} << "Close connection due to low write rate";
+  }
+
+  return std::unexpected{Error::NETWORK};
 }
 
 } // namespace shrpx

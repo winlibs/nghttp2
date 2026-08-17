@@ -27,7 +27,13 @@
 
 #include "shrpx.h"
 
+#include <expected>
+
 #include <ev.h>
+
+#include "errors.h"
+
+using namespace nghttp2;
 
 namespace shrpx {
 
@@ -38,7 +44,7 @@ class AcceptHandler {
 public:
   AcceptHandler(Worker *worker, const UpstreamAddr *faddr);
   ~AcceptHandler();
-  int accept_connection();
+  std::expected<void, Error> accept_connection();
   void drain_connection();
   void enable();
   void disable();

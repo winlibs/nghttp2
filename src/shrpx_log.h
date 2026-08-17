@@ -35,11 +35,15 @@
 #include <algorithm>
 #include <ranges>
 #include <source_location>
+#include <expected>
+#include <charconv>
+#include <concepts>
 
 #include "shrpx_log_config.h"
 #include "tls.h"
 #include "template.h"
 #include "util.h"
+#include "errors.h"
 
 using namespace nghttp2;
 
@@ -163,9 +167,27 @@ public:
 
     return *this;
   }
-  Log &operator<<(float n) { return *this << static_cast<double>(n); }
-  Log &operator<<(double n);
-  Log &operator<<(long double n);
+  template <std::floating_point T> Log &operator<<(T n) {
+    if (full_) {
+      return *this;
+    }
+
+    auto left = wleft();
+    auto first = reinterpret_cast<char *>(last_);
+
+    auto rv =
+      std::to_chars(first, first + left, n, std::chars_format::fixed, 9);
+    if (rv.ec != std::errc{}) {
+      full_ = true;
+      return *this;
+    }
+
+    last_ = reinterpret_cast<uint8_t *>(rv.ptr);
+
+    update_full();
+
+    return *this;
+  }
   Log &operator<<(bool n);
   Log &operator<<(const void *p);
   template <typename T> Log &operator<<(const std::shared_ptr<T> &ptr) {
@@ -204,9 +226,9 @@ public:
     update_full();
   }
   static void set_severity_level(int severity);
-  // Returns the severity level by |name|.  Returns -1 if |name| is
-  // unknown.
-  static int get_severity_level_by_name(std::string_view name);
+  // Returns the severity level by |name|.
+  static std::expected<int, Error>
+  get_severity_level_by_name(std::string_view name);
   static bool log_enabled(int severity) { return severity >= severity_thres_; }
 
   enum {
@@ -228,10 +250,10 @@ private:
   uint8_t *end_;
   uint8_t *last_;
   std::string_view filename_;
-  uint32_t flags_;
+  uint32_t flags_{};
   int severity_;
   uint32_t linenum_;
-  bool full_;
+  bool full_{};
   static int severity_thres_;
 };
 
@@ -244,8 +266,13 @@ void hex(Log &log);
 void dec(Log &log);
 } // namespace log
 
-#define TTY_HTTP_HD (log_config()->errorlog_tty ? "\033[1;34m" : "")
-#define TTY_RST (log_config()->errorlog_tty ? "\033[0m" : "")
+[[nodiscard]] inline auto tty_http_hd() {
+  return log_config()->errorlog_tty ? "\033[1;34m"sv : ""sv;
+}
+
+[[nodiscard]] inline auto tty_rst() {
+  return log_config()->errorlog_tty ? "\033[0m"sv : ""sv;
+}
 
 enum class LogFragmentType {
   NONE,
@@ -299,7 +326,7 @@ struct LogSpec {
   std::string_view alpn;
   std::string_view sni;
   SSL *ssl;
-  std::chrono::high_resolution_clock::time_point request_end_time;
+  std::chrono::steady_clock::time_point request_end_time;
   std::string_view remote_port;
   uint16_t server_port;
   pid_t pid;
@@ -308,7 +335,7 @@ struct LogSpec {
 void upstream_accesslog(const std::vector<LogFragment> &lf,
                         const LogSpec &lgsp);
 
-int reopen_log_files(const LoggingConfig &loggingconf);
+std::expected<void, Error> reopen_log_files(const LoggingConfig &loggingconf);
 
 // Logs message when process whose pid is |pid| and exist status is
 // |rstatus| exited.  The |msg| is prepended to the log message.
@@ -331,8 +358,8 @@ void close_log_file(int &fd);
 
 // Opens |path| with O_APPEND enabled.  If file does not exist, it is
 // created first.  This function returns file descriptor referring the
-// opened file if it succeeds, or -1.
-int open_log_file(const char *path);
+// opened file if it succeeds.
+std::expected<int, Error> open_log_file(const char *path);
 
 } // namespace shrpx
 

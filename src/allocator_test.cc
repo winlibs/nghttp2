@@ -47,14 +47,15 @@ const MunitTest tests[]{
 } // namespace
 
 const MunitSuite allocator_suite{
-  "/allocator", tests, nullptr, 1, MUNIT_SUITE_OPTION_NONE,
+  .prefix = "/allocator",
+  .tests = tests,
 };
 
 namespace {
 auto data = []() {
   std::array<uint8_t, 4096> data;
 
-  std::ranges::fill(data, 0xfe);
+  std::ranges::fill(data, 0xFE);
 
   return data;
 }();
@@ -147,6 +148,10 @@ void test_concat_string_ref(void) {
   auto s = concat_string_ref(balloc, "alpha "sv, "bravo "sv, "charlie"sv);
 
   assert_stdsv_equal("alpha bravo charlie"sv, s);
+
+  auto t = concat_string_ref(balloc);
+
+  assert_stdsv_equal(""sv, t);
 }
 
 void test_realloc_concat_string_ref(void) {

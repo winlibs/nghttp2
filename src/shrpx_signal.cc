@@ -33,28 +33,30 @@ using namespace nghttp2;
 
 namespace shrpx {
 
-int shrpx_signal_block_all(sigset_t *oldset) {
-  sigset_t newset;
+std::expected<sigset_t, Error> shrpx_signal_block_all() {
+  sigset_t newset, oldset;
 
   sigfillset(&newset);
 
 #ifndef NOTHREADS
   int rv;
 
-  rv = pthread_sigmask(SIG_SETMASK, &newset, oldset);
+  rv = pthread_sigmask(SIG_SETMASK, &newset, &oldset);
 
   if (rv != 0) {
     errno = rv;
-    return -1;
+    return std::unexpected{Error::LIBC};
   }
-
-  return 0;
 #else  // defined(NOTHREADS)
-  return sigprocmask(SIG_SETMASK, &newset, oldset);
+  if (sigprocmask(SIG_SETMASK, &newset, &oldset) != 0) {
+    return std::unexpected{Error::SYSCALL};
+  }
 #endif // defined(NOTHREADS)
+
+  return oldset;
 }
 
-int shrpx_signal_unblock_all() {
+std::expected<void, Error> shrpx_signal_unblock_all() {
   sigset_t newset;
 
   sigemptyset(&newset);
@@ -66,16 +68,18 @@ int shrpx_signal_unblock_all() {
 
   if (rv != 0) {
     errno = rv;
-    return -1;
+    return std::unexpected{Error::LIBC};
   }
-
-  return 0;
 #else  // defined(NOTHREADS)
-  return sigprocmask(SIG_SETMASK, &newset, nullptr);
+  if (sigprocmask(SIG_SETMASK, &newset, nullptr) != 0) {
+    return std::unexpected{Error::SYSCALL};
+  }
 #endif // defined(NOTHREADS)
+
+  return {};
 }
 
-int shrpx_signal_set(sigset_t *set) {
+std::expected<void, Error> shrpx_signal_set(const sigset_t *set) {
 #ifndef NOTHREADS
   int rv;
 
@@ -83,18 +87,21 @@ int shrpx_signal_set(sigset_t *set) {
 
   if (rv != 0) {
     errno = rv;
-    return -1;
+    return std::unexpected{Error::LIBC};
   }
-
-  return 0;
 #else  // defined(NOTHREADS)
-  return sigprocmask(SIG_SETMASK, set, nullptr);
+  if (sigprocmask(SIG_SETMASK, set, nullptr) != 0) {
+    return std::unexpected{Error::SYSCALL};
+  }
 #endif // defined(NOTHREADS)
+
+  return {};
 }
 
 namespace {
 template <typename Signals>
-int signal_set_handler(void (*handler)(int), Signals &&sigs) {
+std::expected<void, Error> signal_set_handler(void (*handler)(int),
+                                              Signals &&sigs) {
   struct sigaction act{};
   act.sa_handler = handler;
   sigemptyset(&act.sa_mask);
@@ -102,10 +109,10 @@ int signal_set_handler(void (*handler)(int), Signals &&sigs) {
   for (auto sig : sigs) {
     rv = sigaction(sig, &act, nullptr);
     if (rv != 0) {
-      return -1;
+      return std::unexpected{Error::SYSCALL};
     }
   }
-  return 0;
+  return {};
 }
 } // namespace
 
@@ -115,19 +122,19 @@ constexpr auto worker_proc_ign_signals =
   std::to_array({REOPEN_LOG_SIGNAL, EXEC_BINARY_SIGNAL,
                  GRACEFUL_SHUTDOWN_SIGNAL, RELOAD_SIGNAL, SIGPIPE});
 
-int shrpx_signal_set_main_proc_ign_handler() {
+std::expected<void, Error> shrpx_signal_set_main_proc_ign_handler() {
   return signal_set_handler(SIG_IGN, main_proc_ign_signals);
 }
 
-int shrpx_signal_unset_main_proc_ign_handler() {
+std::expected<void, Error> shrpx_signal_unset_main_proc_ign_handler() {
   return signal_set_handler(SIG_DFL, main_proc_ign_signals);
 }
 
-int shrpx_signal_set_worker_proc_ign_handler() {
+std::expected<void, Error> shrpx_signal_set_worker_proc_ign_handler() {
   return signal_set_handler(SIG_IGN, worker_proc_ign_signals);
 }
 
-int shrpx_signal_unset_worker_proc_ign_handler() {
+std::expected<void, Error> shrpx_signal_unset_worker_proc_ign_handler() {
   return signal_set_handler(SIG_DFL, worker_proc_ign_signals);
 }
 

@@ -60,10 +60,7 @@ namespace nghttp2 {
 
 template <size_t N> struct Memchunk {
   Memchunk(Memchunk *next_chunk)
-    : pos(std::ranges::begin(buf)),
-      last(pos),
-      knext(next_chunk),
-      next(nullptr) {}
+    : pos(std::ranges::begin(buf)), last(pos), knext(next_chunk) {}
   size_t len() const { return as_unsigned(last - pos); }
   size_t left() const {
     return static_cast<size_t>(std::ranges::end(buf) - last);
@@ -72,12 +69,12 @@ template <size_t N> struct Memchunk {
   std::array<uint8_t, N> buf;
   uint8_t *pos, *last;
   Memchunk *knext;
-  Memchunk *next;
+  Memchunk *next{};
   static const size_t size = N;
 };
 
 template <typename T> struct Pool {
-  Pool() : pool(nullptr), freelist(nullptr), poolsize(0), freelistsize(0) {}
+  Pool() noexcept = default;
   ~Pool() { clear(); }
   T *get() {
     if (freelist) {
@@ -110,21 +107,14 @@ template <typename T> struct Pool {
     poolsize = 0;
   }
   using value_type = T;
-  T *pool;
-  T *freelist;
-  size_t poolsize;
-  size_t freelistsize;
+  T *pool{};
+  T *freelist{};
+  size_t poolsize{};
+  size_t freelistsize{};
 };
 
 template <typename Memchunk> struct Memchunks {
-  Memchunks(Pool<Memchunk> *pool)
-    : pool(pool),
-      head(nullptr),
-      tail(nullptr),
-      len(0),
-      mark(nullptr),
-      mark_pos(nullptr),
-      mark_offset(0) {}
+  Memchunks(Pool<Memchunk> *pool) : pool(pool) {}
   Memchunks(const Memchunks &) = delete;
   Memchunks(Memchunks &&other) noexcept
     : pool{other.pool}, // keep other.pool
@@ -452,11 +442,11 @@ template <typename Memchunk> struct Memchunks {
   }
 
   Pool<Memchunk> *pool;
-  Memchunk *head, *tail;
-  size_t len;
-  Memchunk *mark;
-  uint8_t *mark_pos;
-  size_t mark_offset;
+  Memchunk *head{}, *tail{};
+  size_t len{};
+  Memchunk *mark{};
+  uint8_t *mark_pos{};
+  size_t mark_offset{};
 };
 
 using Memchunk16K = Memchunk<16_k>;
@@ -489,7 +479,7 @@ inline std::span<struct iovec> limit_iovec(std::span<struct iovec> iov,
 // MemchunkBuffer is similar to Buffer, but it uses pooled Memchunk
 // for its underlying buffer.
 template <typename Memchunk> struct MemchunkBuffer {
-  MemchunkBuffer(Pool<Memchunk> *pool) : pool(pool), chunk(nullptr) {}
+  MemchunkBuffer(Pool<Memchunk> *pool) : pool(pool) {}
   MemchunkBuffer(const MemchunkBuffer &) = delete;
   MemchunkBuffer(MemchunkBuffer &&other) noexcept
     : pool(other.pool), chunk(other.chunk) {
@@ -581,7 +571,7 @@ template <typename Memchunk> struct MemchunkBuffer {
   std::span<uint8_t> wbuffer() { return {chunk->last, chunk->left()}; }
 
   Pool<Memchunk> *pool;
-  Memchunk *chunk;
+  Memchunk *chunk{};
 };
 
 using DefaultMemchunkBuffer = MemchunkBuffer<Memchunk16K>;

@@ -54,9 +54,9 @@ struct CloseWait {
             std::unique_ptr<uint8_t[]> pkt, size_t pktlen, ev_tstamp period);
   ~CloseWait();
 
-  int handle_packet(const UpstreamAddr *faddr, const Address &remote_addr,
-                    const Address &local_addr, const ngtcp2_pkt_info &pi,
-                    std::span<const uint8_t> data);
+  void handle_packet(const UpstreamAddr *faddr, const Address &remote_addr,
+                     const Address &local_addr, const ngtcp2_pkt_info &pi,
+                     std::span<const uint8_t> data);
 
   Worker *worker;
   // Source Connection IDs of the connection.
@@ -83,40 +83,40 @@ class QUICConnectionHandler {
 public:
   QUICConnectionHandler(Worker *worker);
   ~QUICConnectionHandler();
-  int handle_packet(const UpstreamAddr *faddr, const Address &remote_addr,
-                    const Address &local_addr, const ngtcp2_pkt_info &pi,
-                    std::span<const uint8_t> data);
+  void handle_packet(const UpstreamAddr *faddr, const Address &remote_addr,
+                     const Address &local_addr, const ngtcp2_pkt_info &pi,
+                     std::span<const uint8_t> data);
   // Send Retry packet.  |ini_dcid| is the destination Connection ID
   // which appeared in Client Initial packet.  |ini_scid| is the
   // source Connection ID which appeared in Client Initial packet.
-  int send_retry(const UpstreamAddr *faddr, uint32_t version,
-                 std::span<const uint8_t> ini_dcid,
-                 std::span<const uint8_t> ini_scid, const Address &remote_addr,
-                 const Address &local_addr, size_t max_pktlen);
+  std::expected<void, Error>
+  send_retry(const UpstreamAddr *faddr, uint32_t version,
+             std::span<const uint8_t> ini_dcid,
+             std::span<const uint8_t> ini_scid, const Address &remote_addr,
+             const Address &local_addr, size_t max_pktlen);
   // Send Version Negotiation packet.  |ini_dcid| is the destination
   // Connection ID which appeared in Client Initial packet.
   // |ini_scid| is the source Connection ID which appeared in Client
   // Initial packet.
-  int send_version_negotiation(const UpstreamAddr *faddr, uint32_t version,
-                               std::span<const uint8_t> ini_dcid,
-                               std::span<const uint8_t> ini_scid,
-                               const Address &remote_addr,
-                               const Address &local_addr);
-  int send_stateless_reset(const UpstreamAddr *faddr, size_t pktlen,
-                           std::span<const uint8_t> dcid,
-                           const Address &remote_addr,
-                           const Address &local_addr);
+  std::expected<void, Error> send_version_negotiation(
+    const UpstreamAddr *faddr, uint32_t version,
+    std::span<const uint8_t> ini_dcid, std::span<const uint8_t> ini_scid,
+    const Address &remote_addr, const Address &local_addr);
+  std::expected<void, Error> send_stateless_reset(const UpstreamAddr *faddr,
+                                                  size_t pktlen,
+                                                  std::span<const uint8_t> dcid,
+                                                  const Address &remote_addr,
+                                                  const Address &local_addr);
   // Send Initial CONNECTION_CLOSE.  |ini_dcid| is the destination
   // Connection ID which appeared in Client Initial packet.
   // |ini_scid| is the source Connection ID which appeared in Client
   // Initial packet.
-  int send_connection_close(const UpstreamAddr *faddr, uint32_t version,
-                            const ngtcp2_cid &ini_dcid,
-                            const ngtcp2_cid &ini_scid,
-                            const Address &remote_addr,
-                            const Address &local_addr, uint64_t error_code,
-                            size_t max_pktlen);
-  ClientHandler *
+  std::expected<void, Error>
+  send_connection_close(const UpstreamAddr *faddr, uint32_t version,
+                        const ngtcp2_cid &ini_dcid, const ngtcp2_cid &ini_scid,
+                        const Address &remote_addr, const Address &local_addr,
+                        uint64_t error_code, size_t max_pktlen);
+  std::expected<std::unique_ptr<ClientHandler>, Error>
   handle_new_connection(const UpstreamAddr *faddr, const Address &remote_addr,
                         const Address &local_addr, const ngtcp2_pkt_hd &hd,
                         const ngtcp2_cid *odcid, std::span<const uint8_t> token,
@@ -134,7 +134,7 @@ private:
   std::unordered_map<ngtcp2_cid, ClientHandler *> connections_;
   std::unordered_map<ngtcp2_cid, CloseWait *> close_waits_;
   ev_timer stateless_reset_bucket_regen_timer_;
-  size_t stateless_reset_bucket_;
+  size_t stateless_reset_bucket_{SHRPX_QUIC_STATELESS_RESET_BURST};
 };
 
 } // namespace shrpx

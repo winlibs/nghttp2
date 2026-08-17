@@ -143,6 +143,8 @@ bool sockaddr_empty(const Sockaddr &skaddr) {
   return std::holds_alternative<std::monostate>(skaddr);
 }
 
+Address::Address(const sockaddr *sa) noexcept { sockaddr_set(skaddr, sa); }
+
 const sockaddr *Address::as_sockaddr() const {
   return nghttp2::as_sockaddr(skaddr);
 }

@@ -62,7 +62,7 @@ constexpr std::string_view API_METHOD_STRING[] = {
 };
 
 APIDownstreamConnection::APIDownstreamConnection(Worker *worker)
-  : worker_(worker), api_(nullptr), fd_(-1), shutdown_read_(false) {}
+  : worker_(worker) {}
 
 APIDownstreamConnection::~APIDownstreamConnection() {
   if (fd_ != -1) {
@@ -70,26 +70,29 @@ APIDownstreamConnection::~APIDownstreamConnection() {
   }
 }
 
-int APIDownstreamConnection::attach_downstream(Downstream *downstream) {
+std::expected<void, Error>
+APIDownstreamConnection::attach_downstream(Downstream *downstream) {
   if (log_enabled(INFO)) {
     Log{INFO, this} << "Attaching to DOWNSTREAM:" << downstream;
   }
 
   downstream_ = downstream;
 
-  return 0;
+  return {};
 }
 
-void APIDownstreamConnection::detach_downstream(Downstream *downstream) {
+std::expected<void, Error>
+APIDownstreamConnection::detach_downstream(Downstream *downstream) {
   if (log_enabled(INFO)) {
     Log{INFO, this} << "Detaching from DOWNSTREAM:" << downstream;
   }
   downstream_ = nullptr;
+
+  return {};
 }
 
-int APIDownstreamConnection::send_reply(unsigned int http_status,
-                                        APIStatusCode api_status,
-                                        std::string_view data) {
+std::expected<void, Error> APIDownstreamConnection::send_reply(
+  unsigned int http_status, APIStatusCode api_status, std::string_view data) {
   shutdown_read_ = true;
 
   auto upstream = downstream_->get_upstream();
@@ -148,11 +151,7 @@ int APIDownstreamConnection::send_reply(unsigned int http_status,
     break;
   }
 
-  if (upstream->send_reply(downstream_, buf) != 0) {
-    return -1;
-  }
-
-  return 0;
+  return upstream->send_reply(downstream_, buf);
 }
 
 namespace {
@@ -181,7 +180,7 @@ const APIEndpoint *lookup_api(std::string_view path) {
 }
 } // namespace
 
-int APIDownstreamConnection::push_request_headers() {
+std::expected<void, Error> APIDownstreamConnection::push_request_headers() {
   auto &req = downstream_->request();
 
   auto path = std::string_view{std::ranges::begin(req.path),
@@ -190,41 +189,33 @@ int APIDownstreamConnection::push_request_headers() {
   api_ = lookup_api(path);
 
   if (!api_) {
-    send_reply(404, APIStatusCode::FAILURE);
-
-    return 0;
+    return send_reply(404, APIStatusCode::FAILURE);
   }
 
   switch (req.method) {
   case HTTP_GET:
     if (!(api_->allowed_methods & (1 << API_METHOD_GET))) {
-      error_method_not_allowed();
-      return 0;
+      return error_method_not_allowed();
     }
     break;
   case HTTP_POST:
     if (!(api_->allowed_methods & (1 << API_METHOD_POST))) {
-      error_method_not_allowed();
-      return 0;
+      return error_method_not_allowed();
     }
     break;
   case HTTP_PUT:
     if (!(api_->allowed_methods & (1 << API_METHOD_PUT))) {
-      error_method_not_allowed();
-      return 0;
+      return error_method_not_allowed();
     }
     break;
   default:
-    error_method_not_allowed();
-    return 0;
+    return error_method_not_allowed();
   }
 
   // This works with req.fs.content_length == -1
   if (req.fs.content_length >
       static_cast<int64_t>(get_config()->api.max_request_body)) {
-    send_reply(413, APIStatusCode::FAILURE);
-
-    return 0;
+    return send_reply(413, APIStatusCode::FAILURE);
   }
 
   switch (req.method) {
@@ -237,9 +228,7 @@ int APIDownstreamConnection::push_request_headers() {
     fd_ = mkstemp(tempname);
 #endif // !defined(HAVE_MKOSTEMP)
     if (fd_ == -1) {
-      send_reply(500, APIStatusCode::FAILURE);
-
-      return 0;
+      return send_reply(500, APIStatusCode::FAILURE);
     }
 #ifndef HAVE_MKOSTEMP
     util::make_socket_closeonexec(fd_);
@@ -254,10 +243,10 @@ int APIDownstreamConnection::push_request_headers() {
   auto dest = downstream_->get_request_buf();
   src->remove(*dest);
 
-  return 0;
+  return {};
 }
 
-int APIDownstreamConnection::error_method_not_allowed() {
+std::expected<void, Error> APIDownstreamConnection::error_method_not_allowed() {
   auto &resp = downstream_->response();
 
   size_t len = 0;
@@ -290,19 +279,17 @@ int APIDownstreamConnection::error_method_not_allowed() {
   return send_reply(405, APIStatusCode::FAILURE);
 }
 
-int APIDownstreamConnection::push_upload_data_chunk(
-  std::span<const uint8_t> data) {
+std::expected<void, Error>
+APIDownstreamConnection::push_upload_data_chunk(std::span<const uint8_t> data) {
   if (shutdown_read_ || !api_->require_body) {
-    return 0;
+    return {};
   }
 
   auto &req = downstream_->request();
   auto &apiconf = get_config()->api;
 
   if (static_cast<size_t>(req.recv_body_length) > apiconf.max_request_body) {
-    send_reply(413, APIStatusCode::FAILURE);
-
-    return 0;
+    return send_reply(413, APIStatusCode::FAILURE);
   }
 
   ssize_t nwrite;
@@ -314,9 +301,7 @@ int APIDownstreamConnection::push_upload_data_chunk(
     if (nwrite == -1) {
       auto error = errno;
       Log{ERROR} << "Could not write API request body: errno=" << error;
-      send_reply(500, APIStatusCode::FAILURE);
-
-      return 0;
+      return send_reply(500, APIStatusCode::FAILURE);
     }
 
     data = data.subspan(as_unsigned(nwrite));
@@ -326,31 +311,28 @@ int APIDownstreamConnection::push_upload_data_chunk(
   // request buffer is effectively unlimited.  Actually, we cannot
   // call it here since it could recursively call this function again.
 
-  return 0;
+  return {};
 }
 
-int APIDownstreamConnection::end_upload_data() {
+std::expected<void, Error> APIDownstreamConnection::end_upload_data() {
   if (shutdown_read_) {
-    return 0;
+    return {};
   }
 
   return api_->handler(*this);
 }
 
-int APIDownstreamConnection::handle_backendconfig() {
+std::expected<void, Error> APIDownstreamConnection::handle_backendconfig() {
   auto &req = downstream_->request();
 
   if (req.recv_body_length == 0) {
-    send_reply(200, APIStatusCode::SUCCESS);
-
-    return 0;
+    return send_reply(200, APIStatusCode::SUCCESS);
   }
 
   auto rp = mmap(nullptr, static_cast<size_t>(req.recv_body_length), PROT_READ,
                  MAP_SHARED, fd_, 0);
   if (rp == reinterpret_cast<void *>(-1)) {
-    send_reply(500, APIStatusCode::FAILURE);
-    return 0;
+    return send_reply(500, APIStatusCode::FAILURE);
   }
 
   auto unmapper = defer([rp, size = req.recv_body_length] {
@@ -389,8 +371,7 @@ int APIDownstreamConnection::handle_backendconfig() {
 
     auto eq = std::ranges::find(first, eol, '=');
     if (eq == eol) {
-      send_reply(400, APIStatusCode::FAILURE);
-      return 0;
+      return send_reply(400, APIStatusCode::FAILURE);
     }
 
     auto opt = std::string_view{first, eq};
@@ -406,32 +387,30 @@ int APIDownstreamConnection::handle_backendconfig() {
       continue;
     }
 
-    if (parse_config(&new_config, optid, opt, optval, include_set,
-                     pattern_addr_indexer) != 0) {
-      send_reply(400, APIStatusCode::FAILURE);
-      return 0;
+    if (auto rv = parse_config(&new_config, optid, opt, optval, include_set,
+                               pattern_addr_indexer);
+        !rv) {
+      return send_reply(400, APIStatusCode::FAILURE);
     }
 
     first = ++eol;
   }
 
   auto &tlsconf = config->tls;
-  if (configure_downstream_group(&new_config, config->http2_proxy, true,
-                                 tlsconf) != 0) {
-    send_reply(400, APIStatusCode::FAILURE);
-    return 0;
+  if (auto rv = configure_downstream_group(&new_config, config->http2_proxy,
+                                           true, tlsconf);
+      !rv) {
+    return send_reply(400, APIStatusCode::FAILURE);
   }
 
   auto conn_handler = worker_->get_connection_handler();
 
   conn_handler->send_replace_downstream(downstreamconf);
 
-  send_reply(200, APIStatusCode::SUCCESS);
-
-  return 0;
+  return send_reply(200, APIStatusCode::SUCCESS);
 }
 
-int APIDownstreamConnection::handle_configrevision() {
+std::expected<void, Error> APIDownstreamConnection::handle_configrevision() {
   auto config = get_config();
   auto &balloc = downstream_->get_block_allocator();
 
@@ -444,22 +423,12 @@ int APIDownstreamConnection::handle_configrevision() {
     balloc, R"(,"data":{"configRevision":)"sv,
     util::make_string_ref_uint(balloc, config->config_revision), "}"sv);
 
-  send_reply(200, APIStatusCode::SUCCESS, data);
-
-  return 0;
+  return send_reply(200, APIStatusCode::SUCCESS, data);
 }
 
 void APIDownstreamConnection::pause_read(IOCtrlReason reason) {}
 
-int APIDownstreamConnection::resume_read(IOCtrlReason reason, size_t consumed) {
-  return 0;
-}
-
 void APIDownstreamConnection::force_resume_read() {}
-
-int APIDownstreamConnection::on_read() { return 0; }
-
-int APIDownstreamConnection::on_write() { return 0; }
 
 void APIDownstreamConnection::on_upstream_change(Upstream *upstream) {}
 

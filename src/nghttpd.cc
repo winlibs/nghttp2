@@ -36,6 +36,7 @@
 #include <string>
 #include <iostream>
 #include <string>
+#include <print>
 
 #include <nghttp2/nghttp2.h>
 
@@ -73,9 +74,7 @@ int parse_push_config(Config &config, const char *optarg) {
 } // namespace
 
 namespace {
-void print_version(std::ostream &out) {
-  out << "nghttpd nghttp2/" NGHTTP2_VERSION << std::endl;
-}
+void print_version() { std::println("nghttpd nghttp2/" NGHTTP2_VERSION); }
 } // namespace
 
 namespace {
@@ -244,7 +243,7 @@ int main(int argc, char **argv) {
     case 'b': {
       auto n = util::parse_uint(optarg);
       if (!n) {
-        std::cerr << "-b: Bad option value: " << optarg << std::endl;
+        std::println(stderr, "-b: Bad option value: {}", optarg);
         exit(EXIT_FAILURE);
       }
       config.padding = static_cast<size_t>(*n);
@@ -260,7 +259,7 @@ int main(int argc, char **argv) {
       // max-concurrent-streams option
       auto n = util::parse_uint(optarg);
       if (!n) {
-        std::cerr << "-m: invalid argument: " << optarg << std::endl;
+        std::println(stderr, "-m: invalid argument: {}", optarg);
         exit(EXIT_FAILURE);
       }
       config.max_concurrent_streams = static_cast<size_t>(*n);
@@ -268,12 +267,13 @@ int main(int argc, char **argv) {
     }
     case 'n': {
 #ifdef NOTHREADS
-      std::cerr << "-n: WARNING: Threading disabled at build time, "
-                << "no threads created." << std::endl;
+      std::println(
+        stderr,
+        "-n: WARNING: Threading disabled at build time, no threads created.");
 #else  // !defined(NOTHREADS)
       auto n = util::parse_uint(optarg);
       if (!n) {
-        std::cerr << "-n: Bad option value: " << optarg << std::endl;
+        std::println(stderr, "-n: Bad option value: {}", optarg);
         exit(EXIT_FAILURE);
       }
       config.num_worker = static_cast<size_t>(*n);
@@ -289,29 +289,30 @@ int main(int argc, char **argv) {
     case 'c': {
       auto n = util::parse_uint_with_unit(optarg);
       if (!n) {
-        std::cerr << "-c: Bad option value: " << optarg << std::endl;
+        std::println(stderr, "-c: Bad option value: {}", optarg);
         exit(EXIT_FAILURE);
       }
-      if (n > std::numeric_limits<uint32_t>::max()) {
-        std::cerr << "-c: Value too large.  It should be less than or equal to "
-                  << std::numeric_limits<uint32_t>::max() << std::endl;
+      if (*n > std::numeric_limits<uint32_t>::max()) {
+        std::println(
+          stderr, "-c: Value too large.  It should be less than or equal to {}",
+          std::numeric_limits<uint32_t>::max());
         exit(EXIT_FAILURE);
       }
-      config.header_table_size = *n;
+      config.header_table_size = static_cast<int64_t>(*n);
       break;
     }
     case 'p':
       if (parse_push_config(config, optarg) != 0) {
-        std::cerr << "-p: Bad option value: " << optarg << std::endl;
+        std::println(stderr, "-p: Bad option value: {}", optarg);
       }
       break;
     case 'w':
     case 'W': {
       auto n = util::parse_uint(optarg);
-      if (!n || n > 30) {
-        std::cerr << "-" << static_cast<char>(c)
-                  << ": specify the integer in the range [0, 30], inclusive"
-                  << std::endl;
+      if (!n || *n > 30) {
+        std::println(stderr,
+                     "-{}: specify the integer in the range [0, 30], inclusive",
+                     static_cast<char>(c));
         exit(EXIT_FAILURE);
       }
 
@@ -338,7 +339,7 @@ int main(int argc, char **argv) {
         break;
       case 3:
         // version
-        print_version(std::cout);
+        print_version();
         exit(EXIT_SUCCESS);
       case 4:
         // dh-param-file
@@ -353,7 +354,7 @@ int main(int argc, char **argv) {
         auto header = optarg;
         auto name_end = strchr(optarg, ':');
         if (!name_end) {
-          std::cerr << "--trailer: invalid header: " << optarg << std::endl;
+          std::println(stderr, "--trailer: invalid header: {}", optarg);
           exit(EXIT_FAILURE);
         }
         *name_end = 0;
@@ -364,8 +365,8 @@ int main(int argc, char **argv) {
         if (*value == 0) {
           // This could also be a valid case for suppressing a header
           // similar to curl
-          std::cerr << "--trailer: invalid header - value missing: " << optarg
-                    << std::endl;
+          std::println(stderr, "--trailer: invalid header - value missing: {}",
+                       optarg);
           exit(EXIT_FAILURE);
         }
         util::tolower(header, name_end, header);
@@ -393,17 +394,19 @@ int main(int argc, char **argv) {
         // encoder-header-table-size option
         auto n = util::parse_uint_with_unit(optarg);
         if (!n) {
-          std::cerr << "--encoder-header-table-size: Bad option value: "
-                    << optarg << std::endl;
+          std::println(stderr,
+                       "--encoder-header-table-size: Bad option value: {}",
+                       optarg);
           exit(EXIT_FAILURE);
         }
-        if (n > std::numeric_limits<uint32_t>::max()) {
-          std::cerr << "--encoder-header-table-size: Value too large.  It "
-                       "should be less than or equal to "
-                    << std::numeric_limits<uint32_t>::max() << std::endl;
+        if (*n > std::numeric_limits<uint32_t>::max()) {
+          std::println(stderr,
+                       "--encoder-header-table-size: Value too large.  It "
+                       "should be less than or equal to {}",
+                       std::numeric_limits<uint32_t>::max());
           exit(EXIT_FAILURE);
         }
-        config.encoder_header_table_size = *n;
+        config.encoder_header_table_size = static_cast<int64_t>(*n);
         break;
       }
       case 12:
@@ -412,8 +415,8 @@ int main(int argc, char **argv) {
         break;
       case 13:
         // no-rfc7540-pri option
-        std::cerr << "[WARNING]: --no-rfc7540-pri option has been deprecated."
-                  << std::endl;
+        std::println(stderr,
+                     "[WARNING]: --no-rfc7540-pri option has been deprecated.");
         break;
       case 14:
         // groups option
@@ -427,15 +430,15 @@ int main(int argc, char **argv) {
   }
   if (argc - optind < (config.no_tls ? 1 : 3)) {
     print_usage(std::cerr);
-    std::cerr << "Too few arguments" << std::endl;
+    std::println(stderr, "Too few arguments");
     exit(EXIT_FAILURE);
   }
 
   {
     auto portStr = argv[optind++];
     auto n = util::parse_uint(portStr);
-    if (!n || n > std::numeric_limits<uint16_t>::max()) {
-      std::cerr << "<PORT>: Bad value: " << portStr << std::endl;
+    if (!n || *n > std::numeric_limits<uint16_t>::max()) {
+      std::println(stderr, "<PORT>: Bad value: {}", portStr);
       exit(EXIT_FAILURE);
     }
     config.port = static_cast<uint16_t>(*n);
@@ -449,10 +452,10 @@ int main(int argc, char **argv) {
   if (config.daemon) {
     if (config.htdocs.empty()) {
       print_usage(std::cerr);
-      std::cerr << "-d option must be specified when -D is used." << std::endl;
+      std::println(stderr, "-d option must be specified when -D is used.");
       exit(EXIT_FAILURE);
     }
-    if (util::daemonize(0, 0) == -1) {
+    if (!util::daemonize(0, 0)) {
       perror("daemon");
       exit(EXIT_FAILURE);
     }
@@ -461,12 +464,16 @@ int main(int argc, char **argv) {
     config.htdocs = "./";
   }
 
-  if (util::read_mime_types(config.mime_types,
-                            config.mime_types_file.c_str()) != 0) {
+  if (auto maybe_mime_types =
+        util::read_mime_types(config.mime_types_file.c_str());
+      !maybe_mime_types) {
     if (mime_types_file_set_manually) {
-      std::cerr << "--mime-types-file: Could not open mime types file: "
-                << config.mime_types_file << std::endl;
+      std::println(stderr,
+                   "--mime-types-file: Could not open mime types file: {}",
+                   config.mime_types_file);
     }
+  } else {
+    config.mime_types = std::move(*maybe_mime_types);
   }
 
   auto &trailer_names = config.trailer_names;
@@ -487,7 +494,7 @@ int main(int argc, char **argv) {
   reset_timer();
 
   HttpServer server(&config);
-  if (server.run() != 0) {
+  if (!server.run()) {
     exit(EXIT_FAILURE);
   }
   return 0;

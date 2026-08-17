@@ -59,7 +59,11 @@ void header_timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
   downstream->disable_upstream_rtimer();
   downstream->disable_upstream_wtimer();
 
-  upstream->on_timeout(downstream);
+  if (!upstream->on_timeout(downstream)) {
+    auto handler = upstream->get_client_handler();
+
+    delete handler;
+  }
 }
 } // namespace
 
@@ -78,7 +82,11 @@ void upstream_timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
   downstream->disable_upstream_rtimer();
   downstream->disable_upstream_wtimer();
 
-  upstream->on_timeout(downstream);
+  if (!upstream->on_timeout(downstream)) {
+    auto handler = upstream->get_client_handler();
+
+    delete handler;
+  }
 }
 } // namespace
 
@@ -111,8 +119,15 @@ void downstream_timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
 
   auto dconn = downstream->get_downstream_connection();
 
-  if (dconn) {
-    dconn->on_timeout();
+  if (!dconn) {
+    return;
+  }
+
+  if (!dconn->on_timeout()) {
+    auto upstream = downstream->get_upstream();
+    auto handler = upstream->get_client_handler();
+
+    delete handler;
   }
 }
 } // namespace
@@ -132,54 +147,27 @@ void downstream_wtimeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
 // upstream could be nullptr for unittests
 Downstream::Downstream(Upstream *upstream, MemchunkPool *mcpool,
                        int64_t stream_id)
-  : dlnext(nullptr),
-    dlprev(nullptr),
-    response_sent_body_length(0),
-    balloc_(1024, 1024),
-    req_(balloc_),
+  : req_(balloc_),
     resp_(balloc_),
-    request_start_time_(std::chrono::high_resolution_clock::now()),
+    request_start_time_(std::chrono::steady_clock::now()),
     blocked_request_buf_(mcpool),
     request_buf_(mcpool),
     response_buf_(mcpool),
     upstream_(upstream),
-    blocked_link_(nullptr),
-    addr_(nullptr),
-    num_retry_(0),
-    stream_id_(stream_id),
-    assoc_stream_id_(-1),
-    downstream_stream_id_(-1),
-    response_rst_stream_error_code_(NGHTTP2_NO_ERROR),
-    affinity_cookie_(0),
-    request_state_(DownstreamState::INITIAL),
-    response_state_(DownstreamState::INITIAL),
-    dispatch_state_(DispatchState::NONE),
-    upgraded_(false),
-    chunked_request_(false),
-    chunked_response_(false),
-    expect_final_response_(false),
-    request_pending_(false),
-    request_header_sent_(false),
-    accesslog_written_(false),
-    new_affinity_cookie_(false),
-    blocked_request_data_eof_(false),
-    expect_100_continue_(false),
-    stop_reading_(false) {
+    stream_id_(stream_id) {
   auto config = get_config();
   auto &httpconf = config->http;
 
   ev_timer_init(&header_timer_, header_timeoutcb, 0., httpconf.timeout.header);
 
-  auto &timeoutconf = config->http2.timeout;
-
   ev_timer_init(&upstream_rtimer_, &upstream_rtimeoutcb, 0.,
-                timeoutconf.stream_read);
+                httpconf.upstream.timeout.stream_read);
   ev_timer_init(&upstream_wtimer_, &upstream_wtimeoutcb, 0.,
-                timeoutconf.stream_write);
+                httpconf.upstream.timeout.stream_write);
   ev_timer_init(&downstream_rtimer_, &downstream_rtimeoutcb, 0.,
-                timeoutconf.stream_read);
+                httpconf.downstream.timeout.stream_read);
   ev_timer_init(&downstream_wtimer_, &downstream_wtimeoutcb, 0.,
-                timeoutconf.stream_write);
+                httpconf.downstream.timeout.stream_write);
 
   header_timer_.data = this;
   upstream_rtimer_.data = this;
@@ -200,7 +188,11 @@ Downstream::~Downstream() {
 
   // check nullptr for unittest
   if (upstream_) {
-    auto loop = upstream_->get_client_handler()->get_loop();
+    auto handler = upstream_->get_client_handler();
+
+    handler->unregister_write_rate_timer(this);
+
+    auto loop = handler->get_loop();
 
     ev_timer_stop(loop, &upstream_rtimer_);
     ev_timer_stop(loop, &upstream_wtimer_);
@@ -209,7 +201,6 @@ Downstream::~Downstream() {
     ev_timer_stop(loop, &header_timer_);
 
 #ifdef HAVE_MRUBY
-    auto handler = upstream_->get_client_handler();
     auto worker = handler->get_worker();
     auto mruby_ctx = worker->get_mruby_context();
 
@@ -246,20 +237,20 @@ Downstream::~Downstream() {
   }
 }
 
-int Downstream::attach_downstream_connection(
+std::expected<void, Error> Downstream::attach_downstream_connection(
   std::unique_ptr<DownstreamConnection> dconn) {
-  if (dconn->attach_downstream(this) != 0) {
-    return -1;
+  if (auto rv = dconn->attach_downstream(this); !rv) {
+    return rv;
   }
 
   dconn_ = std::move(dconn);
 
-  return 0;
+  return {};
 }
 
-void Downstream::detach_downstream_connection() {
+std::expected<void, Error> Downstream::detach_downstream_connection() {
   if (!dconn_) {
-    return;
+    return {};
   }
 
 #ifdef HAVE_MRUBY
@@ -270,12 +261,16 @@ void Downstream::detach_downstream_connection() {
   }
 #endif // defined(HAVE_MRUBY)
 
-  dconn_->detach_downstream(this);
+  if (auto rv = dconn_->detach_downstream(this); !rv) {
+    return rv;
+  }
 
   auto handler = dconn_->get_client_handler();
 
   handler->pool_downstream_connection(
     std::unique_ptr<DownstreamConnection>(dconn_.release()));
+
+  return {};
 }
 
 DownstreamConnection *Downstream::get_downstream_connection() {
@@ -304,12 +299,13 @@ void Downstream::pause_read(IOCtrlReason reason) {
   }
 }
 
-int Downstream::resume_read(IOCtrlReason reason, size_t consumed) {
+std::expected<void, Error> Downstream::resume_read(IOCtrlReason reason,
+                                                   size_t consumed) {
   if (dconn_) {
     return dconn_->resume_read(reason, consumed);
   }
 
-  return 0;
+  return {};
 }
 
 void Downstream::force_resume_read() {
@@ -510,7 +506,7 @@ void append_last_header_value(BlockAllocator &balloc, bool &key_prev,
 }
 } // namespace
 
-int FieldStore::parse_content_length() {
+std::expected<void, Error> FieldStore::parse_content_length() {
   content_length = -1;
 
   for (auto &kv : headers_) {
@@ -518,16 +514,16 @@ int FieldStore::parse_content_length() {
       continue;
     }
 
-    auto len = util::parse_uint(kv.value);
-    if (!len) {
-      return -1;
+    auto maybe_cl = util::parse_uint(kv.value);
+    if (!maybe_cl) {
+      return std::unexpected{maybe_cl.error()};
     }
     if (content_length != -1) {
-      return -1;
+      return std::unexpected{Error::HTTP};
     }
-    content_length = *len;
+    content_length = static_cast<int64_t>(*maybe_cl);
   }
-  return 0;
+  return {};
 }
 
 const HeaderRefs::value_type *FieldStore::header(int32_t token) const {
@@ -619,11 +615,11 @@ void FieldStore::erase_content_length_and_transfer_encoding() {
 }
 
 void Downstream::set_request_start_time(
-  std::chrono::high_resolution_clock::time_point time) {
-  request_start_time_ = std::move(time);
+  std::chrono::steady_clock::time_point time) {
+  request_start_time_ = time;
 }
 
-const std::chrono::high_resolution_clock::time_point &
+std::chrono::steady_clock::time_point
 Downstream::get_request_start_time() const {
   return request_start_time_;
 }
@@ -674,46 +670,47 @@ DefaultMemchunks *Downstream::get_request_buf() { return &request_buf_; }
 
 // Call this function after this object is attached to
 // Downstream. Otherwise, the program will crash.
-int Downstream::push_request_headers() {
+std::expected<void, Error> Downstream::push_request_headers() {
   if (!dconn_) {
     Log{INFO, this} << "dconn_ is NULL";
-    return -1;
+    return std::unexpected{Error::INTERNAL};
   }
   return dconn_->push_request_headers();
 }
 
-int Downstream::push_upload_data_chunk(std::span<const uint8_t> data) {
+std::expected<void, Error>
+Downstream::push_upload_data_chunk(std::span<const uint8_t> data) {
   req_.recv_body_length += data.size();
 
   if (!dconn_ && !request_header_sent_) {
     blocked_request_buf_.append(data);
     req_.unconsumed_body_length += data.size();
-    return 0;
+    return {};
   }
 
   // Assumes that request headers have already been pushed to output
   // buffer using push_request_headers().
   if (!dconn_) {
     Log{INFO, this} << "dconn_ is NULL";
-    return -1;
+    return std::unexpected{Error::INTERNAL};
   }
-  if (dconn_->push_upload_data_chunk(data) != 0) {
-    return -1;
+  if (auto rv = dconn_->push_upload_data_chunk(data); !rv) {
+    return rv;
   }
 
   req_.unconsumed_body_length += data.size();
 
-  return 0;
+  return {};
 }
 
-int Downstream::end_upload_data() {
+std::expected<void, Error> Downstream::end_upload_data() {
   if (!dconn_ && !request_header_sent_) {
     blocked_request_data_eof_ = true;
-    return 0;
+    return {};
   }
   if (!dconn_) {
     Log{INFO, this} << "dconn_ is NULL";
-    return -1;
+    return std::unexpected{Error::INTERNAL};
   }
   return dconn_->end_upload_data();
 }
@@ -750,10 +747,10 @@ bool Downstream::get_chunked_response() const { return chunked_response_; }
 
 void Downstream::set_chunked_response(bool f) { chunked_response_ = f; }
 
-int Downstream::on_read() {
+std::expected<void, Error> Downstream::on_read() {
   if (!dconn_) {
     Log{INFO, this} << "dconn_ is NULL";
-    return -1;
+    return std::unexpected{Error::INTERNAL};
   }
   return dconn_->on_read();
 }
@@ -836,10 +833,12 @@ void Downstream::check_upgrade_fulfilled_http1() {
       }
 
       std::array<uint8_t, base64::encode_length(20)> accept_buf;
-      auto expected =
-        http2::make_websocket_accept_token(accept_buf.data(), ws_key_);
 
-      upgraded_ = !expected.empty() && expected == accept->value;
+      auto maybe_expected =
+        http2::make_websocket_accept_token(accept_buf, ws_key_);
+
+      upgraded_ =
+        maybe_expected.has_value() && *maybe_expected == accept->value;
     } else {
       upgraded_ = resp_.http_status / 100 == 2;
     }
@@ -1007,7 +1006,7 @@ void disable_timer(struct ev_loop *loop, ev_timer *w) {
 } // namespace
 
 void Downstream::reset_upstream_rtimer() {
-  if (get_config()->http2.timeout.stream_read == 0.) {
+  if (get_config()->http.upstream.timeout.stream_read == 0.) {
     return;
   }
   auto loop = upstream_->get_client_handler()->get_loop();
@@ -1016,7 +1015,7 @@ void Downstream::reset_upstream_rtimer() {
 
 void Downstream::reset_upstream_wtimer() {
   auto loop = upstream_->get_client_handler()->get_loop();
-  auto &timeoutconf = get_config()->http2.timeout;
+  const auto &timeoutconf = get_config()->http.upstream.timeout;
 
   if (timeoutconf.stream_write != 0.) {
     reset_timer(loop, &upstream_wtimer_);
@@ -1027,7 +1026,7 @@ void Downstream::reset_upstream_wtimer() {
 }
 
 void Downstream::ensure_upstream_wtimer() {
-  if (get_config()->http2.timeout.stream_write == 0.) {
+  if (get_config()->http.upstream.timeout.stream_write == 0.) {
     return;
   }
   auto loop = upstream_->get_client_handler()->get_loop();
@@ -1035,7 +1034,7 @@ void Downstream::ensure_upstream_wtimer() {
 }
 
 void Downstream::disable_upstream_rtimer() {
-  if (get_config()->http2.timeout.stream_read == 0.) {
+  if (get_config()->http.upstream.timeout.stream_read == 0.) {
     return;
   }
   auto loop = upstream_->get_client_handler()->get_loop();
@@ -1043,7 +1042,7 @@ void Downstream::disable_upstream_rtimer() {
 }
 
 void Downstream::disable_upstream_wtimer() {
-  if (get_config()->http2.timeout.stream_write == 0.) {
+  if (get_config()->http.upstream.timeout.stream_write == 0.) {
     return;
   }
   auto loop = upstream_->get_client_handler()->get_loop();
@@ -1051,7 +1050,7 @@ void Downstream::disable_upstream_wtimer() {
 }
 
 void Downstream::reset_downstream_rtimer() {
-  if (get_config()->http2.timeout.stream_read == 0.) {
+  if (get_config()->http.downstream.timeout.stream_read == 0.) {
     return;
   }
   auto loop = upstream_->get_client_handler()->get_loop();
@@ -1060,7 +1059,7 @@ void Downstream::reset_downstream_rtimer() {
 
 void Downstream::reset_downstream_wtimer() {
   auto loop = upstream_->get_client_handler()->get_loop();
-  auto &timeoutconf = get_config()->http2.timeout;
+  const auto &timeoutconf = get_config()->http.downstream.timeout;
 
   if (timeoutconf.stream_write != 0.) {
     reset_timer(loop, &downstream_wtimer_);
@@ -1071,7 +1070,7 @@ void Downstream::reset_downstream_wtimer() {
 }
 
 void Downstream::ensure_downstream_wtimer() {
-  if (get_config()->http2.timeout.stream_write == 0.) {
+  if (get_config()->http.downstream.timeout.stream_write == 0.) {
     return;
   }
   auto loop = upstream_->get_client_handler()->get_loop();
@@ -1079,7 +1078,7 @@ void Downstream::ensure_downstream_wtimer() {
 }
 
 void Downstream::disable_downstream_rtimer() {
-  if (get_config()->http2.timeout.stream_read == 0.) {
+  if (get_config()->http.downstream.timeout.stream_read == 0.) {
     return;
   }
   auto loop = upstream_->get_client_handler()->get_loop();
@@ -1087,11 +1086,19 @@ void Downstream::disable_downstream_rtimer() {
 }
 
 void Downstream::disable_downstream_wtimer() {
-  if (get_config()->http2.timeout.stream_write == 0.) {
+  if (get_config()->http.downstream.timeout.stream_write == 0.) {
     return;
   }
   auto loop = upstream_->get_client_handler()->get_loop();
   disable_timer(loop, &downstream_wtimer_);
+}
+
+void Downstream::register_upstream_write_rate_timer() {
+  upstream_->get_client_handler()->register_write_rate_timer(this);
+}
+
+void Downstream::unregister_upstream_write_rate_timer() {
+  upstream_->get_client_handler()->unregister_write_rate_timer(this);
 }
 
 bool Downstream::accesslog_ready() const {
